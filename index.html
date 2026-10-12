@@ -3,22 +3,23 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>ProcurementSystem Test Page</title>
-  <style>
-    body { font-family: system-ui, sans-serif; margin: 0; min-height: 100vh; display: grid; place-items: center; background: #f4f6f8; color: #1f2933; }
-    main { background: #fff; padding: 2rem 2.5rem; border-radius: 12px; box-shadow: 0 2px 12px rgba(0,0,0,.08); text-align: center; }
-    h1 { margin-top: 0; }
-    .ok { color: #1a7f37; font-weight: 600; }
-  </style>
+  <title>ระบบขอใช้งบประมาณ</title>
+  <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
-  <main>
-    <h1>ProcurementSystem</h1>
-    <p class="ok">✅ หน้าทดสอบ GitHub Pages ทำงานได้</p>
-    <p id="time"></p>
-  </main>
-  <script>
-    document.getElementById('time').textContent = 'เปิดเมื่อ: ' + new Date().toLocaleString('th-TH');
-  </script>
+  <header class="topbar no-print">
+    <div class="brand">ProcurementSystem <span>· ขอใช้งบประมาณ</span></div>
+    <nav id="nav"></nav>
+    <label class="user-switch">
+      เข้าใช้งานในฐานะ
+      <select id="userSelect"></select>
+    </label>
+  </header>
+  <main id="app"></main>
+  <footer class="no-print">
+    ต้นแบบ (prototype) — ข้อมูลเก็บในเบราว์เซอร์นี้เท่านั้น ·
+    <button type="button" class="link" id="resetData">รีเซ็ตข้อมูลตัวอย่าง</button>
+  </footer>
+  <script src="js/app.js"></script>
 </body>
 </html>
