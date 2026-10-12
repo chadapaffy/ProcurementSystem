@@ -2,9 +2,10 @@
  * ระบบขอใช้งบประมาณ (ต้นแบบ)
  *
  * - การเงิน: บันทึกงบลงทุน (CAPEX) และงบโครงการ (CBS) ที่ได้รับอนุมัติแล้ว
- * - ผู้ขอใช้งบ: ดูยอดคงเหลือของงบตนเอง และยื่นขอใช้งบโดยระบุตัวงบทุกครั้งที่จะใช้
- * - การเงิน: ตรวจสอบ (verify) ว่าใช้ถูกตัวงบ แล้วยืนยันหรือส่งกลับให้แก้ไข
- * - เมื่อยืนยันแล้วจะออก "ใบยืนยันการใช้งบ" สำหรับแนบตอนขอซื้อ (PR)
+ * - ผู้ขอใช้งบ: ตรวจสอบงบที่ใช้ได้ แล้วจัดทำเอกสารขอเบิกใช้งบโดยระบุตัวงบทุกครั้งที่จะใช้
+ * - CAPEX: ฝ่ายการเงินรับเอกสารและตรวจสอบ → อนุมัติ / ไม่อนุมัติ (แจ้งเหตุผล → ผู้ขอแก้ไขหรือยกเลิก)
+ * - CBS: ไม่ต้องผ่านฝ่ายการเงิน ได้เอกสารทันที
+ * - ผลลัพธ์คือ "เอกสารการเบิกขอใช้งบประมาณ" สำหรับแนบตอนขอซื้อ (PR)
  *
  * ไม่ใช่การขออนุมัติงบ — งบได้รับอนุมัติมาแล้ว ระบบนี้ใช้ยืนยันตัวงบและติดตามยอดคงเหลือ
  *
@@ -13,7 +14,7 @@
 (function () {
   'use strict';
 
-  const DB_KEY = 'procurement.budget.v2';
+  const DB_KEY = 'procurement.budget.v3';
 
   const USERS = [
     { id: 'req1', name: 'สมชาย ใจดี', title: 'วิศวกร ฝ่ายวิศวกรรม', role: 'requester' },
@@ -29,8 +30,8 @@
   const TYPE_LABEL = { CAPEX: 'งบลงทุน (CAPEX)', CBS: 'งบโครงการ (CBS)' };
   const STATUS_LABEL = {
     pending: 'รอการเงินตรวจสอบ',
-    approved: 'ยืนยันแล้ว',
-    rejected: 'ส่งกลับแก้ไข',
+    approved: 'ออกเอกสารแล้ว',
+    rejected: 'ไม่อนุมัติ — รอแก้ไข',
     cancelled: 'ยกเลิก'
   };
 
@@ -127,7 +128,7 @@
     return b.type === 'CBS' ? b.items.reduce((s, i) => s + Number(i.amount), 0) : Number(b.amount);
   }
 
-  /** ยอดงบ: approved = งบที่ได้รับ, used = ยืนยันใช้แล้ว, reserved = รอการเงินตรวจสอบ */
+  /** ยอดงบ: approved = งบที่ได้รับ, used = ออกเอกสารแล้ว, reserved = รอการเงินตรวจสอบ */
   function usage(b, itemId) {
     const approved = itemId
       ? Number((b.items.find((i) => i.id === itemId) || {}).amount || 0)
@@ -145,10 +146,10 @@
     return { approved, used, reserved, remaining: round2(approved - used - reserved) };
   }
 
-  /** ขั้นตอนเดียวสำหรับทั้ง CAPEX และ CBS: การเงินตรวจสอบว่าใช้ถูกตัวงบ */
+  /** CAPEX ต้องผ่านฝ่ายการเงินตรวจสอบ ส่วน CBS ไม่มีขั้นตรวจสอบ (ออกเอกสารทันที) */
   function stepsFor(budget) {
-    const what = budget.type === 'CBS' ? 'ตัวงบและรายการต้นทุน' : 'ตัวงบลงทุน';
-    return [{ key: 'fin', label: 'การเงินตรวจสอบ' + what, role: 'finance', status: 'waiting' }];
+    if (budget.type === 'CBS') return [];
+    return [{ key: 'fin', label: 'ฝ่ายการเงินรับเอกสารและตรวจสอบ', role: 'finance', status: 'waiting' }];
   }
 
   const currentStep = (r) => (r.status === 'pending' ? r.steps.find((s) => s.status === 'waiting') : null);
@@ -174,7 +175,7 @@
     return '<div class="bar" role="img" aria-label="ใช้แล้ว ' + money(u.used) + ' จอง ' + money(u.reserved) + '">' +
       '<div class="used" style="width:' + pct(u.used) + '%"></div>' +
       '<div class="reserved" style="width:' + pct(u.reserved) + '%"></div></div>' +
-      '<div class="legend"><span><i style="background:var(--primary)"></i>ยืนยันใช้แล้ว</span>' +
+      '<div class="legend"><span><i style="background:var(--primary)"></i>ใช้แล้ว</span>' +
       '<span><i style="background:var(--warn)"></i>รอตรวจสอบ</span>' +
       '<span><i style="background:var(--bar-bg)"></i>คงเหลือ</span></div>';
   }
@@ -182,7 +183,7 @@
   function usageKv(u) {
     return '<dl class="kv">' +
       '<dt>งบที่ได้รับอนุมัติ</dt><dd>' + money(u.approved) + '</dd>' +
-      '<dt>ยืนยันใช้แล้ว</dt><dd>' + money(u.used) + '</dd>' +
+      '<dt>ใช้แล้ว (ออกเอกสาร)</dt><dd>' + money(u.used) + '</dd>' +
       '<dt>รอตรวจสอบ (จองไว้)</dt><dd>' + money(u.reserved) + '</dd>' +
       '<dt>คงเหลือ</dt><dd class="big">' + money(u.remaining) + '</dd></dl>';
   }
@@ -448,7 +449,7 @@
 
     if (b.type === 'CBS') {
       html += '<h2>โครงสร้างต้นทุนโครงการ</h2><div class="table-wrap"><table><thead><tr>' +
-        '<th>รหัส</th><th>รายการ</th><th class="num">งบที่ได้รับ</th><th class="num">ยืนยันใช้แล้ว</th>' +
+        '<th>รหัส</th><th>รายการ</th><th class="num">งบที่ได้รับ</th><th class="num">ใช้แล้ว</th>' +
         '<th class="num">รอตรวจสอบ</th><th class="num">คงเหลือ</th></tr></thead><tbody>' +
         b.items.map((i) => {
           const iu = usage(b, i.id);
@@ -461,23 +462,29 @@
     return html;
   }
 
-  function viewRequestForm(budgetId) {
-    const b = budgetById(budgetId);
+  function viewRequestForm(budgetId, requestId) {
+    const existing = requestId ? requestById(requestId) : null;
+    if (requestId && !existing) return notFound();
+    const b = budgetById(existing ? existing.budgetId : budgetId);
     if (!b) return notFound();
     const u = me();
     if (b.ownerId !== u.id) return '<div class="alert error">คุณไม่ใช่ผู้ขอใช้งบของงบนี้</div>';
+    if (existing && existing.status !== 'rejected') return '<div class="alert error">แก้ไขได้เฉพาะคำขอที่ไม่ได้รับอนุมัติเท่านั้น</div>';
     const us = usage(b);
+    const v = existing ? Object.assign({ purpose: existing.purpose, amount: existing.amount }, existing.details) : { qty: 1 };
+    const val = (k) => ' value="' + esc(v[k] == null ? '' : v[k]) + '"';
 
     let typeFields;
     if (b.type === 'CAPEX') {
       typeFields = '<fieldset><legend>รายละเอียดสินทรัพย์ (CAPEX)</legend>' +
-        '<label class="field"><span>ชื่อสินทรัพย์ / รายการที่จะลงทุน</span><input name="assetName" required></label>' +
+        '<label class="field"><span>ชื่อสินทรัพย์ / รายการที่จะลงทุน</span><input name="assetName" required' + val('assetName') + '></label>' +
         '<div class="row">' +
-        '<label class="field"><span>จำนวน</span><input name="qty" type="number" min="1" step="1" value="1" required></label>' +
-        '<label class="field"><span>อายุการใช้งานโดยประมาณ (ปี)</span><input name="usefulLife" type="number" min="1" step="1" required></label>' +
-        '<label class="field"><span>เลขที่ใบเสนอราคาอ้างอิง</span><input name="quotationRef" placeholder="ถ้ามี"></label>' +
+        '<label class="field"><span>จำนวน</span><input name="qty" type="number" min="1" step="1" required' + val('qty') + '></label>' +
+        '<label class="field"><span>อายุการใช้งานโดยประมาณ (ปี)</span><input name="usefulLife" type="number" min="1" step="1" required' + val('usefulLife') + '></label>' +
+        '<label class="field"><span>เลขที่ใบเสนอราคาอ้างอิง</span><input name="quotationRef" placeholder="ถ้ามี"' + val('quotationRef') + '></label>' +
         '</div>' +
-        '<label class="field"><span>เหตุผลความจำเป็น / ประโยชน์ที่คาดว่าจะได้รับ</span><textarea name="justification" required></textarea></label>' +
+        '<label class="field"><span>เหตุผลความจำเป็น / ประโยชน์ที่คาดว่าจะได้รับ</span><textarea name="justification" required>' +
+        esc(v.justification || '') + '</textarea></label>' +
         '</fieldset>';
     } else {
       typeFields = '<fieldset><legend>รายละเอียดการใช้งบโครงการ (CBS)</legend>' +
@@ -492,17 +499,22 @@
         '</fieldset>';
     }
 
-    return '<h1>ขอใช้งบ: ' + esc(b.name) + '</h1>' +
+    const lastReject = existing ? existing.steps.find((s) => s.status === 'rejected') : null;
+    return '<h1>' + (existing ? 'แก้ไขคำขอ ' + esc(existing.no) : 'จัดทำเอกสารขอเบิกใช้งบ') + ': ' + esc(b.name) + '</h1>' +
+      (lastReject ? '<div class="alert error">เหตุผลที่ไม่อนุมัติ: ' + esc(lastReject.comment) + '</div>' : '') +
       '<div class="alert info">' + badge(b.type, b.type) + ' ' + esc(b.code) +
       ' · งบคงเหลือ <strong>' + money(us.remaining) + '</strong> บาท<br>' +
-      'การเงินจะตรวจสอบว่ารายการนี้ใช้ถูกตัวงบ แล้วออกใบยืนยันการใช้งบให้แนบตอนขอซื้อ</div>' +
+      (b.type === 'CAPEX'
+        ? 'เอกสารจะถูกส่งให้ฝ่ายการเงินตรวจสอบ เมื่ออนุมัติแล้วจึงได้เอกสารการเบิกขอใช้งบประมาณ'
+        : 'งบโครงการไม่ต้องผ่านฝ่ายการเงิน — ได้เอกสารการเบิกขอใช้งบประมาณทันทีเมื่อบันทึก') + '</div>' +
       '<div id="formError"></div>' +
-      '<form id="requestForm" class="card" data-budget="' + b.id + '">' +
-      '<label class="field"><span>วัตถุประสงค์การขอใช้งบ</span><input name="purpose" required></label>' +
-      '<label class="field"><span>จำนวนเงินที่ขอใช้ (บาท)</span><input name="amount" type="number" min="0.01" step="0.01" required></label>' +
+      '<form id="requestForm" class="card" data-budget="' + b.id + '" data-request="' + esc(requestId || '') + '">' +
+      '<label class="field"><span>วัตถุประสงค์การขอใช้งบ</span><input name="purpose" required' + val('purpose') + '></label>' +
+      '<label class="field"><span>จำนวนเงินที่ขอใช้ (บาท)</span><input name="amount" type="number" min="0.01" step="0.01" required' + val('amount') + '></label>' +
       typeFields +
-      '<div class="actions"><button class="btn primary" type="submit">ส่งให้การเงินตรวจสอบ</button>' +
-      '<a class="btn" href="#/budget/' + b.id + '">ยกเลิก</a></div></form>';
+      '<div class="actions"><button class="btn primary" type="submit">' +
+      (b.type === 'CAPEX' ? (existing ? 'ส่งเอกสารให้ฝ่ายการเงินอีกครั้ง' : 'ส่งเอกสารให้ฝ่ายการเงิน') : 'จัดทำเอกสาร') + '</button>' +
+      '<a class="btn" href="' + (existing ? '#/request/' + existing.id : '#/budget/' + b.id) + '">ยกเลิก</a></div></form>';
   }
 
   function bindRequestForm() {
@@ -512,6 +524,7 @@
       e.preventDefault();
       const f = form.elements;
       const b = budgetById(form.dataset.budget);
+      const existing = form.dataset.request ? requestById(form.dataset.request) : null;
       const amount = round2(f.amount.value);
       const itemId = b.type === 'CBS' ? f.itemId.value : null;
       const avail = usage(b, itemId).remaining;
@@ -524,18 +537,10 @@
         document.getElementById('formError').innerHTML = '<div class="alert error">' + errors.map(esc).join('<br>') + '</div>';
         return;
       }
-      const r = {
-        id: nextId('r'),
-        no: nextNo('req'),
-        budgetId: b.id,
-        type: b.type,
-        itemId,
+      const now = new Date().toISOString();
+      const fields = {
         amount,
         purpose: f.purpose.value.trim(),
-        requesterId: me().id,
-        createdAt: new Date().toISOString(),
-        status: 'pending',
-        steps: stepsFor(b),
         details: b.type === 'CAPEX'
           ? {
             assetName: f.assetName.value.trim(), qty: Number(f.qty.value), usefulLife: Number(f.usefulLife.value),
@@ -543,11 +548,45 @@
           }
           : { workPackage: f.workPackage.value.trim() }
       };
-      db.requests.push(r);
+
+      let r;
+      if (existing) {
+        // แก้ไขแล้วส่งใหม่: เก็บผลตรวจสอบรอบก่อนไว้เป็นประวัติ
+        r = existing;
+        r.history = (r.history || []).concat(r.steps);
+        Object.assign(r, fields, { status: 'pending', steps: stepsFor(b), resubmittedAt: now });
+      } else {
+        r = Object.assign({
+          id: nextId('r'),
+          no: nextNo('req'),
+          budgetId: b.id,
+          type: b.type,
+          itemId,
+          requesterId: me().id,
+          createdAt: now,
+          status: 'pending',
+          steps: stepsFor(b),
+          history: []
+        }, fields);
+        db.requests.push(r);
+      }
+
+      if (!r.steps.length) {
+        // CBS: ไม่ต้องผ่านการเงิน ออกเอกสารทันที
+        issueDocument(r, now);
+        setFlash('success', 'จัดทำเอกสารเรียบร้อย เลขที่ ' + r.docNo);
+      } else {
+        setFlash('success', (existing ? 'ส่งคำขอ ' + r.no + ' อีกครั้ง' : 'ส่งคำขอ ' + r.no) + ' เรียบร้อยแล้ว รอฝ่ายการเงินตรวจสอบ');
+      }
       save();
-      setFlash('success', 'ส่งคำขอ ' + r.no + ' เรียบร้อยแล้ว รอการเงินตรวจสอบตัวงบ');
       go('#/request/' + r.id);
     });
+  }
+
+  function issueDocument(r, at) {
+    r.status = 'approved';
+    r.approvedAt = at;
+    r.docNo = nextNo(r.type);
   }
 
   function requestTable(list, showBudget) {
@@ -576,7 +615,7 @@
   }
 
   function viewApprovals() {
-    return '<h1>รายการรอตรวจสอบตัวงบ</h1>' + takeFlash() + requestTable(inbox(me()), true);
+    return '<h1>เอกสาร CAPEX รอตรวจสอบ</h1>' + takeFlash() + requestTable(inbox(me()), true);
   }
 
   function viewRequestDetail(id) {
@@ -589,7 +628,7 @@
     const d = r.details;
 
     let html = takeFlash() + '<div class="page-head"><h1>คำขอใช้งบ ' + esc(r.no) + ' ' + badge(r.status, STATUS_LABEL[r.status]) + '</h1>' +
-      (r.docNo ? '<a class="btn primary" href="#/doc/' + r.id + '">เปิดใบยืนยันการใช้งบ ' + esc(r.docNo) + '</a>' : '') + '</div>';
+      (r.docNo ? '<a class="btn primary" href="#/doc/' + r.id + '">เปิดเอกสารเลขที่ ' + esc(r.docNo) + '</a>' : '') + '</div>';
 
     html += '<div class="grid"><div class="card"><dl class="kv">' +
       '<dt>งบ</dt><dd>' + badge(b.type, b.type) + ' <a href="#/budget/' + b.id + '">' + esc(b.code) + '</a></dd>' +
@@ -607,24 +646,34 @@
         : '<dt>งาน / งวดงาน</dt><dd>' + esc(d.workPackage) + '</dd>') +
       '</dl></div>';
 
-    html += '<div class="card"><h2 style="margin-top:0">การตรวจสอบตัวงบ</h2><ol class="steps">' +
-      r.steps.map((s, idx) => {
+    const stepItem = (s, idx) => {
         const cls = s.status === 'waiting' ? (s === step ? 'current' : '') : s.status;
         return '<li class="' + cls + '"><span class="dot">' + (s.status === 'approved' ? '✓' : s.status === 'rejected' ? '✕' : idx + 1) + '</span><div>' +
           '<div><strong>' + esc(s.label) + '</strong></div>' +
           '<div class="muted">' + esc(s.by ? userName(s.by) : stepAssigneeText(s)) +
           (s.at ? ' · ' + fmtDate(s.at) : s === step ? ' · กำลังรอ' : '') + '</div>' +
           (s.comment ? '<div>“' + esc(s.comment) + '”</div>' : '') + '</div></li>';
-      }).join('') + '</ol>';
+    };
+    html += '<div class="card"><h2 style="margin-top:0">การตรวจสอบเอกสาร</h2>';
+    if (!r.steps.length) {
+      html += '<p class="muted">งบโครงการ (CBS) ไม่ต้องผ่านฝ่ายการเงิน — ออกเอกสารทันทีเมื่อ' + fmtDate(r.approvedAt) + '</p>';
+    }
+    if (r.history && r.history.length) {
+      html += '<div class="muted">รอบก่อนหน้า</div><ol class="steps">' + r.history.map(stepItem).join('') + '</ol>' +
+        '<div class="muted">รอบปัจจุบัน (ส่งใหม่ ' + fmtDate(r.resubmittedAt) + ')</div>';
+    }
+    html += '<ol class="steps">' + r.steps.map(stepItem).join('') + '</ol>';
 
     if (canAct(u, step)) {
       html += '<form id="decisionForm" data-id="' + r.id + '">' +
-        '<label class="field"><span>ความเห็น (จำเป็นเมื่อส่งกลับ เช่น ควรใช้งบตัวไหนแทน)</span><textarea name="comment"></textarea></label>' +
-        '<div class="actions"><button class="btn ok" type="submit" data-decision="approved">ยืนยัน ใช้ถูกตัวงบ</button>' +
-        '<button class="btn bad" type="submit" data-decision="rejected">ส่งกลับแก้ไข</button></div></form>';
+        '<label class="field"><span>เหตุผล (จำเป็นเมื่อไม่อนุมัติ เช่น ควรใช้งบตัวไหนแทน)</span><textarea name="comment"></textarea></label>' +
+        '<div class="actions"><button class="btn ok" type="submit" data-decision="approved">อนุมัติเอกสาร</button>' +
+        '<button class="btn bad" type="submit" data-decision="rejected">ไม่อนุมัติ</button></div></form>';
     }
-    if (r.status === 'pending' && r.requesterId === u.id) {
-      html += '<div class="actions"><button class="btn bad" id="cancelRequest" data-id="' + r.id + '">ยกเลิกคำขอ</button></div>';
+    if ((r.status === 'pending' || r.status === 'rejected') && r.requesterId === u.id) {
+      html += '<div class="actions">' +
+        (r.status === 'rejected' ? '<a class="btn primary" href="#/request/' + r.id + '/edit">แก้ไขและส่งใหม่</a>' : '') +
+        '<button class="btn bad" id="cancelRequest" data-id="' + r.id + '">ยกเลิกคำขอ</button></div>';
     }
     html += '</div></div>';
     return html;
@@ -644,11 +693,11 @@
         if (!canAct(u, step)) return;
         const comment = form.elements.comment.value.trim();
         if (decision === 'rejected' && !comment) {
-          alert('กรุณาระบุเหตุผลที่ส่งกลับ');
+          alert('กรุณาแจ้งเหตุผลที่ไม่อนุมัติ');
           return;
         }
         if (decision === 'approved' && step.key === 'fin') {
-          // ตรวจซ้ำว่ายอดยังไม่เกินงบ (คำขอนี้ถูกจองไว้แล้ว จึงคิดเฉพาะยอดที่ยืนยันใช้ไปแล้ว)
+          // ตรวจซ้ำว่ายอดยังไม่เกินงบ (คำขอนี้ถูกจองไว้แล้ว จึงคิดเฉพาะยอดที่ออกเอกสารไปแล้ว)
           const b = budgetById(r.budgetId);
           const us = usage(b, r.itemId);
           if (us.used + r.amount > us.approved) {
@@ -659,12 +708,10 @@
         Object.assign(step, { status: decision, by: u.id, at: new Date().toISOString(), comment });
         if (decision === 'rejected') {
           r.status = 'rejected';
-          setFlash('info', 'ส่งกลับคำขอ ' + r.no + ' ให้ผู้ขอแก้ไขแล้ว งบที่จองไว้ถูกคืนเรียบร้อย');
+          setFlash('info', 'ไม่อนุมัติคำขอ ' + r.no + ' แล้ว แจ้งเหตุผลให้ผู้ขอแก้ไขหรือยกเลิก งบที่จองไว้ถูกคืนเรียบร้อย');
         } else if (!currentStep(r)) {
-          r.status = 'approved';
-          r.approvedAt = step.at;
-          r.docNo = nextNo(r.type);
-          setFlash('success', 'ยืนยันตัวงบแล้ว ออกใบยืนยันการใช้งบเลขที่ ' + r.docNo);
+          issueDocument(r, step.at);
+          setFlash('success', 'อนุมัติเอกสารแล้ว ออกเอกสารการเบิกขอใช้งบประมาณเลขที่ ' + r.docNo);
         } else {
           setFlash('success', 'ตรวจสอบแล้ว ส่งต่อให้ ' + stepAssigneeText(currentStep(r)));
         }
@@ -686,16 +733,16 @@
     }
   }
 
-  /** ใบยืนยันการใช้งบ — เอกสารสำหรับแนบตอนขอซื้อ */
+  /** เอกสารการเบิกขอใช้งบประมาณ — สำหรับแนบตอนขอซื้อ */
   function viewDocument(id) {
     const r = requestById(id);
     if (!r) return notFound();
-    if (r.status !== 'approved') return '<div class="alert error">คำขอนี้ยังไม่ได้รับการยืนยันจากการเงิน จึงยังไม่มีใบยืนยันการใช้งบ</div>';
+    if (r.status !== 'approved') return '<div class="alert error">คำขอนี้ยังไม่ได้รับอนุมัติจากฝ่ายการเงิน จึงยังไม่มีเอกสาร</div>';
     const b = budgetById(r.budgetId);
     const item = r.itemId ? b.items.find((i) => i.id === r.itemId) : null;
     const d = r.details;
 
-    // ยอดงบ ณ วันที่ยืนยัน: นับคำขอที่ยืนยันก่อนหน้าใบนี้ (รวมใบนี้) ในงบ/รายการเดียวกัน
+    // ยอดงบ ณ วันที่ออกเอกสาร: นับเอกสารที่ออกก่อนหน้าใบนี้ (รวมใบนี้) ในงบ/รายการเดียวกัน
     const scope = (x) => x.budgetId === b.id && (!r.itemId || x.itemId === r.itemId);
     const approvedTotal = item ? Number(item.amount) : budgetTotal(b);
     const usedBefore = round2(db.requests
@@ -703,7 +750,7 @@
       .reduce((s, x) => s + x.amount, 0));
     const remainingAfter = round2(approvedTotal - usedBefore - r.amount);
 
-    const title = r.type === 'CAPEX' ? 'ใบยืนยันการใช้งบลงทุน (CAPEX)' : 'ใบยืนยันการใช้งบโครงการ (CBS)';
+    const title = r.type === 'CAPEX' ? 'เอกสารการเบิกขอใช้งบลงทุน (CAPEX)' : 'เอกสารการเบิกขอใช้งบโครงการ (CBS)';
     const rows = [
       ['รหัสงบ', esc(b.code)],
       [r.type === 'CAPEX' ? 'ชื่องบลงทุน' : 'ชื่อโครงการ', esc(b.name)],
@@ -724,9 +771,9 @@
       '<button class="btn primary" onclick="window.print()">พิมพ์ / บันทึกเป็น PDF</button>' +
       '<a class="btn" href="#/request/' + r.id + '">กลับไปที่คำขอ</a></div>' +
       '<article class="doc">' +
-      '<header><div><h1>' + title + '</h1><div>Budget Utilization Verification</div></div>' +
-      '<div class="docno">เลขที่ <strong>' + esc(r.docNo) + '</strong><br>วันที่ยืนยัน ' + fmtDate(r.approvedAt) +
-      '<br><span class="stamp">ตรวจสอบแล้ว</span></div></header>' +
+      '<header><div><h1>' + title + '</h1><div>Budget Utilization Document</div></div>' +
+      '<div class="docno">เลขที่ <strong>' + esc(r.docNo) + '</strong><br>วันที่ออกเอกสาร ' + fmtDate(r.approvedAt) +
+      (r.steps.length ? '<br><span class="stamp">การเงินอนุมัติ</span>' : '') + '</div></header>' +
       '<div class="section"><table><tbody>' +
       rows.map(([k, v]) => '<tr><th style="width:32%">' + k + '</th><td>' + v + '</td></tr>').join('') +
       '</tbody></table></div>' +
@@ -736,10 +783,10 @@
       '<tr><th>ใช้ครั้งนี้</th><td class="num"><strong>' + money(r.amount) + '</strong></td></tr>' +
       '<tr><th>คงเหลือหลังใช้ครั้งนี้</th><td class="num">' + money(remainingAfter) + '</td></tr>' +
       '</tbody></table></div>' +
-      '<div class="section"><h2>ผู้ตรวจสอบ</h2><table><thead><tr><th>ขั้นตอน</th><th>ผู้ตรวจสอบ</th><th>วันที่</th><th>ความเห็น</th></tr></thead><tbody>' +
+      (r.steps.length ? '<div class="section"><h2>ผู้ตรวจสอบ</h2><table><thead><tr><th>ขั้นตอน</th><th>ผู้ตรวจสอบ</th><th>วันที่</th><th>ความเห็น</th></tr></thead><tbody>' +
       r.steps.map((s) => '<tr><td>' + esc(s.label) + '</td><td>' + esc(userName(s.by)) + '<br><span class="muted">' +
         esc((user(s.by) || {}).title || '') + '</span></td><td class="nowrap">' + fmtDate(s.at) + '</td><td>' + esc(s.comment || '-') + '</td></tr>').join('') +
-      '</tbody></table></div>' +
+      '</tbody></table></div>' : '') +
       '<div class="signs"><div><div class="line"></div>ผู้ขอใช้งบ<br>' + esc(userName(r.requesterId)) + '</div>' +
       r.steps.map((s) => '<div><div class="line"></div>' + esc((user(s.by) || {}).title || '') + '<br>' + esc(userName(s.by)) + '</div>').join('') +
       '</div>' +
@@ -766,7 +813,8 @@
     else if (parts[0] === 'budget' && parts[1] === 'new') html = viewBudgetForm(null);
     else if (parts[0] === 'budget' && parts[2] === 'edit') html = viewBudgetForm(parts[1]);
     else if (parts[0] === 'budget') html = viewBudgetDetail(parts[1]);
-    else if (parts[0] === 'request' && parts[1] === 'new') html = viewRequestForm(parts[2]);
+    else if (parts[0] === 'request' && parts[1] === 'new') html = viewRequestForm(parts[2], null);
+    else if (parts[0] === 'request' && parts[2] === 'edit') html = viewRequestForm(null, parts[1]);
     else if (parts[0] === 'request') html = viewRequestDetail(parts[1]);
     else if (parts[0] === 'requests') html = viewRequests();
     else if (parts[0] === 'approvals') html = viewApprovals();
