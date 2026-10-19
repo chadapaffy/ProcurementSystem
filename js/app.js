@@ -604,7 +604,8 @@
           '<td class="num">' + money(r.amount) + '</td>' +
           '<td>' + badge(r.status, STATUS_LABEL[r.status]) +
           (step ? '<div class="muted">รอ: ' + esc(stepAssigneeText(step)) + '</div>' : '') + '</td>' +
-          '<td>' + (r.docNo ? '<a href="#/doc/' + r.id + '">' + esc(r.docNo) + '</a>' : '-') + '</td></tr>';
+          '<td>' + (!r.docNo ? '-' : r.status === 'cancelled' ? '<s>' + esc(r.docNo) + '</s> <span class="muted">(ยกเลิก)</span>'
+            : '<a href="#/doc/' + r.id + '">' + esc(r.docNo) + '</a>') + '</td></tr>';
       }).join('') + '</tbody></table></div>';
   }
 
@@ -628,7 +629,12 @@
     const d = r.details;
 
     let html = takeFlash() + '<div class="page-head"><h1>คำขอใช้งบ ' + esc(r.no) + ' ' + badge(r.status, STATUS_LABEL[r.status]) + '</h1>' +
-      (r.docNo ? '<a class="btn primary" href="#/doc/' + r.id + '">เปิดเอกสารเลขที่ ' + esc(r.docNo) + '</a>' : '') + '</div>';
+      (r.docNo && r.status === 'approved' ? '<a class="btn primary" href="#/doc/' + r.id + '">เปิดเอกสารเลขที่ ' + esc(r.docNo) + '</a>' : '') + '</div>';
+    if (r.status === 'cancelled') {
+      html += '<div class="alert error">ยกเลิกโดย ' + esc(userName(r.cancelledBy || r.requesterId)) + ' เมื่อ ' + fmtDate(r.cancelledAt) +
+        (r.docNo ? ' · เอกสารเลขที่ ' + esc(r.docNo) + ' ใช้ไม่ได้แล้ว และคืนยอดเข้างบเรียบร้อย' : '') +
+        (r.cancelReason ? '<br>เหตุผล: ' + esc(r.cancelReason) : '') + '</div>';
+    }
 
     html += '<div class="grid"><div class="card"><dl class="kv">' +
       '<dt>งบ</dt><dd>' + badge(b.type, b.type) + ' <a href="#/budget/' + b.id + '">' + esc(b.code) + '</a></dd>' +
@@ -656,7 +662,7 @@
     };
     html += '<div class="card"><h2 style="margin-top:0">การตรวจสอบเอกสาร</h2>';
     if (!r.steps.length) {
-      html += '<p class="muted">งบโครงการ (CBS) ไม่ต้องผ่านฝ่ายการเงิน — ออกเอกสารทันทีเมื่อ' + fmtDate(r.approvedAt) + '</p>';
+      html += '<p class="muted">งบโครงการ (CBS) ไม่ต้องผ่านฝ่ายการเงิน — ออกเอกสารทันทีเมื่อ ' + fmtDate(r.approvedAt) + '</p>';
     }
     if (r.history && r.history.length) {
       html += '<div class="muted">รอบก่อนหน้า</div><ol class="steps">' + r.history.map(stepItem).join('') + '</ol>' +
@@ -674,6 +680,11 @@
       html += '<div class="actions">' +
         (r.status === 'rejected' ? '<a class="btn primary" href="#/request/' + r.id + '/edit">แก้ไขและส่งใหม่</a>' : '') +
         '<button class="btn bad" id="cancelRequest" data-id="' + r.id + '">ยกเลิกคำขอ</button></div>';
+    }
+    // CBS ไม่ผ่านการเงิน ผู้ขอจึงยกเลิกเอกสารที่ออกแล้วเองได้ (เช่น เลือกตัวงบหรือยอดผิด)
+    if (r.type === 'CBS' && r.status === 'approved' && r.requesterId === u.id) {
+      html += '<div class="actions"><button class="btn bad" id="cancelRequest" data-id="' + r.id + '">ยกเลิกเอกสาร ' + esc(r.docNo) + '</button></div>' +
+        '<p class="muted">ยกเลิกแล้วยอดจะคืนเข้างบ และเอกสารเลขที่นี้จะนำไปแนบขอซื้อไม่ได้อีก</p>';
     }
     html += '</div></div>';
     return html;
@@ -722,12 +733,24 @@
     const cancel = document.getElementById('cancelRequest');
     if (cancel) {
       cancel.addEventListener('click', () => {
-        if (!confirm('ยืนยันการยกเลิกคำขอนี้?')) return;
         const r = requestById(cancel.dataset.id);
+        let reason = '';
+        if (r.status === 'approved') {
+          // เอกสารที่ออกไปแล้วต้องระบุเหตุผลการยกเลิกไว้ตรวจสอบย้อนหลัง
+          reason = (prompt('ระบุเหตุผลที่ยกเลิกเอกสาร ' + r.docNo + ' (เช่น เลือกตัวงบผิด / ยอดผิด)') || '').trim();
+          if (!reason) return;
+        } else if (!confirm('ยืนยันการยกเลิกคำขอนี้?')) {
+          return;
+        }
+        const wasIssued = r.status === 'approved';
         r.status = 'cancelled';
         r.cancelledAt = new Date().toISOString();
+        r.cancelledBy = me().id;
+        r.cancelReason = reason;
         save();
-        setFlash('info', 'ยกเลิกคำขอ ' + r.no + ' แล้ว');
+        setFlash('info', wasIssued
+          ? 'ยกเลิกเอกสาร ' + r.docNo + ' แล้ว คืนยอด ' + money(r.amount) + ' บาทเข้างบเรียบร้อย'
+          : 'ยกเลิกคำขอ ' + r.no + ' แล้ว');
         go('#/request/' + r.id);
       });
     }
@@ -737,6 +760,7 @@
   function viewDocument(id) {
     const r = requestById(id);
     if (!r) return notFound();
+    if (r.status === 'cancelled' && r.docNo) return '<div class="alert error">เอกสารเลขที่ ' + esc(r.docNo) + ' ถูกยกเลิกแล้ว ใช้แนบขอซื้อไม่ได้</div>';
     if (r.status !== 'approved') return '<div class="alert error">คำขอนี้ยังไม่ได้รับอนุมัติจากฝ่ายการเงิน จึงยังไม่มีเอกสาร</div>';
     const b = budgetById(r.budgetId);
     const item = r.itemId ? b.items.find((i) => i.id === r.itemId) : null;
