@@ -853,7 +853,31 @@
     window.scrollTo(0, 0);
   }
 
+  /**
+   * GitHub Pages ให้เบราว์เซอร์เก็บ cache หน้าเว็บได้ราว 10 นาที จึงเช็กเลขเวอร์ชันจากเซิร์ฟเวอร์โดยตรง
+   * ถ้าเลขใน index.html บนเซิร์ฟเวอร์ใหม่กว่าหน้าที่เปิดอยู่ จะโหลดหน้าใหม่ให้เอง (ข้อมูลใน localStorage ไม่หาย)
+   */
+  function checkForUpdate() {
+    const meta = document.querySelector('meta[name="app-version"]');
+    if (!meta || !window.fetch || location.protocol === 'file:') return;
+    fetch('index.html?check=' + Date.now(), { cache: 'no-store' })
+      .then((res) => (res.ok ? res.text() : ''))
+      .then((html) => {
+        const m = html.match(/<meta name="app-version" content="([^"]+)"/);
+        const url = new URL(location.href);
+        // กันโหลดวนซ้ำ: ถ้าเคยพาไปที่ ?v=เวอร์ชันนี้แล้ว ไม่ต้องโหลดอีก
+        if (!m || m[1] === meta.content || url.searchParams.get('v') === m[1]) return;
+        url.searchParams.set('v', m[1]);
+        location.replace(url.toString());
+      })
+      .catch(() => { /* ออฟไลน์หรือเช็กไม่ได้ ใช้หน้าเดิมต่อ */ });
+  }
+
   function init() {
+    checkForUpdate();
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') checkForUpdate();
+    });
     const sel = document.getElementById('userSelect');
     sel.innerHTML = USERS.map((u) =>
       '<option value="' + u.id + '">' + esc(u.name + ' (' + ROLE_LABEL[u.role] + ')') + '</option>').join('');
