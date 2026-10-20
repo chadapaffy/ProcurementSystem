@@ -254,11 +254,11 @@
     const u = me();
     const mine = u.role === 'requester';
     const all = db.budgets.filter((b) => !mine || b.ownerId === u.id);
-    const count = (t) => all.filter((b) => b.type === t).length;
-    const type = params.get('type') === 'CBS' || (!params.get('type') && !count('CAPEX') && count('CBS')) ? 'CBS' : 'CAPEX';
-    const list = all.filter((b) => b.type === type);
+    const count = (t) => (t === 'ALL' ? all.length : all.filter((b) => b.type === t).length);
+    const type = TYPE_LABEL[params.get('type')] ? params.get('type') : 'ALL';
+    const list = type === 'ALL' ? all : all.filter((b) => b.type === type);
     const base = mine ? '#/my-budgets' : '#/budgets';
-    const tab = (t, label) => '<a href="' + base + '?type=' + t + '"' + (type === t ? ' class="active" aria-current="page"' : '') + '>' +
+    const tab = (t, label) => '<a href="' + base + (t === 'ALL' ? '' : '?type=' + t) + '"' + (type === t ? ' class="active" aria-current="page"' : '') + '>' +
       label + '<span class="tab-count">(' + count(t) + ')</span></a>';
     const uniq = (arr) => Array.from(new Set(arr));
     const depts = uniq(all.map((b) => b.department)).sort();
@@ -267,7 +267,7 @@
 
     let html = '<div class="page-head"><h1>' + (mine ? 'งบของฉัน' : 'จัดการงบประมาณ') + '</h1>' +
       '<span class="pill">' + esc(u.title) + '</span></div>' + takeFlash() +
-      '<nav class="tabs" aria-label="ประเภทงบ">' + tab('CAPEX', 'งบลงทุน (CAPEX)') + tab('CBS', 'งบโครงการ (CBS)') + '</nav>' +
+      '<nav class="tabs" aria-label="ประเภทงบ">' + tab('ALL', 'ทั้งหมด') + tab('CAPEX', 'งบลงทุน (CAPEX)') + tab('CBS', 'งบโครงการ (CBS)') + '</nav>' +
       '<div class="filters">' +
       '<label class="input-wrap search">' + ICON_SEARCH +
       '<input id="fSearch" type="search" placeholder="ค้นหาชื่องบ รหัส หรือหน่วยงาน" aria-label="ค้นหา" value="' + esc(budgetFilter.q) + '"></label>' +
@@ -282,7 +282,7 @@
 
     if (!list.length) {
       return html + '<div class="card empty">' +
-        (mine ? 'ยังไม่มี' + TYPE_LABEL[type] + 'ที่การเงินบันทึกไว้ให้คุณ' : 'ยังไม่มี' + TYPE_LABEL[type]) + '</div>';
+        (mine ? 'ยังไม่มี' + (TYPE_LABEL[type] || 'งบ') + 'ที่การเงินบันทึกไว้ให้คุณ' : 'ยังไม่มี' + (TYPE_LABEL[type] || 'งบประมาณ')) + '</div>';
     }
 
     html += '<div class="grid" id="budgetGrid">' + list.map((b) => {
