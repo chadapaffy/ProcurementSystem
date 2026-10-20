@@ -66,6 +66,18 @@
             { id: 'i4', code: '04', name: 'ค่าบริหารโครงการ', amount: 300000 }
           ],
           createdAt: now
+        },
+        {
+          id: 'b4', type: 'CAPEX', code: 'CAPEX-' + (year - 1) + '-ENG-05',
+          name: 'ระบบลำเลียงวัตถุดิบ (Conveyor)', fiscalYear: year - 1, department: 'ฝ่ายวิศวกรรม',
+          ownerId: 'req1', amount: 800000, items: [],
+          note: 'งบปีก่อน ยกมาใช้ต่อ', createdAt: now
+        },
+        {
+          id: 'b5', type: 'CAPEX', code: 'CAPEX-' + year + '-PRD-01',
+          name: 'รถยกและอุปกรณ์คลังสินค้า', fiscalYear: year, department: 'ฝ่ายผลิต',
+          ownerId: 'req2', amount: 1200000, items: [],
+          note: '', createdAt: now
         }
       ],
       requests: []
@@ -172,12 +184,12 @@
 
   function usageBar(u) {
     const pct = (v) => (u.approved > 0 ? Math.min(100, (v / u.approved) * 100) : 0);
-    return '<div class="bar" role="img" aria-label="ใช้แล้ว ' + money(u.used) + ' จอง ' + money(u.reserved) + '">' +
+    return '<div class="bar" role="img" aria-label="ใช้แล้ว ' + money(u.used) + ' รอตรวจสอบ ' + money(u.reserved) + '">' +
       '<div class="used" style="width:' + pct(u.used) + '%"></div>' +
       '<div class="reserved" style="width:' + pct(u.reserved) + '%"></div></div>' +
-      '<div class="legend"><span><i style="background:var(--primary)"></i>ใช้แล้ว</span>' +
-      '<span><i style="background:var(--warn)"></i>รอตรวจสอบ</span>' +
-      '<span><i style="background:var(--bar-bg)"></i>คงเหลือ</span></div>';
+      '<div class="legend"><span><i class="l-used"></i>ใช้แล้ว</span>' +
+      '<span><i class="l-reserved"></i>รอตรวจสอบ</span>' +
+      '<span><i class="l-left"></i>คงเหลือ</span></div>';
   }
 
   function usageKv(u) {
@@ -209,56 +221,116 @@
     return '#/my-budgets';
   }
 
+  const NAV_ICON = '<svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true">' +
+    [4, 10, 16].map((y) => [4, 10, 16].map((x) =>
+      '<circle cx="' + x + '" cy="' + y + '" r="1.7" fill="currentColor"/>').join('')).join('') + '</svg>';
+
   function renderNav(route) {
     const u = me();
     const links = [];
-    if (u.role === 'finance') links.push(['#/budgets', 'จัดการงบประมาณ']);
-    if (u.role === 'requester') links.push(['#/my-budgets', 'งบของฉัน']);
+    // [href, ข้อความ, เส้นทางที่ให้ไฮไลต์เมนูนี้]
+    if (u.role === 'finance') links.push(['#/budgets', 'จัดการงบประมาณ', ['#/budgets', '#/budget/']]);
+    if (u.role === 'requester') links.push(['#/my-budgets', 'งบของฉัน', ['#/my-budgets', '#/budget/', '#/request/new']]);
     const n = inbox(u).length;
     if (u.role === 'finance') {
-      links.push(['#/approvals', 'รอตรวจสอบ' + (n ? '<span class="count">' + n + '</span>' : '')]);
+      links.push(['#/approvals', 'รอตรวจสอบ' + (n ? '<span class="count">' + n + '</span>' : ''), ['#/approvals']]);
     }
-    links.push(['#/requests', u.role === 'requester' ? 'คำขอของฉัน' : 'คำขอใช้งบทั้งหมด']);
-    document.getElementById('nav').innerHTML = links.map(([href, text]) =>
-      '<a href="' + href + '"' + (route.startsWith(href) ? ' class="active"' : '') + '>' + text + '</a>'
-    ).join('');
+    links.push(['#/requests', u.role === 'requester' ? 'คำขอของฉัน' : 'คำขอใช้งบทั้งหมด', ['#/requests', '#/request/', '#/doc/']]);
+    let activeDone = false;
+    document.getElementById('nav').innerHTML = links.map(([href, text, prefixes]) => {
+      const active = !activeDone && prefixes.some((p) => route.startsWith(p));
+      if (active) activeDone = true;
+      return '<a href="' + href + '"' + (active ? ' class="active" aria-current="page"' : '') + '>' + NAV_ICON + '<span>' + text + '</span></a>';
+    }).join('');
   }
+
+  // ตัวกรองหน้ารายการงบ จำค่าไว้ตอนสลับแท็บ
+  const budgetFilter = { q: '', dept: '', year: '' };
+
+  const ICON_SEARCH = '<svg class="lead" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path d="M20 20l-3.5-3.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
+  const ICON_CAL = '<svg class="trail" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><rect x="3.5" y="5" width="17" height="15" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M3.5 10h17M8 3v4M16 3v4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>';
 
   function viewBudgets(params) {
     const u = me();
     const mine = u.role === 'requester';
-    const type = params.get('type') || 'ALL';
-    let list = db.budgets.filter((b) => !mine || b.ownerId === u.id);
-    if (type !== 'ALL') list = list.filter((b) => b.type === type);
+    const all = db.budgets.filter((b) => !mine || b.ownerId === u.id);
+    const count = (t) => all.filter((b) => b.type === t).length;
+    const type = params.get('type') === 'CBS' || (!params.get('type') && !count('CAPEX') && count('CBS')) ? 'CBS' : 'CAPEX';
+    const list = all.filter((b) => b.type === type);
     const base = mine ? '#/my-budgets' : '#/budgets';
-    const tab = (t, label) => '<a href="' + base + (t === 'ALL' ? '' : '?type=' + t) + '"' +
-      (type === t ? ' class="active"' : '') + '>' + label + '</a>';
+    const tab = (t, label) => '<a href="' + base + '?type=' + t + '"' + (type === t ? ' class="active" aria-current="page"' : '') + '>' +
+      label + '<span class="tab-count">(' + count(t) + ')</span></a>';
+    const uniq = (arr) => Array.from(new Set(arr));
+    const depts = uniq(all.map((b) => b.department)).sort();
+    const years = uniq(all.map((b) => String(b.fiscalYear))).sort().reverse();
+    const opt = (v, label, sel) => '<option value="' + esc(v) + '"' + (v === sel ? ' selected' : '') + '>' + esc(label) + '</option>';
 
     let html = '<div class="page-head"><h1>' + (mine ? 'งบของฉัน' : 'จัดการงบประมาณ') + '</h1>' +
-      (u.role === 'finance' ? '<a class="btn primary" href="#/budget/new">+ บันทึกงบที่อนุมัติแล้ว</a>' : '') +
-      '</div>' + takeFlash() +
-      '<div class="tabs">' + tab('ALL', 'ทั้งหมด') + tab('CAPEX', 'งบลงทุน (CAPEX)') + tab('CBS', 'งบโครงการ (CBS)') + '</div>';
+      '<span class="pill">' + esc(u.title) + '</span></div>' + takeFlash() +
+      '<nav class="tabs" aria-label="ประเภทงบ">' + tab('CAPEX', 'งบลงทุน (CAPEX)') + tab('CBS', 'งบโครงการ (CBS)') + '</nav>' +
+      '<div class="filters">' +
+      '<label class="input-wrap search">' + ICON_SEARCH +
+      '<input id="fSearch" type="search" placeholder="ค้นหาชื่องบ รหัส หรือหน่วยงาน" aria-label="ค้นหา" value="' + esc(budgetFilter.q) + '"></label>' +
+      '<label class="input-wrap select-wrap"><select id="fDept" aria-label="หน่วยงาน">' + opt('', 'หน่วยงาน: ทั้งหมด', budgetFilter.dept) +
+      depts.map((d) => opt(d, 'หน่วยงาน: ' + d, budgetFilter.dept)).join('') + '</select></label>' +
+      '<label class="input-wrap"><select id="fYear" aria-label="ปีงบประมาณ">' + opt('', 'ปี: ทั้งหมด', budgetFilter.year) +
+      years.map((y) => opt(y, 'ปี: ' + y, budgetFilter.year)).join('') + '</select>' + ICON_CAL + '</label>' +
+      (u.role === 'finance'
+        ? '<a class="btn primary tall" href="#/budget/new"><span aria-hidden="true">+</span> เพิ่มงบที่อนุมัติ</a>'
+        : '<span></span>') +
+      '</div>';
 
     if (!list.length) {
       return html + '<div class="card empty">' +
-        (mine ? 'ยังไม่มีงบที่การเงินบันทึกไว้ให้คุณ' : 'ยังไม่มีงบประมาณ') + '</div>';
+        (mine ? 'ยังไม่มี' + TYPE_LABEL[type] + 'ที่การเงินบันทึกไว้ให้คุณ' : 'ยังไม่มี' + TYPE_LABEL[type]) + '</div>';
     }
 
-    html += '<div class="grid">' + list.map((b) => {
+    html += '<div class="grid" id="budgetGrid">' + list.map((b) => {
       const us = usage(b);
-      return '<div class="card budget-card">' +
-        badge(b.type, b.type) + ' <span class="muted">' + esc(b.code) + '</span>' +
-        '<h3>' + esc(b.name) + '</h3>' +
-        '<div class="muted">' + esc(b.department) + ' · ปีงบ ' + esc(b.fiscalYear) +
-        (mine ? '' : ' · ผู้ขอใช้งบ: ' + esc(userName(b.ownerId))) + '</div>' +
-        usageKv(us) + usageBar(us) +
-        '<div class="actions">' +
+      const search = [b.name, b.code, b.department, userName(b.ownerId)].join(' ').toLowerCase();
+      return '<article class="card budget-card" data-search="' + esc(search) + '" data-dept="' + esc(b.department) +
+        '" data-year="' + esc(b.fiscalYear) + '">' +
+        '<div class="card-head"><div><h3>' + esc(b.name) + '</h3><div class="code">' + esc(b.code) + '</div></div>' +
+        badge(b.type + ' lg', b.type) + '</div>' +
+        '<div class="card-body"><p class="card-sub">' + esc(b.department) + ' · ปีงบ ' + esc(b.fiscalYear) +
+        (mine ? '' : ' · ' + esc(userName(b.ownerId))) + '</p>' + usageKv(us) + '</div>' +
+        '<div class="usage-strip">' + usageBar(us) + '</div>' +
+        '<div class="card-foot">' +
         '<a class="btn" href="#/budget/' + b.id + '">รายละเอียด</a>' +
-        (mine && b.ownerId === u.id ? '<a class="btn primary" href="#/request/new/' + b.id + '">ขอใช้งบ</a>' : '') +
         (u.role === 'finance' ? '<a class="btn" href="#/budget/' + b.id + '/edit">แก้ไข</a>' : '') +
-        '</div></div>';
-    }).join('') + '</div>';
+        (mine && b.ownerId === u.id ? '<a class="btn primary" href="#/request/new/' + b.id + '">ขอใช้งบ</a>' : '') +
+        '</div></article>';
+    }).join('') + '</div>' +
+      '<div class="card empty" id="noMatch" hidden>ไม่พบงบที่ตรงกับเงื่อนไขที่เลือก</div>';
     return html;
+  }
+
+  function bindBudgetFilters() {
+    const grid = document.getElementById('budgetGrid');
+    const q = document.getElementById('fSearch');
+    if (!q) return;
+    const dept = document.getElementById('fDept');
+    const year = document.getElementById('fYear');
+    const apply = () => {
+      budgetFilter.q = q.value;
+      budgetFilter.dept = dept.value;
+      budgetFilter.year = year.value;
+      if (!grid) return;
+      const term = q.value.trim().toLowerCase();
+      let shown = 0;
+      grid.querySelectorAll('.budget-card').forEach((card) => {
+        const ok = (!term || card.dataset.search.includes(term)) &&
+          (!dept.value || card.dataset.dept === dept.value) &&
+          (!year.value || card.dataset.year === year.value);
+        card.hidden = !ok;
+        if (ok) shown += 1;
+      });
+      document.getElementById('noMatch').hidden = shown > 0;
+    };
+    q.addEventListener('input', apply);
+    dept.addEventListener('change', apply);
+    year.addEventListener('change', apply);
+    apply();
   }
 
   function viewBudgetForm(id) {
@@ -434,7 +506,7 @@
     const u = me();
     const us = usage(b);
     const reqs = db.requests.filter((r) => r.budgetId === b.id);
-    let html = '<div class="page-head"><h1>' + badge(b.type, b.type) + ' ' + esc(b.name) + '</h1><div class="actions" style="margin:0">' +
+    let html = '<div class="page-head"><h1>' + esc(b.name) + ' ' + badge(b.type + ' lg', b.type) + '</h1><div class="actions" style="margin:0">' +
       (u.role === 'requester' && b.ownerId === u.id ? '<a class="btn primary" href="#/request/new/' + b.id + '">ขอใช้งบ</a>' : '') +
       (u.role === 'finance' ? '<a class="btn" href="#/budget/' + b.id + '/edit">แก้ไข</a>' : '') +
       '</div></div>' +
@@ -830,6 +902,7 @@
     const [path, query] = hash.slice(1).split('?');
     const params = new URLSearchParams(query || '');
     const parts = path.split('/').filter(Boolean);
+    if (!parts.length) { location.replace(homeFor(me())); return; }
     const app = document.getElementById('app');
     let html;
 
@@ -850,6 +923,8 @@
     bindBudgetForm();
     bindRequestForm();
     bindRequestDetail();
+    bindBudgetFilters();
+    document.body.classList.remove('nav-open');
     window.scrollTo(0, 0);
   }
 
@@ -873,26 +948,66 @@
       .catch(() => { /* ออฟไลน์หรือเช็กไม่ได้ ใช้หน้าเดิมต่อ */ });
   }
 
+  function renderUserButton() {
+    document.getElementById('userName').textContent = me().name;
+    document.getElementById('userPos').textContent = me().title;
+  }
+
+  /** เมนูผู้ใช้มุมขวาบน: สลับผู้ใช้ตัวอย่าง (ต้นแบบยังไม่มีล็อกอิน) และรีเซ็ตข้อมูล */
+  function initUserMenu() {
+    const btn = document.getElementById('userBtn');
+    const menu = document.getElementById('userMenu');
+    const close = () => { menu.hidden = true; btn.setAttribute('aria-expanded', 'false'); };
+    const fill = () => {
+      menu.innerHTML = '<div class="menu-label">เข้าใช้งานในฐานะ (ทดสอบ)</div>' +
+        USERS.map((x) => '<button type="button" role="menuitemradio" data-user="' + x.id + '" aria-checked="' + (x.id === me().id) + '">' +
+          esc(x.name) + '<small>' + esc(x.title + ' · ' + ROLE_LABEL[x.role]) + '</small></button>').join('') +
+        '<hr><button type="button" role="menuitem" class="danger" data-reset>รีเซ็ตข้อมูลตัวอย่าง</button>';
+    };
+    renderUserButton();
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (!menu.hidden) { close(); return; }
+      fill();
+      menu.hidden = false;
+      btn.setAttribute('aria-expanded', 'true');
+    });
+    menu.addEventListener('click', (e) => {
+      const item = e.target.closest('button');
+      if (!item) return;
+      e.stopPropagation();
+      close();
+      if (item.hasAttribute('data-reset')) {
+        if (!confirm('ล้างข้อมูลทั้งหมดและกลับไปใช้ข้อมูลตัวอย่าง?')) return;
+        db = seed();
+        save();
+      } else {
+        currentUserId = item.dataset.user;
+        try { localStorage.setItem(DB_KEY + '.user', currentUserId); } catch (err) { /* ignore */ }
+        renderUserButton();
+      }
+      go(homeFor(me()));
+    });
+    document.addEventListener('click', close);
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') close(); });
+  }
+
   function init() {
     checkForUpdate();
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'visible') checkForUpdate();
     });
-    const sel = document.getElementById('userSelect');
-    sel.innerHTML = USERS.map((u) =>
-      '<option value="' + u.id + '">' + esc(u.name + ' (' + ROLE_LABEL[u.role] + ')') + '</option>').join('');
-    sel.value = me().id;
-    sel.addEventListener('change', () => {
-      currentUserId = sel.value;
-      try { localStorage.setItem(DB_KEY + '.user', currentUserId); } catch (e) { /* ignore */ }
-      go(homeFor(me()));
-    });
-    document.getElementById('resetData').addEventListener('click', () => {
-      if (!confirm('ล้างข้อมูลทั้งหมดและกลับไปใช้ข้อมูลตัวอย่าง?')) return;
-      db = seed();
-      save();
-      go(homeFor(me()));
-    });
+    initUserMenu();
+    const toggle = document.getElementById('menuToggle');
+    const backdrop = document.createElement('div');
+    backdrop.className = 'backdrop no-print';
+    document.body.appendChild(backdrop);
+    const setNav = (open) => {
+      document.body.classList.toggle('nav-open', open);
+      toggle.setAttribute('aria-expanded', String(open));
+    };
+    toggle.addEventListener('click', () => setNav(!document.body.classList.contains('nav-open')));
+    backdrop.addEventListener('click', () => setNav(false));
     window.addEventListener('hashchange', render);
     render();
   }
