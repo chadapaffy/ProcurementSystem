@@ -25,6 +25,7 @@
 }
 
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 body {
   margin: 0;
   font-family: "Noto Sans Thai", "Sarabun", system-ui, sans-serif;
@@ -210,6 +211,22 @@ legend { padding: 0 .4rem; font-weight: 600; }
   border-right: 2px solid var(--muted); border-bottom: 2px solid var(--muted); transform: rotate(45deg); pointer-events: none;
 }
 
+.edit-table td { padding: .35rem .4rem; }
+.edit-table input, .edit-table select { padding: .4rem .5rem; font-size: .88rem; }
+.edit-table input:disabled { background: var(--surface-2); color: var(--muted); }
+.parent-row td { background: var(--surface-2); font-weight: 600; }
+.edit-table .parent-row input[name="name"], .edit-table .parent-row input[name="code"] { font-weight: 600; }
+.table-actions { margin: .75rem 0 1rem; align-items: center; }
+.small-note { font-size: .85rem; margin: -.4rem 0 .9rem; }
+.check-field .check { display: flex; align-items: center; gap: .5rem; height: 40px; color: var(--text); font-weight: 400; }
+.check-field input[type="checkbox"], td.center input[type="checkbox"] { width: 1.1rem; height: 1.1rem; }
+.field { display: flex; flex-direction: column; gap: .3rem; font-size: .9rem; margin-bottom: .95rem; }
+.field > span { color: var(--text-2); font-weight: 500; }
+.out { padding: .55rem .75rem; border: 1px dashed var(--border-strong); border-radius: 8px; background: var(--surface-2); text-align: right; font-variant-numeric: tabular-nums; min-height: 40px; }
+.out.strong { font-weight: 700; }
+.center { text-align: center; }
+.neg { color: var(--bad); font-weight: 600; }
+
 /* ---------- buttons ---------- */
 .btn {
   display: inline-flex; align-items: center; justify-content: center; gap: .4rem;
@@ -230,6 +247,7 @@ button.link { background: none; border: 0; padding: 0; color: var(--primary); cu
 .alert.error { color: var(--bad); background: #fdecea; }
 .alert.info { color: var(--primary); background: #eef3ff; }
 .alert.success { color: var(--ok); background: #e6f4ea; }
+.alert.warn { color: var(--warn); background: #fff4e5; }
 
 .steps { list-style: none; padding: 0; margin: 0; }
 .steps li { display: flex; gap: .75rem; padding: .55rem 0; border-bottom: 1px dashed var(--border); }
@@ -259,6 +277,16 @@ button.link { background: none; border: 0; padding: 0; color: var(--primary); cu
 .doc .signs .line { border-bottom: 1px dotted #000; height: 2.5rem; margin-bottom: .3rem; }
 .doc .stamp { display: inline-block; border: 2px solid var(--ok); color: var(--ok); padding: .1rem .6rem; font-weight: 700; transform: rotate(-4deg); }
 .doc .note { font-size: 12px; color: #444; margin-top: 1.5rem; }
+.doc .doc-sub { font-size: 1.05rem; font-weight: 600; margin-top: .2rem; }
+.doc .doc-two { display: grid; grid-template-columns: 1fr 1fr; gap: .75rem; }
+.doc .doc-two th[colspan] { text-align: left; }
+.doc .doc-two tbody th { width: 62%; }
+.doc .num-cell { display: block; text-align: right; font-variant-numeric: tabular-nums; }
+.doc .doa-title { margin: 0 0 .4rem; font-size: 13px; }
+.doc .doa-hit td { background: #eef6ee; font-weight: 600; }
+.doc .center { text-align: center; font-size: 1.1em; }
+.doc .signs small { color: #444; }
+.doc .neg { color: #b00; }
 
 @media print {
   .no-print { display: none !important; }
@@ -294,4 +322,5 @@ button.link { background: none; border: 0; padding: 0; color: var(--primary); cu
   .tabs a { font-size: 1rem; }
   .grid { grid-template-columns: 1fr; }
   .doc { padding: 1rem; }
+  .doc .doc-two { grid-template-columns: 1fr; }
 }
