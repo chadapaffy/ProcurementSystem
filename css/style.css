@@ -226,6 +226,15 @@ legend { padding: 0 .4rem; font-weight: 600; }
 .out.strong { font-weight: 700; }
 .center { text-align: center; }
 .neg { color: var(--bad); font-weight: 600; }
+.lines-table tfoot td { background: var(--surface-2); font-variant-numeric: tabular-nums; }
+.lines-table .line-no { color: var(--muted); text-align: center; }
+.lines-table .ln-total { white-space: nowrap; }
+tfoot td { border-top: 1px solid var(--border); }
+.pay-summary { display: flex; flex-wrap: wrap; gap: .75rem 2.5rem; margin-bottom: 1rem; }
+.pay-summary div { display: flex; flex-direction: column; }
+.pay-summary strong { font-size: 1.1rem; font-variant-numeric: tabular-nums; }
+.pay-form { margin-top: 1.25rem; padding-top: 1rem; border-top: 1px dashed var(--border-strong); }
+.pay-form h3 { margin: 0 0 .75rem; font-size: 1rem; }
 
 /* ---------- buttons ---------- */
 .btn {
