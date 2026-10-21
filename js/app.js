@@ -270,7 +270,9 @@
 
   /**
    * ยอดงบของทั้งงบ หรือของรายการ (รวมรายการลูก)
-   * approved = งบที่ได้รับ, used = ออกเอกสารแล้ว, reserved = รอการเงินตรวจสอบ
+   * approved = งบที่ได้รับ
+   * used = ตัดงบแล้ว (ฝ่ายบัญชีบันทึกจ่ายเงินแล้วเท่านั้น)
+   * reserved = จองไว้ (รอการเงินตรวจสอบ หรือออกเอกสารแล้วแต่บัญชียังไม่ได้จ่าย) — ยังหักออกจากยอดคงเหลือเพื่อกันใช้ซ้ำ
    */
   function usage(b, itemId) {
     let ids = null;
@@ -288,8 +290,9 @@
     db.requests.forEach((r) => {
       if (r.budgetId !== b.id || (r.status !== 'approved' && r.status !== 'pending')) return;
       const amt = linesAmount(r, ids);
-      if (r.status === 'approved') used += amt;
-      else reserved += amt;
+      const paid = Math.min(amt, paidByAccounting(r, ids));
+      used += paid;
+      reserved += amt - paid;
     });
     used = round2(used);
     reserved = round2(reserved);
@@ -314,6 +317,17 @@
   const reqItemIds = (r) => uniq(r.lines.map((l) => l.itemId));
   const paidTotal = (r) => round2((r.payments || []).reduce((s, p) => s + p.amount, 0));
   const outstanding = (r) => round2(r.amount - paidTotal(r));
+  /**
+   * ยอดที่ฝ่ายบัญชีจ่ายเงินแล้วจริง (เงื่อนไขการตัดงบ): CAPEX นับเป็นรายงวดที่บัญชีลงวันที่จ่าย, CBS นับทั้งใบเมื่อสถานะ "จ่ายแล้ว"
+   * ids = จำกัดเฉพาะบรรทัดของรายการนั้น (CAPEX ใบหนึ่งมีรายการย่อยเดียว)
+   */
+  function paidByAccounting(r, ids) {
+    if (r.status !== 'approved') return 0;
+    const share = linesAmount(r, ids);
+    if (!share) return 0;
+    if (r.type === 'CAPEX') return round2((r.payments || []).filter((p) => p.paidAt).reduce((s, p) => s + p.amount, 0));
+    return r.accounting && r.accounting.paymentStatus === 'จ่ายแล้ว' ? share : 0;
+  }
 
   /** แผนการจ่าย (CAPEX): { mode: 'single' | 'installments', installments: [{ pct, note }] } — คำขอเก่าใช้ข้อความ paymentTerms */
   const isInstallments = (r) => !!(r.paymentPlan && r.paymentPlan.mode === 'installments');
@@ -339,11 +353,11 @@
     const first = r.lines[0] ? r.lines[0].description : '';
     return r.lines.length > 1 ? first + ' และอีก ' + (r.lines.length - 1) + ' รายการ' : first;
   }
-  /** CAPEX: บัญชีต้องแยก Asset/Expense ทุกงวดที่การเงินบันทึก · CBS: บัญชียืนยัน GL และสถานะจ่ายของทั้งใบ */
+  /** CAPEX: บัญชีต้องลงวันที่จ่ายและแยก Asset/Expense ทุกงวดที่การเงินบันทึก · CBS: บัญชียืนยัน GL และบันทึกจ่ายเงินทั้งใบ (จ่ายแล้วจึงตัดงบ) */
   function needsAccounting(r) {
     if (r.status !== 'approved') return false;
-    if (r.type === 'CAPEX') return (r.payments || []).some((p) => !p.acctAt);
-    return !(r.accounting && r.accounting.updatedAt);
+    if (r.type === 'CAPEX') return (r.payments || []).some((p) => !p.acctAt || !p.paidAt);
+    return !(r.accounting && r.accounting.paymentStatus === 'จ่ายแล้ว');
   }
   const needsPayment = (r) => r.type === 'CAPEX' && r.status === 'approved' && outstanding(r) > 0;
 
@@ -353,19 +367,19 @@
 
   function usageBar(u) {
     const pct = (v) => (u.approved > 0 ? Math.min(100, (v / u.approved) * 100) : 0);
-    return '<div class="bar" role="img" aria-label="ใช้แล้ว ' + money(u.used) + ' รอตรวจสอบ ' + money(u.reserved) + '">' +
+    return '<div class="bar" role="img" aria-label="ตัดงบแล้ว ' + money(u.used) + ' จองไว้ ' + money(u.reserved) + '">' +
       '<div class="used" style="width:' + pct(u.used) + '%"></div>' +
       '<div class="reserved" style="width:' + pct(u.reserved) + '%"></div></div>' +
-      '<div class="legend"><span><i class="l-used"></i>ใช้แล้ว</span>' +
-      '<span><i class="l-reserved"></i>รอตรวจสอบ</span>' +
+      '<div class="legend"><span><i class="l-used"></i>ตัดงบแล้ว</span>' +
+      '<span><i class="l-reserved"></i>จองไว้ (ยังไม่จ่าย)</span>' +
       '<span><i class="l-left"></i>คงเหลือ</span></div>';
   }
 
   function usageKv(u) {
     return '<dl class="kv">' +
       '<dt>งบที่ได้รับอนุมัติ</dt><dd>' + money(u.approved) + '</dd>' +
-      '<dt>ใช้แล้ว (ออกเอกสาร)</dt><dd>' + money(u.used) + '</dd>' +
-      '<dt>รอตรวจสอบ (จองไว้)</dt><dd>' + money(u.reserved) + '</dd>' +
+      '<dt>ตัดงบแล้ว (บัญชีจ่ายแล้ว)</dt><dd>' + money(u.used) + '</dd>' +
+      '<dt>จองไว้ (ยังไม่จ่าย)</dt><dd>' + money(u.reserved) + '</dd>' +
       '<dt>คงเหลือ</dt><dd class="big">' + moneyCell(u.remaining) + '</dd></dl>';
   }
 
@@ -868,7 +882,7 @@
     let items;
     if (isCapex) {
       items = '<h2>รายการย่อย (Item No.)</h2><div class="table-wrap"><table><thead><tr>' +
-        '<th>รหัสรายการย่อย</th><th>รายการ</th><th class="num">งบ</th><th class="num">ใช้แล้ว</th><th class="num">รอตรวจสอบ</th><th class="num">คงเหลือ</th>' +
+        '<th>รหัสรายการย่อย</th><th>รายการ</th><th class="num">งบ</th><th class="num">ตัดงบแล้ว</th><th class="num">จองไว้</th><th class="num">คงเหลือ</th>' +
         (canRequest ? '<th></th>' : '') + '</tr></thead><tbody>' +
         b.items.map((i) => {
           const iu = usage(b, i.id);
@@ -882,7 +896,7 @@
         }).join('') + '</tbody></table></div>';
     } else {
       items = '<h2>Cost Breakdown Structure</h2><div class="table-wrap"><table><thead><tr>' +
-        '<th>รหัส</th><th>รายการ</th><th>GL</th><th class="num">งบ (รวม VAT)</th><th class="num">ใช้ไปสะสม</th><th class="num">คงเหลือ</th>' +
+        '<th>รหัส</th><th>รายการ</th><th>GL</th><th class="num">งบ (รวม VAT)</th><th class="num">ตัดงบแล้ว</th><th class="num">จองไว้</th><th class="num">คงเหลือ</th>' +
         (canRequest ? '<th></th>' : '') + '</tr></thead><tbody>' +
         sortedItems(b).map((i) => {
           const iu = usage(b, i.id);
@@ -891,7 +905,7 @@
           return '<tr class="' + (leaf ? '' : 'parent-row') + '"><td class="nowrap">' + esc(i.code) + '</td>' +
             '<td style="padding-left:' + (0.75 + depth(i) * 1.1) + 'rem">' + esc(i.name) + qty + '</td>' +
             '<td>' + (leaf && i.glCode ? esc(i.glCode) + '<div class="muted">' + esc(i.glName) + '</div>' : '') + '</td>' +
-            '<td class="num">' + money(iu.approved) + '</td><td class="num">' + money(iu.used) + '</td>' +
+            '<td class="num">' + money(iu.approved) + '</td><td class="num">' + money(iu.used) + '</td><td class="num">' + money(iu.reserved) + '</td>' +
             '<td class="num nowrap">' + moneyCell(iu.remaining) + (iu.remaining < 0 ? ' <span class="badge rejected">เกินงบ</span>' : '') + '</td>' +
             (canRequest ? (leaf ? reqBtn(i) : '<td></td>') : '') + '</tr>';
         }).join('') + '</tbody></table></div>';
@@ -903,8 +917,8 @@
       '<div class="total-amount' + (us.remaining < 0 ? ' neg' : '') + '">' + money(us.remaining) + ' <small>บาท</small></div>' +
       '<div style="margin:.75rem 0 .9rem">' + usageBar(us) + '</div>' +
       '<dl class="kv compact"><dt>งบที่ได้รับอนุมัติ</dt><dd>' + money(us.approved) + '</dd>' +
-      '<dt>ใช้แล้ว (ออกเอกสาร)</dt><dd>' + money(us.used) + '</dd>' +
-      '<dt>รอตรวจสอบ (จองไว้)</dt><dd>' + money(us.reserved) + '</dd></dl></div>';
+      '<dt>ตัดงบแล้ว (บัญชีจ่ายแล้ว)</dt><dd>' + money(us.used) + '</dd>' +
+      '<dt>จองไว้ (ยังไม่จ่าย)</dt><dd>' + money(us.reserved) + '</dd></dl></div>';
 
     const count = (st) => reqs.filter((r) => r.status === st).length;
     const overItems = isCapex ? [] : leaves(b).filter((i) => usage(b, i.id).remaining < 0);
@@ -1315,7 +1329,7 @@
   function viewAccounting() {
     if (me().role !== 'accounting') return '<div class="alert error">เฉพาะฝ่ายบัญชี</div>';
     return '<div class="page-head"><h1>รอบันทึกข้อมูลบัญชี</h1></div>' + takeFlash() +
-      '<p class="muted">CAPEX: งวดจ่ายที่การเงินบันทึกแล้วแต่ยังไม่ได้แยก Asset / Expenses · CBS: เอกสารที่ยังไม่ได้ยืนยัน GL Code และสถานะจ่าย</p>' +
+      '<p class="muted">บัญชีลงวันที่จ่ายจริงแล้วงบจึงจะถูกตัดเป็น "ใช้แล้ว" · CAPEX: งวดจ่ายที่การเงินบันทึกแล้วแต่บัญชียังไม่ได้ลงวันที่จ่าย / แยก Asset-Expenses · CBS: เอกสารที่ยังไม่ได้ยืนยัน GL Code และบันทึกจ่ายเงิน</p>' +
       requestTable(db.requests.filter(needsAccounting), true);
   }
 
@@ -1448,7 +1462,8 @@
     const canFin = u.role === 'finance';
     const canAcc = u.role === 'accounting';
     const left = outstanding(r);
-    let html = '<h2>งวดการจ่ายเงิน' + (needsAccounting(r) ? ' <span class="badge pending">รอบัญชีแยก Asset/Expenses</span>' : '') + '</h2>' +
+    let html = '<h2>งวดการจ่ายเงิน' + (needsAccounting(r) ? ' <span class="badge pending">รอบัญชีจ่าย / แยก Asset-Expenses</span>' : '') + '</h2>' +
+      '<p class="muted small-note" style="margin:0 0 .5rem">งบจะถูกตัดเป็น "ใช้แล้ว" เมื่อฝ่ายบัญชีลงวันที่จ่ายจริงของแต่ละงวดเท่านั้น — ก่อนหน้านั้นนับเป็น "จองไว้"</p>' +
       '<div class="card">';
     const plan = isInstallments(r) ? r.paymentPlan.installments : null;
     const planAmts = plan ? planAmounts(r.amount, plan.map((x) => x.pct)) : [];
@@ -1465,7 +1480,7 @@
 
     if (pays.length) {
       html += '<form id="acctForm" data-id="' + r.id + '"><div class="table-wrap"><table class="edit-table pay-table"><thead><tr><th>งวด</th><th>วางบิล</th><th>กำหนดจ่าย</th>' +
-        '<th class="num">ก่อน VAT</th><th class="num">VAT</th><th class="num">รวม</th><th class="num" style="width:9rem">Asset (บัญชี)</th><th class="num" style="width:9rem">Expenses (บัญชี)</th>' +
+        '<th class="num">ก่อน VAT</th><th class="num">VAT</th><th class="num">รวม</th><th style="width:10rem">วันที่จ่ายจริง (บัญชี)</th><th class="num" style="width:9rem">Asset (บัญชี)</th><th class="num" style="width:9rem">Expenses (บัญชี)</th>' +
         (canFin ? '<th></th>' : '') + '</tr></thead><tbody>' +
         pays.map((p) => {
           const accCell = (name, v) => canAcc
@@ -1473,8 +1488,10 @@
             : (v == null ? '<span class="muted">-</span>' : money(v));
           return '<tr><td title="บันทึกโดย ' + esc(userName(p.by)) + '">' + esc(p.label) + '</td><td>' + fmtDay(p.deliveryDate) + '</td><td>' + fmtDay(p.dueDate) + '</td>' +
             '<td class="num">' + money(p.amountBeforeVat) + '</td><td class="num">' + money(p.vat) + '</td><td class="num">' + money(p.amount) + '</td>' +
+            '<td>' + (canAcc ? '<input name="paid-' + p.id + '" type="date" value="' + esc(p.paidAt || '') + '">'
+              : p.paidAt ? '<span class="badge approved">จ่ายแล้ว</span> ' + fmtDay(p.paidAt) : '<span class="badge pending">รอบัญชีจ่าย</span>') + '</td>' +
             '<td class="num">' + accCell('asset', p.asset) + '</td><td class="num">' + accCell('expense', p.expense) + '</td>' +
-            (canFin ? '<td>' + (p.acctAt ? '' : '<button type="button" class="btn small bad" data-del-pay="' + p.id + '" title="ลบงวด">×</button>') + '</td>' : '') + '</tr>';
+            (canFin ? '<td>' + (p.acctAt || p.paidAt ? '' : '<button type="button" class="btn small bad" data-del-pay="' + p.id + '" title="ลบงวด">×</button>') + '</td>' : '') + '</tr>';
         }).join('') + '</tbody></table></div>' +
         (canAcc ? '<div class="actions"><button class="btn primary" type="submit">บันทึกข้อมูลบัญชี</button></div>' : '') + '</form>';
     } else {
@@ -1516,8 +1533,9 @@
     const canAcc = u.role === 'accounting';
     const acc = r.accounting || {};
     if (!canAcc) {
-      return '<h2>ข้อมูลบัญชี' + (needsAccounting(r) ? ' <span class="badge pending">รอบัญชีบันทึก</span>' : '') + '</h2>' +
+      return '<h2>ข้อมูลบัญชี' + (needsAccounting(r) ? ' <span class="badge pending">รอบัญชีจ่ายเงิน</span>' : '') + '</h2>' +
         linesTable(b, r, true) + '<p class="muted small-note" style="margin-top:.6rem">สถานะการจ่ายเงิน: <strong>' + esc(acc.paymentStatus || 'รอจ่าย') + '</strong>' +
+        (acc.paidAt ? ' · จ่ายเมื่อ ' + fmtDay(acc.paidAt) : ' · งบยังไม่ถูกตัดจนกว่าบัญชีจะบันทึกว่าจ่ายแล้ว') +
         (acc.updatedAt ? ' · บัญชีบันทึกล่าสุดโดย ' + esc(userName(acc.updatedBy)) + ' เมื่อ ' + fmtDate(acc.updatedAt) : '') + '</p>';
     }
     return '<h2>ข้อมูลบัญชี</h2><form id="acctForm" class="card" data-id="' + r.id + '">' +
@@ -1529,7 +1547,9 @@
           '<td><input name="gl-' + i + '" value="' + esc(l.glCode || '') + '"></td><td><input name="gln-' + i + '" value="' + esc(l.glName || '') + '"></td></tr>';
       }).join('') + '</tbody></table></div>' +
       '<div class="row" style="margin-top:1rem"><label class="field"><span>สถานะการจ่ายเงิน</span><div class="select-wrap"><select name="paymentStatus">' +
-      ['รอจ่าย', 'จ่ายแล้ว'].map((s) => opt(s, s, acc.paymentStatus || 'รอจ่าย')).join('') + '</select></div></label></div>' +
+      ['รอจ่าย', 'จ่ายแล้ว'].map((s) => opt(s, s, acc.paymentStatus || 'รอจ่าย')).join('') + '</select></div></label>' +
+      '<label class="field"><span>วันที่จ่ายจริง (ต้องระบุเมื่อจ่ายแล้ว)</span><input name="paidAt" type="date" value="' + esc(acc.paidAt || '') + '"></label></div>' +
+      '<p class="muted small-note">งบจะถูกตัดเป็น "ใช้แล้ว" เมื่อสถานะเป็น "จ่ายแล้ว" เท่านั้น — ก่อนหน้านั้นนับเป็น "จองไว้"</p>' +
       (acc.updatedAt ? '<p class="muted small-note">บันทึกล่าสุดโดย ' + esc(userName(acc.updatedBy)) + ' เมื่อ ' + fmtDate(acc.updatedAt) + '</p>' : '') +
       '<div class="actions" style="margin-top:0"><button class="btn primary" type="submit">บันทึกข้อมูลบัญชี</button></div></form>';
   }
@@ -1553,9 +1573,9 @@
           return;
         }
         if (decision === 'approved') {
-          // ตรวจซ้ำว่ายอดยังไม่เกินงบ (คำขอนี้ถูกจองไว้แล้ว จึงคิดเฉพาะยอดที่ออกเอกสารไปแล้ว)
+          // ตรวจซ้ำว่ายอดยังไม่เกินงบ (คำขอนี้ถูกจองไว้ในยอดคงเหลือแล้ว)
           const us = usage(b, r.itemId);
-          if (us.used + r.amount > us.approved) {
+          if (us.remaining < 0) {
             alert('งบไม่เพียงพอ กรุณาตรวจสอบวงเงินงบอีกครั้ง');
             return;
           }
@@ -1646,23 +1666,29 @@
           r.payments.forEach((p) => {
             const a = f['asset-' + p.id].value;
             const x = f['expense-' + p.id].value;
-            if (a === '' && x === '') return;
+            const paid = f['paid-' + p.id].value;
+            const hasSplit = a !== '' || x !== '';
             const asset = round2(a);
             const expense = round2(x);
-            if (asset + expense > p.amount + 0.005) errors.push(p.label + ': Asset + Expenses (' + money(asset + expense) + ') เกินยอดงวด ' + money(p.amount));
-            else if (!(asset + expense > 0)) errors.push(p.label + ': กรุณาระบุมูลค่า Asset และ/หรือ Expenses');
-            else updates.push([p, asset, expense]);
+            if (hasSplit && asset + expense > p.amount + 0.005) errors.push(p.label + ': Asset + Expenses (' + money(asset + expense) + ') เกินยอดงวด ' + money(p.amount));
+            else if (hasSplit && !(asset + expense > 0)) errors.push(p.label + ': กรุณาระบุมูลค่า Asset และ/หรือ Expenses');
+            else if (hasSplit !== !!p.acctAt || paid !== (p.paidAt || '') || (hasSplit && (asset !== p.asset || expense !== p.expense))) updates.push([p, hasSplit, asset, expense, paid]);
           });
           if (errors.length) { alert(errors.join('\n')); return; }
-          if (!updates.length) { alert('ยังไม่ได้กรอกข้อมูล Asset / Expenses'); return; }
-          updates.forEach(([p, asset, expense]) => Object.assign(p, { asset, expense, acctAt: now, acctBy: u.id }));
+          if (!updates.length) { alert('ยังไม่ได้กรอกวันที่จ่าย หรือข้อมูล Asset / Expenses'); return; }
+          updates.forEach(([p, hasSplit, asset, expense, paid]) => {
+            p.paidAt = paid || null;
+            p.paidBy = paid ? u.id : null;
+            if (hasSplit) Object.assign(p, { asset, expense, acctAt: now, acctBy: u.id });
+          });
           setFlash('success', 'บันทึกข้อมูลบัญชีของ ' + r.docNo + ' แล้ว (' + updates.length + ' งวด)');
         } else {
+          if (f.paymentStatus.value === 'จ่ายแล้ว' && !f.paidAt.value) { alert('กรุณาระบุวันที่จ่ายจริง'); return; }
           r.lines.forEach((l, i) => {
             l.glCode = f['gl-' + i].value.trim();
             l.glName = f['gln-' + i].value.trim();
           });
-          r.accounting = { paymentStatus: f.paymentStatus.value, updatedAt: now, updatedBy: u.id };
+          r.accounting = { paymentStatus: f.paymentStatus.value, paidAt: f.paymentStatus.value === 'จ่ายแล้ว' ? f.paidAt.value : null, updatedAt: now, updatedBy: u.id };
           setFlash('success', 'บันทึกข้อมูลบัญชีของ ' + r.docNo + ' แล้ว');
         }
         save();
@@ -1734,7 +1760,7 @@
     const tr = (k, v) => '<tr><th style="width:34%">' + k + '</th><td>' + v + '</td></tr>';
     const balanceTable = (title, bal) => '<table><thead><tr><th colspan="2">' + title + '</th></tr></thead><tbody>' +
       tr('จำนวนเงินงบประมาณ (รวม VAT)', '<span class="num-cell">' + money(bal.approved) + ' บาท</span>') +
-      tr('ใช้งบประมาณไปแล้วก่อนการขอเบิก', '<span class="num-cell">' + money(bal.before) + ' บาท</span>') +
+      tr('ใช้/จองงบประมาณไปแล้วก่อนการขอเบิก', '<span class="num-cell">' + money(bal.before) + ' บาท</span>') +
       tr('จำนวนงบประมาณที่ขอเบิกครั้งนี้ (รวม VAT)', '<span class="num-cell"><strong>' + money(bal.now) + ' บาท</strong></span>') +
       tr('งบประมาณคงเหลือ (หลังเบิกครั้งนี้)', '<span class="num-cell">' + moneyCell(bal.after) + ' บาท</span>') + '</tbody></table>';
 
