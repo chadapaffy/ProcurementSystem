@@ -314,6 +314,27 @@
   const reqItemIds = (r) => uniq(r.lines.map((l) => l.itemId));
   const paidTotal = (r) => round2((r.payments || []).reduce((s, p) => s + p.amount, 0));
   const outstanding = (r) => round2(r.amount - paidTotal(r));
+
+  /** แผนการจ่าย (CAPEX): { mode: 'single' | 'installments', installments: [{ pct, note }] } — คำขอเก่าใช้ข้อความ paymentTerms */
+  const isInstallments = (r) => !!(r.paymentPlan && r.paymentPlan.mode === 'installments');
+  function planText(r) {
+    if (!r.paymentPlan) return r.paymentTerms || '';
+    if (!isInstallments(r)) return 'จ่ายครั้งเดียว';
+    return r.paymentPlan.installments.length + ' งวด: ' + r.paymentPlan.installments.map((x) => x.pct + '%').join(' / ');
+  }
+  /** ยอดของแต่ละงวดตามแผน (งวดสุดท้ายรับเศษให้รวมได้ยอดเต็มพอดี) */
+  function planAmounts(total, pcts) {
+    const out = pcts.map((p) => round2(total * Number(p || 0) / 100));
+    const sumPct = round2(pcts.reduce((s, p) => s + Number(p || 0), 0));
+    if (out.length && sumPct === 100) out[out.length - 1] = round2(total - out.slice(0, -1).reduce((s, x) => s + x, 0));
+    return out;
+  }
+  function planDetailHtml(r) {
+    if (!isInstallments(r)) return esc(planText(r));
+    const amts = planAmounts(r.amount, r.paymentPlan.installments.map((x) => x.pct));
+    return r.paymentPlan.installments.map((x, i) => 'งวดที่ ' + (i + 1) + ' · ' + x.pct + '% · ' + money(amts[i]) + ' บาท' +
+      (x.note ? ' — ' + esc(x.note) : '')).join('<br>');
+  }
   function reqSummary(r) {
     const first = r.lines[0] ? r.lines[0].description : '';
     return r.lines.length > 1 ? first + ' และอีก ' + (r.lines.length - 1) + ' รายการ' : first;
@@ -969,10 +990,7 @@
             itemOptions(b, existing, v.itemId, true) + '</select></div>') +
           '<div id="itemHint" class="muted small-note"></div>' +
           field('วัตถุประสงค์ในการเบิกใช้', '<textarea name="purpose" required>' + esc(v.purpose || '') + '</textarea>') +
-          '<div class="row">' +
-          field('ชื่อ Supplier (ผู้รับเงิน)', '<input name="payee" required' + val('payee') + '>') +
-          field('เงื่อนไขการจ่าย (ถ้ามี)', '<input name="paymentTerms"' + val('paymentTerms') + ' placeholder="เช่น 2 งวด 40% / 60%">') +
-          '</div>'
+          field('ชื่อ Supplier (ผู้รับเงิน)', '<input name="payee" required' + val('payee') + '>')
         : '<div class="row">' +
           field('วันที่เบิก', '<input name="expenseDate" type="date" required' + val('expenseDate') + '>') +
           field('ชื่อเจ้าหนี้ / ผู้รับเงิน', '<input name="payee" required' + val('payee') + '>') +
@@ -992,6 +1010,7 @@
       '<td class="num" id="sumBefore">0.00</td><td class="num" id="sumVat">0.00</td><td class="num"><strong id="sumTotal">0.00</strong></td><td></td></tr></tfoot>' +
       '</table></div></fieldset>' +
       '<template id="lineTpl">' + lineRow(b, {}, isCapex, existing) + '</template>' +
+      (isCapex ? planFieldset(existing && existing.paymentPlan) : '') +
       '<div id="overBudget" hidden>' +
       (isCapex ? '<div class="alert error" id="overText"></div>'
         : '<div class="alert warn" id="overText"></div>' +
@@ -1000,6 +1019,47 @@
       '<div class="actions"><button class="btn primary" type="submit">' +
       (isCapex ? (existing ? 'ส่งเอกสารให้ฝ่ายการเงินอีกครั้ง' : 'ส่งเอกสารให้ฝ่ายการเงิน') : 'จัดทำเอกสาร') + '</button>' +
       '<a class="btn" href="' + (existing ? '#/request/' + existing.id : '#/budget/' + b.id) + '">ยกเลิก</a></div></form>';
+  }
+
+  function planRow(x) {
+    return '<tr><td class="line-no"></td>' +
+      '<td><input name="planPct" type="number" min="0.01" max="100" step="0.01" class="right" value="' + esc(x.pct || '') + '" aria-label="% ของยอดรวม"></td>' +
+      '<td class="num plan-amt">0.00</td>' +
+      '<td><input name="planNote" value="' + esc(x.note || '') + '" placeholder="เช่น เมื่อส่งมอบเครื่อง / หลังติดตั้งแล้วเสร็จ" aria-label="เงื่อนไขของงวด"></td>' +
+      '<td><button type="button" class="btn small bad" data-remove-plan title="ลบงวด">×</button></td></tr>';
+  }
+
+  /** เงื่อนไขการจ่าย (CAPEX): จ่ายครั้งเดียว หรือแบ่งเป็นงวดตาม % */
+  function planFieldset(plan) {
+    const mode = plan && plan.mode === 'installments' ? 'installments' : 'single';
+    const rows = mode === 'installments' ? plan.installments : [{}, {}];
+    const opt2 = (value, title, sub) => '<label class="choice-opt"><input type="radio" name="payMode" value="' + value + '"' +
+      (mode === value ? ' checked' : '') + '><span><strong>' + title + '</strong><small>' + sub + '</small></span></label>';
+    return '<fieldset><legend>เงื่อนไขการจ่าย</legend><div class="choice">' +
+      opt2('single', 'จ่ายครั้งเดียว', 'จ่ายเต็มจำนวนในงวดเดียว') +
+      opt2('installments', 'แบ่งจ่ายเป็นงวด', 'กำหนด % ของแต่ละงวด รวมต้องได้ 100%') + '</div>' +
+      '<div id="planBox"' + (mode === 'installments' ? '' : ' hidden') + '>' +
+      '<div class="table-wrap"><table class="edit-table lines-table plan-table"><thead><tr><th style="width:3.5rem">งวด</th>' +
+      '<th class="num" style="width:9rem">% ของยอดรวม</th><th class="num" style="width:10rem">ยอดโดยประมาณ</th><th>เงื่อนไขของงวด</th><th style="width:3rem"></th></tr></thead>' +
+      '<tbody id="planRows">' + rows.map(planRow).join('') + '</tbody>' +
+      '<tfoot><tr><td class="right"><strong>รวม</strong></td><td class="num" id="planPctSum">0%</td><td class="num" id="planAmtSum">0.00</td>' +
+      '<td><div class="plan-tools"><button type="button" class="btn small" id="addPlan">+ เพิ่มงวด</button><span class="muted">แบบสำเร็จรูป:</span>' +
+      ['50,50', '40,60', '30,70', '30,40,30'].map((p) => '<button type="button" class="btn small" data-preset="' + p + '">' + p.replace(/,/g, '/') + '</button>').join('') +
+      '</div></td><td></td></tr></tfoot></table></div></div>' +
+      '<template id="planTpl">' + planRow({}) + '</template></fieldset>';
+  }
+
+  function readPlan(form) {
+    if (!form.querySelector('[name="payMode"]')) return null;
+    const mode = form.querySelector('[name="payMode"]:checked').value;
+    if (mode !== 'installments') return { mode: 'single', installments: [] };
+    return {
+      mode,
+      installments: Array.from(form.querySelectorAll('#planRows tr')).map((tr) => ({
+        pct: round2(tr.querySelector('[name="planPct"]').value),
+        note: tr.querySelector('[name="planNote"]').value.trim()
+      })).filter((x) => x.pct || x.note)
+    };
   }
 
   /** อ่านบรรทัดจากตาราง (ข้ามบรรทัดว่าง) */
@@ -1067,8 +1127,45 @@
         ' อยู่ ' + money(x.amount - x.remaining) + ' บาท')).join('<br>') +
         (isCapex ? '<br>ต้องขอให้การเงินปรับงบก่อน' : '<br>บันทึกได้ แต่ต้องระบุเหตุผล');
     };
-    form.addEventListener('input', update);
-    form.addEventListener('change', update);
+    const planRows = document.getElementById('planRows');
+    const updatePlan = () => {
+      if (!planRows) return;
+      const mode = form.querySelector('[name="payMode"]:checked').value;
+      document.getElementById('planBox').hidden = mode !== 'installments';
+      const total = round2(readLines(form, isCapex).reduce((s, l) => s + l.amount, 0));
+      const pcts = Array.from(planRows.rows).map((tr) => tr.querySelector('[name="planPct"]').value);
+      const amts = planAmounts(total, pcts);
+      Array.from(planRows.rows).forEach((tr, i) => {
+        tr.querySelector('.line-no').textContent = i + 1;
+        tr.querySelector('.plan-amt').textContent = money(amts[i]);
+      });
+      const sumPct = round2(pcts.reduce((s, p) => s + Number(p || 0), 0));
+      const sumEl = document.getElementById('planPctSum');
+      sumEl.textContent = sumPct + '%';
+      sumEl.className = 'num ' + (sumPct === 100 ? 'pos' : 'neg');
+      document.getElementById('planAmtSum').textContent = money(amts.reduce((s, x) => s + x, 0));
+    };
+    if (planRows) {
+      document.getElementById('addPlan').addEventListener('click', () => {
+        planRows.insertAdjacentHTML('beforeend', document.getElementById('planTpl').innerHTML);
+        updatePlan();
+      });
+      form.querySelectorAll('[data-preset]').forEach((btn) => btn.addEventListener('click', () => {
+        const pcts = btn.dataset.preset.split(',');
+        const notes = Array.from(planRows.rows).map((tr) => tr.querySelector('[name="planNote"]').value);
+        planRows.innerHTML = pcts.map((p, i) => planRow({ pct: p, note: notes[i] || '' })).join('');
+        updatePlan();
+      }));
+      planRows.addEventListener('click', (e) => {
+        if (e.target.matches('[data-remove-plan]') && planRows.rows.length > 1) {
+          e.target.closest('tr').remove();
+          updatePlan();
+        }
+      });
+    }
+    form.addEventListener('input', () => { update(); updatePlan(); });
+    form.addEventListener('change', () => { update(); updatePlan(); });
+    updatePlan();
     document.getElementById('addLine').addEventListener('click', () => {
       tbody.insertAdjacentHTML('beforeend', document.getElementById('lineTpl').innerHTML);
       // บรรทัดใหม่ของ CBS ใช้รายการต้นทุนเดียวกับบรรทัดก่อนหน้าเป็นค่าเริ่มต้น
@@ -1099,6 +1196,13 @@
         if (!(l.amountBeforeVat > 0)) errors.push(no + 'จำนวนเงินต้องมากกว่า 0');
       });
       if (!f.noPo.checked && !f.poNo.value.trim()) errors.push('กรุณาระบุเลขที่ PO หรือเลือก "' + (isCapex ? 'ไม่มี PO' : 'ไม่ออก PO') + '"');
+      const plan = readPlan(form);
+      if (plan && plan.mode === 'installments') {
+        const sumPct = round2(plan.installments.reduce((s, x) => s + x.pct, 0));
+        if (plan.installments.length < 2) errors.push('แบ่งจ่ายเป็นงวดต้องมีอย่างน้อย 2 งวด');
+        if (plan.installments.some((x) => !(x.pct > 0))) errors.push('กรุณาระบุ % ของทุกงวด');
+        if (sumPct !== 100) errors.push('เปอร์เซ็นต์รวมของทุกงวดต้องเท่ากับ 100% (ตอนนี้ ' + sumPct + '%)');
+      }
       const over = overItems(form, b, lines, isCapex);
       if (over.length && isCapex) errors.push('จำนวนเงินรวมเกินงบคงเหลือของรายการย่อยนี้ (คงเหลือ ' + money(over[0].remaining) + ' บาท)');
       if (over.length && !isCapex && !f.overBudgetReason.value.trim()) errors.push('กรุณาระบุเหตุผลที่ใช้เกินงบ');
@@ -1117,7 +1221,8 @@
       };
       if (isCapex) {
         fields.purpose = f.purpose.value.trim();
-        fields.paymentTerms = f.paymentTerms.value.trim();
+        fields.paymentPlan = plan;
+        fields.paymentTerms = planText({ paymentPlan: plan });
         fields.payments = [];
       } else {
         fields.expenseDate = f.expenseDate.value;
@@ -1225,7 +1330,7 @@
       list.map((r) => {
         const b = budgetById(r.budgetId);
         return '<tr><td class="nowrap"><a href="#/request/' + r.id + '">' + esc(r.docNo) + '</a><div class="muted">' + fmtDay(r.approvedAt) + '</div></td>' +
-          '<td>' + esc(b.code) + '<div class="muted">' + itemCodesCell(b, r) + '</div></td><td>' + esc(r.payee) + '</td><td>' + esc(r.paymentTerms || '-') + '</td>' +
+          '<td>' + esc(b.code) + '<div class="muted">' + itemCodesCell(b, r) + '</div></td><td>' + esc(r.payee) + '</td><td>' + esc(planText(r) || '-') + '</td>' +
           '<td class="num">' + money(r.amount) + '</td><td class="num">' + money(paidTotal(r)) + '</td><td class="num"><strong>' + money(outstanding(r)) + '</strong></td></tr>';
       }).join('') + '</tbody></table></div>';
   }
@@ -1291,7 +1396,7 @@
       fact(isCapex ? 'วันที่ขอ' : 'วันที่เบิก', isCapex ? fmtDate(r.createdAt) : fmtDay(r.expenseDate)) +
       fact(isCapex ? 'Supplier (ผู้รับเงิน)' : 'ผู้รับเงิน', esc(r.payee)) +
       fact('PO No.', esc(r.poNo)) +
-      (isCapex ? fact('เงื่อนไขการจ่าย', esc(r.paymentTerms)) : '') +
+      (isCapex ? fact('เงื่อนไขการจ่าย', esc(planText(r))) : '') +
       (isCapex ? fact('วัตถุประสงค์', esc(r.purpose), true) : '') +
       '</div></section>';
 
@@ -1345,6 +1450,18 @@
     const left = outstanding(r);
     let html = '<h2>งวดการจ่ายเงิน' + (needsAccounting(r) ? ' <span class="badge pending">รอบัญชีแยก Asset/Expenses</span>' : '') + '</h2>' +
       '<div class="card">';
+    const plan = isInstallments(r) ? r.paymentPlan.installments : null;
+    const planAmts = plan ? planAmounts(r.amount, plan.map((x) => x.pct)) : [];
+    if (plan) {
+      html += '<div class="plan-list"><div class="muted small-note" style="margin:0 0 .5rem">แผนการจ่ายตามใบเบิก</div><ol>' +
+        plan.map((x, i) => {
+          const st = i < pays.length ? '<span class="badge approved">บันทึกแล้ว</span>' : i === pays.length ? '<span class="badge pending">งวดถัดไป</span>' : '';
+          return '<li><strong>งวดที่ ' + (i + 1) + ' · ' + x.pct + '%</strong><span class="num-cell">' + money(planAmts[i]) + '</span>' +
+            '<span class="muted">' + esc(x.note || '') + '</span>' + st + '</li>';
+        }).join('') + '</ol></div>';
+    } else if (r.paymentPlan) {
+      html += '<p class="muted small-note" style="margin:0 0 .75rem">แผนการจ่าย: จ่ายครั้งเดียว ' + money(r.amount) + ' บาท</p>';
+    }
 
     if (pays.length) {
       html += '<form id="acctForm" data-id="' + r.id + '"><div class="table-wrap"><table class="edit-table pay-table"><thead><tr><th>งวด</th><th>วางบิล</th><th>กำหนดจ่าย</th>' +
@@ -1366,12 +1483,25 @@
 
     if (canFin && left > 0) {
       const nextNo = pays.length + 1;
-      html += '<form id="payForm" class="pay-form" data-id="' + r.id + '"><h3>บันทึกงวดจ่าย</h3><div class="row">' +
-        '<label class="field"><span>งวด</span><input name="label" value="งวดที่ ' + nextNo + '"></label>' +
+      // เติมชื่องวดและยอดตามแผนให้ล่วงหน้า (งวดสุดท้าย / จ่ายครั้งเดียว ใช้ยอดค้างทั้งหมดเพื่อไม่ให้คลาดจากการปัดเศษ)
+      const next = plan ? plan[pays.length] : null;
+      let label = 'งวดที่ ' + nextNo;
+      let prefill = '';
+      let rest = false;
+      if (next) {
+        label = 'งวดที่ ' + nextNo + ' (' + next.pct + '%)' + (next.note ? ' ' + next.note : '');
+        rest = pays.length === plan.length - 1;
+        prefill = rest ? '' : round2(r.amountBeforeVat * next.pct / 100);
+      } else if (r.paymentPlan && !plan) {
+        label = 'จ่ายครั้งเดียว';
+        rest = true;
+      }
+      html += '<form id="payForm" class="pay-form" data-id="' + r.id + '"' + (rest ? ' data-rest="1"' : '') + '><h3>บันทึกงวดจ่าย</h3><div class="row">' +
+        '<label class="field"><span>งวด</span><input name="label" value="' + esc(label) + '"></label>' +
         '<label class="field"><span>วันที่ส่งมอบ / วางบิล</span><input name="deliveryDate" type="date"></label>' +
         '<label class="field"><span>วันที่กำหนดจ่ายเงิน</span><input name="dueDate" type="date" required></label>' +
         '</div><div class="row">' +
-        '<label class="field"><span>ก่อน VAT (บาท)</span><input name="amountBeforeVat" type="number" min="0.01" step="0.01" required></label>' +
+        '<label class="field"><span>ก่อน VAT (บาท)</span><input name="amountBeforeVat" type="number" min="0.01" step="0.01" required value="' + prefill + '"></label>' +
         '<label class="field check-field"><span>&nbsp;</span><span class="check"><input type="checkbox" name="hasVat"' + (r.vat > 0 ? ' checked' : '') + '> มี VAT 7%</span></label>' +
         '<div class="field"><span>รวมงวดนี้</span><output id="payTotal" class="out strong">0.00</output></div>' +
         '<div class="field"><span>ค้างบันทึก</span><output class="out">' + money(left) + '</output></div>' +
@@ -1456,14 +1586,22 @@
         document.getElementById('payTotal').textContent = money(before + vat);
         return { before, vat, total: round2(before + vat) };
       };
-      pay.addEventListener('input', () => { restMode = false; calc(); });
-      pay.addEventListener('change', () => { restMode = false; calc(); });
-      document.getElementById('payRest').addEventListener('click', () => {
+      // แก้ยอดหรือ VAT เองเมื่อไร ค่อยเลิกใช้ยอดค้างทั้งหมด (กรอกวันที่ไม่กระทบ)
+      const onEdit = (e) => {
+        if (e.target.name === 'amountBeforeVat' || e.target.name === 'hasVat') restMode = false;
+        calc();
+      };
+      pay.addEventListener('input', onEdit);
+      pay.addEventListener('change', onEdit);
+      const fillRest = () => {
         const left = outstanding(r);
         f.amountBeforeVat.value = f.hasVat.checked ? round2(left / (1 + VAT_RATE)) : left;
         restMode = true;
         calc();
-      });
+      };
+      document.getElementById('payRest').addEventListener('click', fillRest);
+      if (pay.dataset.rest === '1') fillRest();
+      else calc();
       pay.addEventListener('submit', (e) => {
         e.preventDefault();
         const c = calc();
@@ -1613,7 +1751,7 @@
       (isCapex ? tr('วัตถุประสงค์ในการเบิกใช้', esc(r.purpose)) : '') +
       tr(isCapex ? 'Supplier (ผู้รับเงิน)' : 'ผู้รับเงิน', esc(r.payee)) +
       tr('PO No.', esc(r.poNo)) +
-      (isCapex && r.paymentTerms ? tr('เงื่อนไขการจ่าย', esc(r.paymentTerms)) : '') +
+      (isCapex && planText(r) ? tr('เงื่อนไขการจ่าย', planDetailHtml(r)) : '') +
       (r.overBudget ? tr('หมายเหตุ: ใช้เกินงบ', esc(r.overBudgetReason)) : '') +
       '</tbody></table></div>';
 
