@@ -190,7 +190,8 @@ table { width: 100%; border-collapse: collapse; background: var(--surface); }
 th, td { padding: .6rem .75rem; border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; }
 th { font-size: .82rem; color: var(--muted); font-weight: 600; background: var(--surface-2); }
 tbody tr:last-child td { border-bottom: 0; }
-td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+th { white-space: nowrap; }
 .table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
 
 /* ---------- forms ---------- */
@@ -271,6 +272,16 @@ tfoot td { border-top: 1px solid var(--border); }
 .timeline .current .tl-dot { background: var(--warn); box-shadow: 0 0 0 3px #fbe3c0; }
 .timeline .tl-note { margin-top: .2rem; color: var(--text-2); }
 .decision { border-top: 1px solid var(--border); padding-top: .9rem; }
+.total-amount.neg { color: var(--bad); }
+.kv.compact { gap: .3rem 1rem; font-size: .9rem; }
+.stats { display: grid; grid-template-columns: 1fr 1fr; gap: .6rem; }
+.stat { display: flex; flex-direction: column; padding: .6rem .75rem; border-radius: 10px; background: var(--surface-2); }
+.stat strong { font-size: 1.15rem; font-variant-numeric: tabular-nums; }
+.stat span { font-size: .8rem; color: var(--muted); }
+.stat.warn strong { color: var(--warn); }
+.stat.bad strong { color: var(--bad); }
+.pos { color: var(--ok); font-weight: 600; }
+.count-note { font-weight: 400; font-size: .9rem; }
 .decision .field { margin-bottom: .6rem; }
 .decision-actions { display: grid; grid-template-columns: 1fr 1fr; gap: .5rem; }
 @media (max-width: 1100px) {
@@ -299,6 +310,7 @@ tfoot td { border-top: 1px solid var(--border); }
 .btn.ok { background: var(--ok); border-color: var(--ok); color: #fff; }
 .btn.bad { border-color: var(--bad); color: var(--bad); }
 .btn.small { padding: .2rem .6rem; font-size: .85rem; }
+.btn { white-space: nowrap; }
 .btn.tall { height: 44px; padding: 0 1.4rem; }
 .actions { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: 1rem; }
 button.link { background: none; border: 0; padding: 0; color: var(--primary); cursor: pointer; font: inherit; text-decoration: underline; }
