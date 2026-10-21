@@ -990,49 +990,60 @@
     const field = (label, inner, extra) => '<label class="field"' + (extra || '') + '><span>' + label + '</span>' + inner + '</label>';
     const lastReject = existing ? existing.steps.find((s) => s.status === 'rejected') : null;
 
-    return '<div class="page-head"><h1>' + (existing ? 'แก้ไขคำขอ ' + esc(existing.no) : 'จัดทำเอกสารขอเบิกใช้งบ') + '</h1></div>' +
-      (lastReject ? '<div class="alert error">เหตุผลที่ไม่อนุมัติ: ' + esc(lastReject.comment) + '</div>' : '') +
-      '<div class="alert info">' + badge(b.type, b.type) + ' ' + esc(b.code + ' ' + b.name) +
-      ' · งบคงเหลือทั้งโครงการ <strong>' + moneyCell(usage(b).remaining) + '</strong> บาท<br>' +
+    const remaining = usage(b).remaining;
+    const step = (n, title, extra) => '<div class="section-head"><h2 class="section-title"><span class="step">' + n + '</span>' + title + '</h2>' + (extra || '') + '</div>';
+    const poField = '<div class="field po-field"><span>เลขที่ PO</span><div class="po-inline">' +
+      '<label class="check chip"><input type="checkbox" name="noPo"' + (noPo ? ' checked' : '') + '> ' + (isCapex ? 'ไม่มี PO (N/A)' : 'ไม่ออก PO') + '</label>' +
+      '<input name="poNo" placeholder="ระบุเลขที่ PO" aria-label="เลขที่ PO"' + (noPo ? ' value="" disabled' : val('poNo')) + '></div></div>';
+
+    const general = '<section class="card form-section">' + step(1, 'ข้อมูลการเบิก') + '<div class="form-grid">' +
       (isCapex
-        ? 'ใบเบิก 1 ใบ ใช้กับรายการย่อยเดียว ใส่ได้หลายบรรทัด · ถ้าจ่ายเป็นงวด ให้ขอเบิกยอดเต็มครั้งเดียว แล้วการเงินจะบันทึกงวดจ่ายภายหลัง'
-        : 'ใส่ได้หลายบรรทัด แต่ละบรรทัดเลือกรายการต้นทุนเองได้ · งบโครงการไม่ต้องผ่านฝ่ายการเงิน ได้เอกสารทันทีเมื่อบันทึก') + '</div>' +
-      '<div id="formError"></div>' +
-      '<form id="requestForm" class="card" data-budget="' + b.id + '" data-request="' + esc(requestId || '') + '">' +
-      (isCapex
-        ? field('รหัสรายการย่อย (Item No.)', '<div class="select-wrap"><select name="itemId" required><option value="">— เลือกรายการย่อย —</option>' +
-            itemOptions(b, existing, v.itemId, true) + '</select></div>') +
-          '<div id="itemHint" class="muted small-note"></div>' +
-          field('วัตถุประสงค์ในการเบิกใช้', '<textarea name="purpose" required>' + esc(v.purpose || '') + '</textarea>') +
-          field('ชื่อ Supplier (ผู้รับเงิน)', '<input name="payee" required' + val('payee') + '>')
-        : '<div class="row">' +
-          field('วันที่เบิก', '<input name="expenseDate" type="date" required' + val('expenseDate') + '>') +
+        ? '<div class="full">' + field('รหัสรายการย่อย (Item No.)', '<div class="select-wrap"><select name="itemId" required><option value="">— เลือกรายการย่อย —</option>' +
+            itemOptions(b, existing, v.itemId, true) + '</select></div>') + '<div id="itemHint" class="item-hint"></div></div>' +
+          '<div class="full">' + field('วัตถุประสงค์ในการเบิกใช้', '<textarea name="purpose" rows="3" required placeholder="เช่น จัดซื้อเครื่องชั่งสำหรับห้องปฏิบัติการ">' + esc(v.purpose || '') + '</textarea>') + '</div>' +
+          field('ชื่อ Supplier (ผู้รับเงิน)', '<input name="payee" required' + val('payee') + '>') + poField
+        : field('วันที่เบิก', '<input name="expenseDate" type="date" required' + val('expenseDate') + '>') +
           field('ชื่อเจ้าหนี้ / ผู้รับเงิน', '<input name="payee" required' + val('payee') + '>') +
-          '</div>') +
-      '<div class="row po-row">' +
-      '<label class="field check-field"><span>&nbsp;</span><span class="check"><input type="checkbox" name="noPo"' + (noPo ? ' checked' : '') + '> ' +
-      (isCapex ? 'ไม่มี PO (N/A)' : 'ไม่ออก PO') + '</span></label>' +
-      field('เลขที่ PO', '<input name="poNo" placeholder="ระบุเลขที่ PO"' + (noPo ? ' value="" disabled' : val('poNo')) + '>') +
-      '</div>' +
-      '<fieldset><legend>รายการที่ขอเบิก</legend>' +
+          '<div class="full">' + poField + '</div>') +
+      '</div></section>';
+
+    const linesCard = '<section class="card form-section">' +
+      step(2, 'รายการที่ขอเบิก', '<button type="button" class="btn" id="addLine">+ เพิ่มบรรทัด</button>') +
       '<div class="table-wrap"><table class="edit-table lines-table"><thead><tr><th style="width:2.5rem">#</th>' +
       (isCapex ? '' : '<th style="width:30%">รายการต้นทุน (CBS)</th>') +
       '<th>' + (isCapex ? 'รายการที่ซื้อ / จ่าย' : 'รายละเอียด (ถ้ามีจำนวน โปรดระบุ)') + '</th>' +
-      '<th class="num" style="width:9.5rem">ก่อน VAT</th><th style="width:4.5rem">VAT 7%</th><th class="num" style="width:9rem">รวม</th><th style="width:3rem"></th></tr></thead>' +
+      '<th class="num" style="width:9.5rem">ก่อน VAT</th><th class="center" style="width:4.5rem">VAT 7%</th><th class="num" style="width:9rem">รวม</th><th style="width:3rem"></th></tr></thead>' +
       '<tbody id="lineRows">' + lines.map((l) => lineRow(b, l, isCapex, existing)).join('') + '</tbody>' +
-      '<tfoot><tr><td colspan="' + (isCapex ? 2 : 3) + '" class="right"><button type="button" class="btn small" id="addLine">+ เพิ่มบรรทัด</button></td>' +
+      '<tfoot><tr><td colspan="' + (isCapex ? 2 : 3) + '" class="right muted">รวมทั้งหมด</td>' +
       '<td class="num" id="sumBefore">0.00</td><td class="num" id="sumVat">0.00</td><td class="num"><strong id="sumTotal">0.00</strong></td><td></td></tr></tfoot>' +
-      '</table></div></fieldset>' +
+      '</table></div>' +
       '<template id="lineTpl">' + lineRow(b, {}, isCapex, existing) + '</template>' +
-      (isCapex ? planFieldset(existing && existing.paymentPlan) : '') +
       '<div id="overBudget" hidden>' +
       (isCapex ? '<div class="alert error" id="overText"></div>'
         : '<div class="alert warn" id="overText"></div>' +
-          field('เหตุผลที่ใช้เกินงบ (จำเป็น)', '<textarea name="overBudgetReason">' + esc(v.overBudgetReason || '') + '</textarea>')) +
-      '</div>' +
-      '<div class="actions"><button class="btn primary" type="submit">' +
+          field('เหตุผลที่ใช้เกินงบ (จำเป็น)', '<textarea name="overBudgetReason" rows="3">' + esc(v.overBudgetReason || '') + '</textarea>')) +
+      '</div></section>';
+
+    const side = '<div class="card total-card"><span class="muted">ขอเบิกครั้งนี้ (รวม VAT)</span>' +
+      '<div class="total-amount"><span id="sideTotal">0.00</span> <small>บาท</small></div>' +
+      '<dl class="kv compact"><dt>งบคงเหลือทั้งโครงการ</dt><dd>' + moneyCell(remaining) + '</dd>' +
+      '<dt>คงเหลือหลังขอเบิก</dt><dd id="sideAfter">' + moneyCell(remaining) + '</dd></dl>' +
+      '<div class="actions side-actions"><button class="btn primary tall" type="submit">' +
       (isCapex ? (existing ? 'ส่งเอกสารให้ฝ่ายการเงินอีกครั้ง' : 'ส่งเอกสารให้ฝ่ายการเงิน') : 'จัดทำเอกสาร') + '</button>' +
-      '<a class="btn" href="' + (existing ? '#/request/' + existing.id : '#/budget/' + b.id) + '">ยกเลิก</a></div></form>';
+      '<a class="btn" href="' + (existing ? '#/request/' + existing.id : '#/budget/' + b.id) + '">ยกเลิก</a></div></div>' +
+      '<div class="card form-tip"><h3 class="side-title">คำแนะนำ</h3><p class="muted">' +
+      (isCapex
+        ? 'ใบเบิก 1 ใบ ใช้กับรายการย่อยเดียว ใส่ได้หลายบรรทัด ถ้าจ่ายเป็นงวดให้ขอเบิกยอดเต็มครั้งเดียว แล้วกำหนดเงื่อนไขการจ่ายไว้ในใบเบิก'
+        : 'ใส่ได้หลายบรรทัด แต่ละบรรทัดเลือกรายการต้นทุนเองได้ งบโครงการไม่ต้องผ่านฝ่ายการเงิน ได้เอกสารทันทีเมื่อบันทึก ใช้เกินงบได้แต่ต้องระบุเหตุผล') + '</p></div>';
+
+    return '<div class="page-head"><div><h1>' + (existing ? 'แก้ไขคำขอ ' + esc(existing.no) : 'จัดทำเอกสารขอเบิกใช้งบ') + '</h1>' +
+      '<div class="page-sub">' + badge(b.type, b.type) + ' ' + esc(b.code + ' ' + b.name) + '</div></div></div>' +
+      (lastReject ? '<div class="alert error">เหตุผลที่ไม่อนุมัติ: ' + esc(lastReject.comment) + '</div>' : '') +
+      '<div id="formError"></div>' +
+      '<form id="requestForm" class="req-form" data-budget="' + b.id + '" data-request="' + esc(requestId || '') + '" data-remaining="' + remaining + '">' +
+      '<div class="detail-layout"><div class="detail-main form-main">' + general + linesCard +
+      (isCapex ? planFieldset(existing && existing.paymentPlan) : '') +
+      '</div><aside class="detail-side">' + side + '</aside></div></form>';
   }
 
   function planRow(x) {
@@ -1049,7 +1060,7 @@
     const rows = mode === 'installments' ? plan.installments : [{}, {}];
     const opt2 = (value, title, sub) => '<label class="choice-opt"><input type="radio" name="payMode" value="' + value + '"' +
       (mode === value ? ' checked' : '') + '><span><strong>' + title + '</strong><small>' + sub + '</small></span></label>';
-    return '<fieldset><legend>เงื่อนไขการจ่าย</legend><div class="choice">' +
+    return '<section class="card form-section"><div class="section-head"><h2 class="section-title"><span class="step">3</span>เงื่อนไขการจ่าย</h2></div><div class="choice">' +
       opt2('single', 'จ่ายครั้งเดียว', 'จ่ายเต็มจำนวนในงวดเดียว') +
       opt2('installments', 'แบ่งจ่ายเป็นงวด', 'กำหนด % ของแต่ละงวด รวมต้องได้ 100%') + '</div>' +
       '<div id="planBox"' + (mode === 'installments' ? '' : ' hidden') + '>' +
@@ -1060,7 +1071,7 @@
       '<td><div class="plan-tools"><button type="button" class="btn small" id="addPlan">+ เพิ่มงวด</button><span class="muted">แบบสำเร็จรูป:</span>' +
       ['50,50', '40,60', '30,70', '30,40,30'].map((p) => '<button type="button" class="btn small" data-preset="' + p + '">' + p.replace(/,/g, '/') + '</button>').join('') +
       '</div></td><td></td></tr></tfoot></table></div></div>' +
-      '<template id="planTpl">' + planRow({}) + '</template></fieldset>';
+      '<template id="planTpl">' + planRow({}) + '</template></section>';
   }
 
   function readPlan(form) {
@@ -1126,6 +1137,10 @@
       document.getElementById('sumBefore').textContent = money(sb);
       document.getElementById('sumVat').textContent = money(sv);
       document.getElementById('sumTotal').textContent = money(sb + sv);
+      document.getElementById('sideTotal').textContent = money(sb + sv);
+      const after = round2(Number(form.dataset.remaining) - (sb + sv));
+      const afterEl = document.getElementById('sideAfter');
+      afterEl.innerHTML = moneyCell(after);
       f.poNo.disabled = f.noPo.checked;
       if (f.noPo.checked) f.poNo.value = '';
       if (isCapex) {
