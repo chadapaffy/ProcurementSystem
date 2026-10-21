@@ -812,71 +812,104 @@
     const us = usage(b);
     const reqs = db.requests.filter((r) => r.budgetId === b.id);
     const canRequest = u.role === 'requester' && b.ownerId === u.id;
+    const isCapex = b.type === 'CAPEX';
     const prod = b.production || {};
-    const kv = (k, v) => (v || v === 0 ? '<dt>' + k + '</dt><dd>' + v + '</dd>' : '');
     const first = (b.revisions && b.revisions[0]) ? b.revisions[0].items : [];
 
-    let html = takeFlash() + '<div class="page-head"><h1>' + esc(b.name) + ' ' + badge(b.type + ' lg', b.type) + '</h1><div class="actions" style="margin:0">' +
-      (canRequest ? '<a class="btn primary" href="#/request/new/' + b.id + '">ขอเบิกใช้งบ</a>' : '') +
-      (u.role === 'finance' ? '<a class="btn" href="#/budget/' + b.id + '/edit">แก้ไข / ปรับงบ</a>' : '') +
-      '</div></div>' +
-      '<div class="grid"><div class="card"><dl class="kv">' +
-      kv('ประเภท', TYPE_LABEL[b.type]) +
-      kv('บริษัท', esc(b.company + ' — ' + (COMPANIES[b.company] || ''))) +
-      kv(b.type === 'CBS' ? 'Job No.' : 'รหัสโครงการ', esc(b.code)) +
-      (b.type === 'CBS' ? kv('โครงการหลัก', esc(b.parentCode)) + kv('สถานะ', esc(b.status)) +
-        kv('ระยะเวลา', b.startDate ? fmtDay(b.startDate) + ' – ' + fmtDay(b.endDate) : '') +
-        kv('สถานที่ / แปลง', esc(prod.site)) +
-        kv('ผลผลิต', prod.product ? esc(prod.product + ' ' + (prod.qty ? Number(prod.qty).toLocaleString('th-TH') + ' ' + (prod.unit || '') : '')) : '')
-        : kv('กลุ่มงบประมาณ', esc(b.group))) +
-      kv('ปีงบประมาณ', esc(b.fiscalYear)) +
-      kv('หน่วยงาน', esc(b.department)) +
-      kv('ผู้ขอใช้งบ', esc(userName(b.ownerId))) +
-      kv(b.type === 'CBS' ? 'Revise CBS' : 'ปรับงบ', (b.revisions.length - 1) + ' ครั้ง') +
-      kv('หมายเหตุ', esc(b.note)) +
-      '</dl></div><div class="card">' + usageKv(us) + '<div style="margin-top:.9rem">' + usageBar(us) + '</div></div></div>';
+    // ---- หัวหน้า + ปุ่มคำสั่ง
+    const actions = [];
+    if (canRequest) actions.push('<a class="btn primary" href="#/request/new/' + b.id + '">ขอเบิกใช้งบ</a>');
+    if (u.role === 'finance') actions.push('<a class="btn" href="#/budget/' + b.id + '/edit">แก้ไข / ' + (isCapex ? 'ปรับงบ' : 'Revise CBS') + '</a>');
+    let html = '<div class="page-head detail-head"><div>' +
+      '<div class="eyebrow">' + (isCapex ? 'งบลงทุน' : 'งบโครงการ') + ' · ' + badge(b.type, b.type) + ' ' + esc(b.code) +
+      (b.parentCode ? ' <span class="muted">(โครงการหลัก ' + esc(b.parentCode) + ')</span>' : '') + '</div>' +
+      '<h1>' + esc(b.name) + (isCapex ? '' : ' ' + badge(b.status === 'แล้วเสร็จ' ? 'approved' : 'pending', b.status)) + '</h1></div>' +
+      (actions.length ? '<div class="head-actions">' + actions.join('') + '</div>' : '') + '</div>' + takeFlash();
 
-    if (b.type === 'CAPEX') {
-      html += '<h2>รายการย่อย (Item No.)</h2><div class="table-wrap"><table><thead><tr>' +
-        '<th>รหัสรายการย่อย</th><th>รายการ</th><th>ประเภทสินทรัพย์</th><th>DOA</th><th class="num">งบครั้งแรก</th><th class="num">งบปัจจุบัน</th>' +
-        '<th class="num">ใช้แล้ว</th><th class="num">รอตรวจสอบ</th><th class="num">คงเหลือ</th>' + (canRequest ? '<th></th>' : '') + '</tr></thead><tbody>' +
+    // ---- ข้อมูลหลักแบบตาราง
+    const fact = (label, value, wide) => (value || value === 0
+      ? '<div class="fact' + (wide ? ' wide' : '') + '"><span>' + label + '</span><strong>' + value + '</strong></div>' : '');
+    const facts = '<section class="card"><div class="facts">' +
+      fact('บริษัท', esc(b.company) + '<small>' + esc(COMPANIES[b.company] || '') + '</small>') +
+      fact('ปีงบประมาณ', esc(b.fiscalYear)) +
+      (isCapex ? fact('กลุ่มงบประมาณ', esc(b.group)) : fact('ระยะเวลา', b.startDate ? fmtDay(b.startDate) + '<small>ถึง ' + fmtDay(b.endDate) + '</small>' : '')) +
+      fact('หน่วยงาน', esc(b.department)) +
+      fact('ผู้ขอใช้งบ', esc(userName(b.ownerId))) +
+      (isCapex ? fact('รายการย่อย', b.items.length + ' รายการ')
+        : fact('สถานที่ / แปลง', esc(prod.site)) +
+          fact('ผลผลิต', prod.product ? esc(prod.product) + (prod.qty ? '<small>' + Number(prod.qty).toLocaleString('th-TH') + ' ' + esc(prod.unit || '') + '</small>' : '') : '') +
+          fact('รายการต้นทุน', leaves(b).length + ' รายการ')) +
+      fact('หมายเหตุ', esc(b.note), true) +
+      '</div></section>';
+
+    // ---- ตารางรายการ (ลดคอลัมน์ให้พอดีกับพื้นที่)
+    const reqBtn = (i) => (canRequest ? '<td><a class="btn small" href="#/request/new/' + b.id + '?item=' + i.id + '">ขอเบิก</a></td>' : '');
+    let items;
+    if (isCapex) {
+      items = '<h2>รายการย่อย (Item No.)</h2><div class="table-wrap"><table><thead><tr>' +
+        '<th>รหัสรายการย่อย</th><th>รายการ</th><th class="num">งบ</th><th class="num">ใช้แล้ว</th><th class="num">รอตรวจสอบ</th><th class="num">คงเหลือ</th>' +
+        (canRequest ? '<th></th>' : '') + '</tr></thead><tbody>' +
         b.items.map((i) => {
           const iu = usage(b, i.id);
           const orig = first.find((x) => x.code === i.code);
-          return '<tr><td class="nowrap">' + esc(i.code) + '</td><td>' + esc(i.name) + '</td><td>' + esc(i.assetType) + '</td><td>' + esc(i.doa) + '</td>' +
-            '<td class="num">' + (orig ? money(orig.total) : '<span class="muted">เพิ่มภายหลัง</span>') + '</td>' +
-            '<td class="num">' + money(iu.approved) + '</td><td class="num">' + money(iu.used) + '</td><td class="num">' + money(iu.reserved) +
-            '</td><td class="num"><strong>' + moneyCell(iu.remaining) + '</strong></td>' +
-            (canRequest ? '<td><a class="btn small" href="#/request/new/' + b.id + '?item=' + i.id + '">ขอเบิก</a></td>' : '') + '</tr>';
+          const origNote = !orig ? '<div class="muted">เพิ่มภายหลัง</div>'
+            : orig.total !== iu.approved ? '<div class="muted">เดิม ' + money(orig.total) + '</div>' : '';
+          return '<tr><td class="nowrap">' + esc(i.code) + '</td><td>' + esc(i.name) +
+            '<div class="muted">' + esc(i.assetType) + ' · DOA ' + esc(i.doa) + '</div></td>' +
+            '<td class="num">' + money(iu.approved) + origNote + '</td><td class="num">' + money(iu.used) + '</td><td class="num">' + money(iu.reserved) +
+            '</td><td class="num"><strong>' + moneyCell(iu.remaining) + '</strong></td>' + reqBtn(i) + '</tr>';
         }).join('') + '</tbody></table></div>';
     } else {
-      html += '<h2>Cost Breakdown Structure</h2><div class="table-wrap"><table><thead><tr>' +
-        '<th>รหัส</th><th>รายการ</th><th>จำนวน</th><th>GL</th><th class="num">งบ (รวม VAT)</th><th class="num">ใช้ไปสะสม</th><th class="num">คงเหลือ</th>' +
+      items = '<h2>Cost Breakdown Structure</h2><div class="table-wrap"><table><thead><tr>' +
+        '<th>รหัส</th><th>รายการ</th><th>GL</th><th class="num">งบ (รวม VAT)</th><th class="num">ใช้ไปสะสม</th><th class="num">คงเหลือ</th>' +
         (canRequest ? '<th></th>' : '') + '</tr></thead><tbody>' +
         sortedItems(b).map((i) => {
           const iu = usage(b, i.id);
           const leaf = isLeaf(b, i);
+          const qty = leaf && (i.qty || i.unit) ? '<div class="muted">' + esc((i.qty ? Number(i.qty).toLocaleString('th-TH') : '') + ' ' + (i.unit || '')) + '</div>' : '';
           return '<tr class="' + (leaf ? '' : 'parent-row') + '"><td class="nowrap">' + esc(i.code) + '</td>' +
-            '<td style="padding-left:' + (0.75 + depth(i) * 1.1) + 'rem">' + esc(i.name) + '</td>' +
-            '<td class="nowrap">' + (leaf && (i.qty || i.unit) ? esc((i.qty ? Number(i.qty).toLocaleString('th-TH') : '') + ' ' + (i.unit || '')) : '') + '</td>' +
+            '<td style="padding-left:' + (0.75 + depth(i) * 1.1) + 'rem">' + esc(i.name) + qty + '</td>' +
             '<td>' + (leaf && i.glCode ? esc(i.glCode) + '<div class="muted">' + esc(i.glName) + '</div>' : '') + '</td>' +
             '<td class="num">' + money(iu.approved) + '</td><td class="num">' + money(iu.used) + '</td>' +
-            '<td class="num">' + moneyCell(iu.remaining) + (iu.remaining < 0 ? ' <span class="badge rejected">เกินงบ</span>' : '') + '</td>' +
-            (canRequest ? '<td>' + (leaf ? '<a class="btn small" href="#/request/new/' + b.id + '?item=' + i.id + '">ขอเบิก</a>' : '') + '</td>' : '') + '</tr>';
+            '<td class="num nowrap">' + moneyCell(iu.remaining) + (iu.remaining < 0 ? ' <span class="badge rejected">เกินงบ</span>' : '') + '</td>' +
+            (canRequest ? (leaf ? reqBtn(i) : '<td></td>') : '') + '</tr>';
         }).join('') + '</tbody></table></div>';
     }
+    const main = facts + items + '<h2>ประวัติการขอเบิกใช้งบ <span class="muted count-note">(' + reqs.length + ')</span></h2>' + requestTable(reqs, false);
 
-    html += '<h2>ประวัติการปรับงบ' + (b.type === 'CBS' ? ' (Revise CBS)' : '') + '</h2><div class="table-wrap"><table><thead><tr>' +
-      '<th>ครั้งที่</th><th>วันที่</th><th>โดย</th><th class="num">ยอดรวม</th><th>เหตุผล / หมายเหตุ</th></tr></thead><tbody>' +
+    // ---- คอลัมน์ขวา: ยอดคงเหลือ + ภาพรวมคำขอ + ประวัติการปรับงบ
+    let side = '<div class="card total-card"><span class="muted">งบคงเหลือ</span>' +
+      '<div class="total-amount' + (us.remaining < 0 ? ' neg' : '') + '">' + money(us.remaining) + ' <small>บาท</small></div>' +
+      '<div style="margin:.75rem 0 .9rem">' + usageBar(us) + '</div>' +
+      '<dl class="kv compact"><dt>งบที่ได้รับอนุมัติ</dt><dd>' + money(us.approved) + '</dd>' +
+      '<dt>ใช้แล้ว (ออกเอกสาร)</dt><dd>' + money(us.used) + '</dd>' +
+      '<dt>รอตรวจสอบ (จองไว้)</dt><dd>' + money(us.reserved) + '</dd></dl></div>';
+
+    const count = (st) => reqs.filter((r) => r.status === st).length;
+    const overItems = isCapex ? [] : leaves(b).filter((i) => usage(b, i.id).remaining < 0);
+    const stat = (label, n, cls) => '<div class="stat' + (cls ? ' ' + cls : '') + '"><strong>' + n + '</strong><span>' + label + '</span></div>';
+    side += '<div class="card"><h3 class="side-title">ภาพรวมการขอเบิก</h3><div class="stats">' +
+      stat('ออกเอกสารแล้ว', count('approved')) +
+      (isCapex ? stat('รอการเงินตรวจสอบ', count('pending'), count('pending') ? 'warn' : '') : '') +
+      stat('ไม่อนุมัติ / ยกเลิก', count('rejected') + count('cancelled')) +
+      (isCapex
+        ? stat('ค้างบันทึกงวดจ่าย', money(reqs.filter(needsPayment).reduce((s, r) => s + outstanding(r), 0)))
+        : stat('รายการที่เกินงบ', overItems.length, overItems.length ? 'bad' : '')) +
+      '</div></div>';
+
+    const tl = (cls, title, sub, note) => '<li class="' + cls + '"><span class="tl-dot"></span><div><strong>' + title + '</strong>' +
+      (sub ? '<div class="muted">' + sub + '</div>' : '') + (note ? '<div class="tl-note">' + esc(note) + '</div>' : '') + '</div></li>';
+    side += '<div class="card"><h3 class="side-title">ประวัติการปรับงบ' + (isCapex ? '' : ' (Revise CBS)') + '</h3><ol class="timeline">' +
       b.revisions.slice().reverse().map((rv, idx, arr) => {
         const prevRv = arr[idx + 1];
-        const diff = prevRv ? rv.total - prevRv.total : 0;
-        return '<tr><td>' + (rv.no === 0 ? 'อนุมัติครั้งแรก' : 'ครั้งที่ ' + rv.no) + '</td><td class="nowrap">' + fmtDate(rv.at) + '</td><td>' + esc(userName(rv.by)) + '</td>' +
-          '<td class="num">' + money(rv.total) + (diff ? '<div class="muted">' + (diff > 0 ? '+' : '') + money(diff) + '</div>' : '') + '</td><td>' + esc(rv.note) + '</td></tr>';
-      }).join('') + '</tbody></table></div>';
+        const diff = prevRv ? round2(rv.total - prevRv.total) : 0;
+        return tl(rv.no === 0 ? 'done' : 'approved',
+          (rv.no === 0 ? 'อนุมัติครั้งแรก' : 'ปรับครั้งที่ ' + rv.no) + ' · ' + money(rv.total) +
+            (diff ? ' <span class="' + (diff > 0 ? 'pos' : 'neg') + '">(' + (diff > 0 ? '+' : '') + money(diff) + ')</span>' : ''),
+          esc(userName(rv.by)) + ' · ' + fmtDate(rv.at), rv.note);
+      }).join('') + '</ol></div>';
 
-    html += '<h2>ประวัติการขอเบิกใช้งบ</h2>' + requestTable(reqs, false);
-    return html;
+    return html + '<div class="detail-layout"><div class="detail-main">' + main + '</div><aside class="detail-side">' + side + '</aside></div>';
   }
 
   // ---------------------------------------------------------------- request form
