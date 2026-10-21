@@ -1009,10 +1009,10 @@
           field('วันที่เบิก', '<input name="expenseDate" type="date" required' + val('expenseDate') + '>') +
           field('ชื่อเจ้าหนี้ / ผู้รับเงิน', '<input name="payee" required' + val('payee') + '>') +
           '</div>') +
-      '<div class="row">' +
-      field('เลขที่ PO', '<input name="poNo"' + (noPo ? ' value="" disabled' : val('poNo')) + '>') +
+      '<div class="row po-row">' +
       '<label class="field check-field"><span>&nbsp;</span><span class="check"><input type="checkbox" name="noPo"' + (noPo ? ' checked' : '') + '> ' +
       (isCapex ? 'ไม่มี PO (N/A)' : 'ไม่ออก PO') + '</span></label>' +
+      field('เลขที่ PO', '<input name="poNo" placeholder="ระบุเลขที่ PO"' + (noPo ? ' value="" disabled' : val('poNo')) + '>') +
       '</div>' +
       '<fieldset><legend>รายการที่ขอเบิก</legend>' +
       '<div class="table-wrap"><table class="edit-table lines-table"><thead><tr><th style="width:2.5rem">#</th>' +
