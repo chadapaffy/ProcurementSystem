@@ -205,7 +205,7 @@ input, select, textarea {
 select { appearance: none; -webkit-appearance: none; }
 input:focus, select:focus, textarea:focus { outline: 2px solid #bfd3ff; outline-offset: 0; border-color: var(--primary); }
 textarea { min-height: 4.5rem; resize: vertical; }
-fieldset { border: 1px solid var(--border); border-radius: var(--radius); padding: .9rem 1rem 0; margin: 0 0 1rem; }
+fieldset { border: 1px solid var(--border); border-radius: var(--radius); padding: .9rem 1rem 0; margin: 0 0 1rem; min-width: 0; }
 legend { padding: 0 .4rem; font-weight: 600; }
 .select-wrap { position: relative; }
 .select-wrap::after {
@@ -293,6 +293,18 @@ tfoot td { border-top: 1px solid var(--border); }
 .pay-summary strong { font-size: 1.1rem; font-variant-numeric: tabular-nums; }
 .pay-form { margin-top: 1.25rem; padding-top: 1rem; border-top: 1px dashed var(--border-strong); }
 .pay-form h3 { margin: 0 0 .75rem; font-size: 1rem; }
+.choice { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: .75rem; margin-bottom: 1rem; }
+.choice-opt { display: flex; gap: .65rem; align-items: flex-start; padding: .75rem .9rem; border: 1px solid var(--border-strong); border-radius: 10px; cursor: pointer; background: var(--surface); }
+.choice-opt:has(input:checked) { border-color: var(--primary); background: #eef3ff; }
+.choice-opt input { width: 1.05rem; height: 1.05rem; margin-top: .2rem; flex: none; }
+.choice-opt span { display: flex; flex-direction: column; }
+.choice-opt small { color: var(--muted); }
+.plan-tools { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; }
+#planBox { margin-bottom: 1rem; }
+.plan-list ol { list-style: none; margin: 0 0 1rem; padding: 0; display: grid; gap: .4rem; }
+.plan-list li { display: grid; grid-template-columns: 8.5rem 8rem 1fr auto; gap: .75rem; align-items: center; padding: .5rem .75rem; border-radius: 8px; background: var(--surface-2); }
+.plan-list .num-cell { text-align: right; font-variant-numeric: tabular-nums; }
+@media (max-width: 600px) { .plan-list li { grid-template-columns: 1fr auto; } }
 .pay-form .row { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 0 1rem; }
 .pay-table { min-width: 720px; }
 .pay-table th, .pay-table td { white-space: nowrap; }
