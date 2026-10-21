@@ -1275,7 +1275,7 @@
   function itemCodesCell(b, r) {
     const items = reqItemIds(r).map((id) => itemById(b, id)).filter(Boolean);
     if (!items.length) return '-';
-    if (items.length === 1) return esc(items[0].code) + '<div class="muted">' + esc(items[0].name) + '</div>';
+    if (items.length === 1) return '<span class="nowrap">' + esc(items[0].code) + '</span><div class="muted">' + esc(items[0].name) + '</div>';
     return esc(items.map((i) => i.code).join(', ')) + '<div class="muted">' + items.length + ' รายการต้นทุน</div>';
   }
 
@@ -1292,12 +1292,12 @@
           (showBudget ? '<td>' + badge(r.type, r.type) + ' ' + esc(b ? b.code : '-') + '</td>' : '') +
           '<td>' + itemCodesCell(b, r) + '</td>' +
           '<td>' + esc(reqSummary(r)) + (r.overBudget ? ' <span class="badge rejected">เกินงบ</span>' : '') + '</td>' +
-          '<td>' + esc(userName(r.requesterId)) + '</td>' +
+          '<td class="nowrap">' + esc(userName(r.requesterId)) + '</td>' +
           '<td class="num">' + money(r.amount) +
           (r.type === 'CAPEX' && r.status === 'approved' ? '<div class="muted">บันทึกจ่าย ' + money(paidTotal(r)) + '</div>' : '') + '</td>' +
           '<td>' + badge(r.status, STATUS_LABEL[r.status]) +
           (step ? '<div class="muted">รอ: ' + esc(stepAssigneeText(step)) + '</div>' : '') + '</td>' +
-          '<td>' + (!r.docNo ? '-' : r.status === 'cancelled' ? '<s>' + esc(r.docNo) + '</s> <span class="muted">(ยกเลิก)</span>'
+          '<td class="nowrap">' + (!r.docNo ? '-' : r.status === 'cancelled' ? '<s>' + esc(r.docNo) + '</s> <span class="muted">(ยกเลิก)</span>'
             : '<a href="#/doc/' + r.id + '">' + esc(r.docNo) + '</a>') + '</td></tr>';
       }).join('') + '</tbody></table></div>';
   }
