@@ -71,7 +71,7 @@ strong { font-weight: 600; }
   height: var(--topbar-h); padding: 0 var(--s-5);
   background: var(--surface); border-bottom: 1px solid var(--border);
 }
-.brand { font-weight: 700; font-size: 18px; letter-spacing: .02em; color: var(--brand); text-decoration: none; }
+.brand { font-weight: 700; font-size: 18px; color: var(--brand); text-decoration: none; }
 .icon-btn {
   display: none; background: none; border: 0; padding: var(--s-1); border-radius: var(--radius-sm); color: var(--text); cursor: pointer;
 }
