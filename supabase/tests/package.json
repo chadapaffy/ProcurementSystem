@@ -1,0 +1,7 @@
+{
+  "name": "procurement-supabase-tests",
+  "private": true,
+  "description": "ทดสอบ supabase/schema.sql กับ Postgres ในเครื่อง",
+  "scripts": { "test": "node run.js" },
+  "dependencies": { "pg": "^8.11.0" }
+}
