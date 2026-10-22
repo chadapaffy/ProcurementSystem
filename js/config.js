@@ -5,6 +5,6 @@
  * ถ้าเว้นว่างไว้ ระบบจะทำงานแบบทดลอง (ข้อมูลเก็บในเบราว์เซอร์ สลับผู้ใช้ตัวอย่างได้ ไม่มีการล็อกอิน)
  */
 window.PROCUREMENT_CONFIG = Object.assign({
-  supabaseUrl: '',
+  supabaseUrl: 'https://mtvltrgszaybfwyzzkuh.supabase.co',
   supabaseAnonKey: ''
 }, window.PROCUREMENT_CONFIG || {});

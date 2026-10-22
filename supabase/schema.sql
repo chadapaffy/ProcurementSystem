@@ -7,16 +7,22 @@
 -- หลักการความปลอดภัย
 --   * ตารางทั้งหมดเปิด Row Level Security และ "ไม่มี policy" + ถอนสิทธิ์ anon/authenticated
 --     → เบราว์เซอร์อ่าน/เขียนตารางตรง ๆ ไม่ได้เลย (แม้มี anon key)
---   * ทุกอย่างผ่านฟังก์ชัน app_* (security definer) ซึ่งตรวจ "ผู้ใช้ + บทบาท + สถานะของเอกสาร" ฝั่งเซิร์ฟเวอร์ทุกครั้ง
+--   * ทุกอย่างผ่านฟังก์ชัน app_* (security definer) ซึ่งตรวจ "ผู้ใช้ + สิทธิ์ของบทบาท + สถานะของเอกสาร" ฝั่งเซิร์ฟเวอร์ทุกครั้ง
 --   * ผู้ใช้ที่ยังไม่ได้รับบทบาทหรือถูกปิดการใช้งาน เรียกฟังก์ชันข้อมูลไม่ได้
+--   * บทบาท (app_roles) กำหนดชุดสิทธิ์ได้ — Admin ปรับสิทธิ์และสร้างบทบาทใหม่ได้ที่หน้า Admin ในเว็บ
 -- ============================================================================
 
 -- ---------------------------------------------------------------- types & tables
 
-do $$ begin
-  create type public.app_role as enum ('requester', 'finance', 'accounting');
-exception when duplicate_object then null;
-end $$;
+-- บทบาทและสิทธิ์ (สิทธิ์ต่อบทบาทแก้ได้ที่หน้า Admin)
+create table if not exists public.app_roles (
+  key          text primary key,                  -- รหัสบทบาท เช่น finance
+  name         text not null,
+  description  text not null default '',
+  permissions  text[] not null default '{}',      -- ดูรายการสิทธิ์ที่ _app_perm_catalog()
+  is_system    boolean not null default false,    -- บทบาทตั้งต้น ลบไม่ได้
+  created_at   timestamptz not null default now()
+);
 
 create table if not exists public.profiles (
   id          uuid primary key references auth.users (id) on delete cascade,
@@ -24,10 +30,46 @@ create table if not exists public.profiles (
   name        text not null default '',
   title       text not null default '',
   department  text not null default '',
-  role        public.app_role,                 -- null = รอผู้ดูแลกำหนดสิทธิ์
+  role        text,                               -- null = รอผู้ดูแลกำหนดสิทธิ์
   active      boolean not null default true,
   created_at  timestamptz not null default now()
 );
+
+-- อัปเกรดจากเวอร์ชันแรกที่ role เป็น enum (requester/finance/accounting) → text อ้างอิงตาราง app_roles
+do $$
+begin
+  if exists (select 1 from pg_type t join pg_namespace n on n.oid = t.typnamespace where n.nspname = 'public' and t.typname = 'app_role') then
+    drop function if exists public._app_need(public.app_role[]);
+    if (select data_type from information_schema.columns where table_schema = 'public' and table_name = 'profiles' and column_name = 'role') = 'USER-DEFINED' then
+      alter table public.profiles alter column role type text using role::text;
+    end if;
+    drop type public.app_role;
+  end if;
+end $$;
+
+-- บทบาทตั้งต้น (ไม่เขียนทับถ้า Admin แก้สิทธิ์ไว้แล้ว)
+insert into public.app_roles (key, name, description, permissions, is_system) values
+  ('admin', 'ผู้ดูแลระบบ (Admin)', 'จัดการผู้ใช้ บทบาท สิทธิ์ และข้อมูลหลัก',
+    array['budget.view_all', 'master.manage', 'user.manage'], true),
+  ('requester', 'ผู้ขอใช้งบ', 'ขอเบิกใช้งบของงบที่ตนเป็นเจ้าของ',
+    array['request.create'], true),
+  ('finance', 'การเงิน', 'ตั้งและปรับงบ ตรวจสอบ/อนุมัติเอกสาร CAPEX และบันทึกงวดจ่าย',
+    array['budget.view_all', 'budget.manage', 'master.manage', 'request.decide', 'payment.record'], true),
+  ('accounting', 'บัญชี', 'บันทึกข้อมูลบัญชี: วันที่จ่ายจริง Asset/Expenses และ GL',
+    array['budget.view_all', 'accounting.record'], true)
+on conflict (key) do nothing;
+
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname = 'profiles_role_fkey') then
+    alter table public.profiles add constraint profiles_role_fkey foreign key (role) references public.app_roles (key) on update cascade;
+  end if;
+end $$;
+
+-- ถ้ายังไม่มีผู้ใช้ที่จัดการผู้ใช้/สิทธิ์ได้เลย (เช่น อัปเกรดจากเวอร์ชันแรก) เลื่อนผู้ใช้การเงินที่เก่าที่สุดเป็น Admin
+update public.profiles set role = 'admin'
+where id = (select id from public.profiles where role = 'finance' and active order by created_at limit 1)
+  and not exists (select 1 from public.profiles p join public.app_roles r on r.key = p.role
+                  where p.active and 'user.manage' = any (r.permissions));
 
 create table if not exists public.app_master (
   key         text primary key,                -- companies | departments | groups | assetTypes | glCodes
@@ -68,11 +110,12 @@ create table if not exists public.app_counters (
 
 -- ปิดการเข้าถึงตารางตรง ๆ: เปิด RLS โดยไม่มี policy และถอนสิทธิ์ทั้งหมด
 alter table public.profiles     enable row level security;
+alter table public.app_roles    enable row level security;
 alter table public.app_master   enable row level security;
 alter table public.app_budgets  enable row level security;
 alter table public.app_requests enable row level security;
 alter table public.app_counters enable row level security;
-revoke all on public.profiles, public.app_master, public.app_budgets, public.app_requests, public.app_counters from anon, authenticated;
+revoke all on public.profiles, public.app_roles, public.app_master, public.app_budgets, public.app_requests, public.app_counters from anon, authenticated;
 
 -- ---------------------------------------------------------------- new user → profile
 
@@ -102,8 +145,20 @@ language sql stable security definer set search_path = public as $$
   select p.* from public.profiles p where p.id = auth.uid() and p.active and p.role is not null
 $$;
 
-/** ต้องเป็นผู้ใช้ที่ active และมีบทบาทตามที่ระบุ */
-create or replace function public._app_need(variadic p_roles public.app_role[]) returns public.profiles
+/** รายการสิทธิ์ทั้งหมดของระบบ (เพิ่มสิทธิ์ใหม่ที่นี่และในหน้า Admin) */
+create or replace function public._app_perm_catalog() returns text[]
+language sql immutable set search_path = public as $$
+  select array['budget.view_all', 'request.create', 'request.decide', 'payment.record', 'accounting.record',
+               'budget.manage', 'master.manage', 'user.manage']
+$$;
+
+create or replace function public._app_perms(p_role text) returns text[]
+language sql stable security definer set search_path = public as $$
+  select coalesce((select r.permissions from public.app_roles r where r.key = p_role), '{}'::text[])
+$$;
+
+/** ต้องเป็นผู้ใช้ที่ active มีบทบาท และบทบาทนั้นมีสิทธิ์ p_perm */
+create or replace function public._app_need(p_perm text) returns public.profiles
 language plpgsql stable security definer set search_path = public as $$
 declare u public.profiles;
 begin
@@ -111,11 +166,25 @@ begin
   if u.id is null then
     raise exception 'ไม่มีสิทธิ์ใช้งาน (ยังไม่ได้รับบทบาท หรือบัญชีถูกปิด)' using errcode = '42501';
   end if;
-  if not (u.role = any (p_roles)) then
+  if not (p_perm = any (public._app_perms(u.role))) then
     raise exception 'ไม่มีสิทธิ์ทำรายการนี้' using errcode = '42501';
   end if;
   return u;
 end $$;
+
+/** เห็นงบและคำขอของทุกคน: มีสิทธิ์ดูทั้งหมด หรือสิทธิ์ที่ต้องเห็นเอกสารของคนอื่น (อนุมัติ งวดจ่าย บัญชี จัดการงบ) */
+create or replace function public._app_view_all(p_role text) returns boolean
+language sql stable security definer set search_path = public as $$
+  select public._app_perms(p_role) && array['budget.view_all', 'budget.manage', 'request.decide', 'payment.record', 'accounting.record']
+$$;
+
+/** จำนวนผู้ใช้ที่ใช้งานอยู่และจัดการผู้ใช้/สิทธิ์ได้ (ไม่นับ p_ignore; ถ้าบทบาท p_role ถูกแก้ ใช้สิทธิ์ใหม่ p_perms) */
+create or replace function public._app_managers(p_ignore uuid, p_role text, p_perms text[]) returns integer
+language sql stable security definer set search_path = public as $$
+  select count(*)::integer from public.profiles p left join public.app_roles r on r.key = p.role
+  where p.active and (p_ignore is null or p.id <> p_ignore)
+    and 'user.manage' = any (case when p.role = p_role then p_perms else coalesce(r.permissions, '{}'::text[]) end)
+$$;
 
 create or replace function public._app_iso(p_at timestamptz) returns text
 language sql immutable set search_path = public as $$
@@ -191,22 +260,32 @@ $$;
 create or replace function public.app_me() returns jsonb
 language sql stable security definer set search_path = public as $$
   select to_jsonb(x) from (
-    select p.id, p.email, p.name, p.title, p.department, p.role, p.active from public.profiles p where p.id = auth.uid()
+    select p.id, p.email, p.name, p.title, p.department, p.role, coalesce(r.name, p.role) as "roleName", p.active,
+           case when p.active then coalesce(r.permissions, '{}'::text[]) else '{}'::text[] end as perms
+    from public.profiles p left join public.app_roles r on r.key = p.role where p.id = auth.uid()
   ) x
 $$;
 
-/** โหลดข้อมูลทั้งหมดที่ผู้ใช้นี้เห็นได้ (ผู้ขอเห็นเฉพาะงบและคำขอของตนเอง) */
+/** โหลดข้อมูลทั้งหมดที่ผู้ใช้นี้เห็นได้ (ถ้าไม่มีสิทธิ์ดูทั้งหมด เห็นเฉพาะงบและคำขอของตนเอง) */
 create or replace function public.app_load() returns jsonb
 language plpgsql stable security definer set search_path = public as $$
-declare u public.profiles; v_all boolean;
+declare u public.profiles; v_all boolean; v_role public.app_roles;
 begin
-  u := public._app_need('requester', 'finance', 'accounting');
-  v_all := u.role <> 'requester';
+  u := public._app_user();
+  if u.id is null then
+    raise exception 'ไม่มีสิทธิ์ใช้งาน (ยังไม่ได้รับบทบาท หรือบัญชีถูกปิด)' using errcode = '42501';
+  end if;
+  select * into v_role from public.app_roles where key = u.role;
+  v_all := public._app_view_all(u.role);
   return jsonb_build_object(
-    'me', jsonb_build_object('id', u.id, 'name', u.name, 'title', u.title, 'department', u.department, 'role', u.role),
-    'users', coalesce((select jsonb_agg(jsonb_build_object('id', p.id, 'name', p.name, 'title', p.title, 'department', p.department, 'role', p.role)
-                                          order by p.name)
-                       from public.profiles p where p.role is not null and p.active), '[]'::jsonb),
+    'me', jsonb_build_object('id', u.id, 'name', u.name, 'title', u.title, 'department', u.department, 'role', u.role,
+                             'roleName', v_role.name, 'perms', to_jsonb(v_role.permissions)),
+    'users', coalesce((select jsonb_agg(jsonb_build_object('id', p.id, 'name', p.name, 'title', p.title, 'department', p.department,
+                                          'role', p.role, 'roleName', r.name, 'canRequest', 'request.create' = any (r.permissions))
+                                        order by p.name)
+                       from public.profiles p join public.app_roles r on r.key = p.role where p.active), '[]'::jsonb),
+    'pendingUsers', case when 'user.manage' = any (v_role.permissions)
+                         then (select count(*) from public.profiles where role is null and active) else null end,
     'master', coalesce((select jsonb_object_agg(m.key, m.data) from public.app_master m), '{}'::jsonb),
     'budgets', coalesce((select jsonb_agg(b.data || jsonb_build_object('id', b.id, 'version', b.version) order by b.created_at)
                          from public.app_budgets b where v_all or b.owner_id = u.id), '[]'::jsonb),
@@ -221,7 +300,7 @@ create or replace function public.app_save_master(p_key text, p_data jsonb, p_re
 language plpgsql security definer set search_path = public as $$
 declare u public.profiles; rn jsonb;
 begin
-  u := public._app_need('finance');
+  u := public._app_need('master.manage');
   if p_key not in ('companies', 'departments', 'groups', 'assetTypes', 'glCodes') then
     raise exception 'ไม่รู้จักข้อมูลหลัก %', p_key;
   end if;
@@ -250,15 +329,15 @@ create or replace function public.app_save_budget(p_budget jsonb, p_expected_ver
 language plpgsql security definer set search_path = public as $$
 declare u public.profiles; v_id text; ex public.app_budgets; v_owner uuid; v_data jsonb; v_ver integer;
 begin
-  u := public._app_need('finance');
+  u := public._app_need('budget.manage');
   v_id := nullif(p_budget ->> 'id', '');
   if v_id is null then raise exception 'ไม่มีรหัสงบ'; end if;
   if p_budget ->> 'type' not in ('CAPEX', 'CBS') then raise exception 'ประเภทงบไม่ถูกต้อง'; end if;
   if coalesce(trim(p_budget ->> 'code'), '') = '' then raise exception 'กรุณาระบุรหัสงบ'; end if;
   if jsonb_typeof(p_budget -> 'items') <> 'array' then raise exception 'รายการงบไม่ถูกต้อง'; end if;
   v_owner := (p_budget ->> 'ownerId')::uuid;
-  if not exists (select 1 from public.profiles where id = v_owner and role = 'requester' and active) then
-    raise exception 'เจ้าของงบต้องเป็นผู้ขอใช้งบที่ใช้งานอยู่';
+  if not exists (select 1 from public.profiles where id = v_owner and active and 'request.create' = any (public._app_perms(role))) then
+    raise exception 'เจ้าของงบต้องเป็นผู้ใช้ที่ใช้งานอยู่และมีสิทธิ์ขอเบิกใช้งบ';
   end if;
   v_data := (p_budget - 'version') - 'id';
   select * into ex from public.app_budgets where id = v_id for update;
@@ -283,7 +362,7 @@ end $$;
 create or replace function public.app_delete_budget(p_id text) returns void
 language plpgsql security definer set search_path = public as $$
 begin
-  perform public._app_need('finance');
+  perform public._app_need('budget.manage');
   if exists (select 1 from public.app_requests where budget_id = p_id) then
     raise exception 'ลบไม่ได้ — งบนี้มีการขอเบิกแล้ว';
   end if;
@@ -326,7 +405,7 @@ declare
   v_lines jsonb; v_type text; v_id text; v_no text; r jsonb; rec record; it jsonb; v_cap numeric; v_over boolean := false;
   v_before numeric; v_vat numeric; v_amount numeric; v_plan jsonb; v_pct numeric; v_item text;
 begin
-  u := public._app_need('requester');
+  u := public._app_need('request.create');
   select * into b from public.app_budgets where id = p_request ->> 'budgetId';
   if not found then raise exception 'ไม่พบงบประมาณ'; end if;
   if b.owner_id <> u.id then raise exception 'คุณไม่ใช่ผู้ขอใช้งบของงบนี้' using errcode = '42501'; end if;
@@ -415,7 +494,7 @@ create or replace function public.app_decide_request(p_id text, p_decision text,
 language plpgsql security definer set search_path = public as $$
 declare u public.profiles; rq public.app_requests; b public.app_budgets; v_now timestamptz := now(); d jsonb; v_over boolean := false; rec record; it jsonb;
 begin
-  u := public._app_need('finance');
+  u := public._app_need('request.decide');
   if p_decision not in ('approved', 'rejected') then raise exception 'การตัดสินใจไม่ถูกต้อง'; end if;
   select * into rq from public.app_requests where id = p_id for update;
   if not found then raise exception 'ไม่พบคำขอ'; end if;
@@ -447,7 +526,7 @@ create or replace function public.app_cancel_request(p_id text, p_reason text de
 language plpgsql security definer set search_path = public as $$
 declare u public.profiles; rq public.app_requests; d jsonb;
 begin
-  u := public._app_need('requester');
+  u := public._app_need('request.create');
   select * into rq from public.app_requests where id = p_id for update;
   if not found or rq.requester_id <> u.id then raise exception 'ไม่พบคำขอ' using errcode = '42501'; end if;
   if not (rq.status in ('pending', 'rejected') or (rq.data ->> 'type' = 'CBS' and rq.status = 'approved')) then
@@ -465,7 +544,7 @@ create or replace function public.app_record_payment(p_id text, p_payment jsonb)
 language plpgsql security definer set search_path = public as $$
 declare u public.profiles; rq public.app_requests; d jsonb; v_paid numeric; v_before numeric; v_vat numeric; v_total numeric; v_n integer; pay jsonb;
 begin
-  u := public._app_need('finance');
+  u := public._app_need('payment.record');
   select * into rq from public.app_requests where id = p_id for update;
   if not found then raise exception 'ไม่พบคำขอ'; end if;
   if rq.status <> 'approved' or rq.data ->> 'type' <> 'CAPEX' then raise exception 'บันทึกงวดจ่ายได้เฉพาะใบเบิก CAPEX ที่อนุมัติแล้ว'; end if;
@@ -492,7 +571,7 @@ create or replace function public.app_delete_payment(p_id text, p_pay_id text) r
 language plpgsql security definer set search_path = public as $$
 declare rq public.app_requests; d jsonb;
 begin
-  perform public._app_need('finance');
+  perform public._app_need('payment.record');
   select * into rq from public.app_requests where id = p_id for update;
   if not found then raise exception 'ไม่พบคำขอ'; end if;
   if exists (select 1 from jsonb_array_elements(coalesce(rq.data -> 'payments', '[]'::jsonb)) x
@@ -518,7 +597,7 @@ declare
   u public.profiles; rq public.app_requests; d jsonb; v_now text := public._app_iso(now()); pays jsonb := '[]'::jsonb;
   p jsonb; rw jsonb; v_asset numeric; v_exp numeric; v_paid text; v_split boolean; i integer; lines jsonb := '[]'::jsonb; l jsonb; v_status text;
 begin
-  u := public._app_need('accounting');
+  u := public._app_need('accounting.record');
   select * into rq from public.app_requests where id = p_id for update;
   if not found then raise exception 'ไม่พบคำขอ'; end if;
   if rq.status <> 'approved' then raise exception 'บันทึกข้อมูลบัญชีได้เฉพาะเอกสารที่ออกแล้ว'; end if;
@@ -562,38 +641,93 @@ begin
   return d || jsonb_build_object('id', p_id);
 end $$;
 
--- ---------------------------------------------------------------- user management (การเงิน)
+-- ---------------------------------------------------------------- user & role management (Admin)
 
 create or replace function public.app_list_users() returns jsonb
 language plpgsql stable security definer set search_path = public as $$
 begin
-  perform public._app_need('finance');
+  perform public._app_need('user.manage');
   return coalesce((select jsonb_agg(jsonb_build_object('id', p.id, 'email', p.email, 'name', p.name, 'title', p.title,
-                     'department', p.department, 'role', p.role, 'active', p.active, 'createdAt', public._app_iso(p.created_at))
-                   order by p.created_at) from public.profiles p), '[]'::jsonb);
+                     'department', p.department, 'role', p.role, 'roleName', r.name, 'active', p.active, 'createdAt', public._app_iso(p.created_at))
+                   order by p.created_at) from public.profiles p left join public.app_roles r on r.key = p.role), '[]'::jsonb);
 end $$;
 
 create or replace function public.app_update_user(p_id uuid, p_name text, p_title text, p_department text, p_role text, p_active boolean) returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare u public.profiles; target public.profiles; v_role public.app_role;
+declare u public.profiles; target public.profiles; v_role text; v_perms text[]; v_active boolean := coalesce(p_active, true);
 begin
-  u := public._app_need('finance');
+  u := public._app_need('user.manage');
   select * into target from public.profiles where id = p_id for update;
   if not found then raise exception 'ไม่พบผู้ใช้'; end if;
-  v_role := nullif(trim(coalesce(p_role, '')), '')::public.app_role;
-  if v_role is not null and coalesce(trim(p_name), '') = '' then raise exception 'กรุณากรอกชื่อ'; end if;
-  -- ต้องเหลือฝ่ายการเงินที่ใช้งานอยู่อย่างน้อย 1 คนเสมอ
-  if target.role = 'finance' and target.active and (v_role is distinct from 'finance' or not p_active)
-     and not exists (select 1 from public.profiles where role = 'finance' and active and id <> p_id) then
-    raise exception 'ต้องมีฝ่ายการเงินที่ใช้งานอยู่อย่างน้อย 1 คน';
+  v_role := nullif(trim(coalesce(p_role, '')), '');
+  if v_role is not null then
+    select permissions into v_perms from public.app_roles where key = v_role;
+    if not found then raise exception 'ไม่พบบทบาท %', v_role; end if;
+    if coalesce(trim(p_name), '') = '' then raise exception 'กรุณากรอกชื่อ'; end if;
   end if;
-  -- ผู้ขอที่เป็นเจ้าของงบอยู่ เปลี่ยนไปเป็นบทบาทอื่นไม่ได้
-  if target.role = 'requester' and v_role is distinct from 'requester' and exists (select 1 from public.app_budgets where owner_id = p_id) then
-    raise exception 'ผู้ใช้นี้เป็นเจ้าของงบอยู่ ย้ายงบให้ผู้อื่นก่อนเปลี่ยนบทบาท';
+  -- ต้องเหลือผู้จัดการผู้ใช้/สิทธิ์ที่ใช้งานอยู่อย่างน้อย 1 คนเสมอ
+  if public._app_managers(p_id, null, null) = 0 and not (v_active and v_role is not null and 'user.manage' = any (v_perms)) then
+    raise exception 'ต้องมีผู้ดูแลระบบ (ผู้ที่จัดการผู้ใช้และสิทธิ์ได้) ที่ใช้งานอยู่อย่างน้อย 1 คน';
+  end if;
+  -- เจ้าของงบต้องมีสิทธิ์ขอเบิกใช้งบเสมอ
+  if exists (select 1 from public.app_budgets where owner_id = p_id) and not (v_active and v_role is not null and 'request.create' = any (v_perms)) then
+    raise exception 'ผู้ใช้นี้เป็นเจ้าของงบอยู่ ย้ายงบให้ผู้อื่นก่อนเปลี่ยนบทบาทหรือปิดการใช้งาน';
   end if;
   update public.profiles set name = trim(coalesce(p_name, '')), title = trim(coalesce(p_title, '')), department = trim(coalesce(p_department, '')),
-    role = v_role, active = coalesce(p_active, true) where id = p_id;
+    role = v_role, active = v_active where id = p_id;
   return (select to_jsonb(x) from (select id, email, name, title, department, role, active from public.profiles where id = p_id) x);
+end $$;
+
+create or replace function public.app_list_roles() returns jsonb
+language plpgsql stable security definer set search_path = public as $$
+begin
+  perform public._app_need('user.manage');
+  return jsonb_build_object(
+    'catalog', to_jsonb(public._app_perm_catalog()),
+    'roles', coalesce((select jsonb_agg(jsonb_build_object('key', r.key, 'name', r.name, 'description', r.description, 'permissions', to_jsonb(r.permissions),
+                         'isSystem', r.is_system, 'users', (select count(*) from public.profiles p where p.role = r.key))
+                       order by r.is_system desc, array_position(array['admin', 'finance', 'accounting', 'requester'], r.key), r.created_at, r.key)
+                     from public.app_roles r), '[]'::jsonb));
+end $$;
+
+/** สร้างหรือแก้บทบาท: p_permissions = ["budget.manage", ...] */
+create or replace function public.app_save_role(p_key text, p_name text, p_description text, p_permissions jsonb) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare u public.profiles; v_perms text[]; v_key text := trim(coalesce(p_key, '')); ex public.app_roles; bad text;
+begin
+  u := public._app_need('user.manage');
+  if v_key !~ '^[a-z][a-z0-9_]{1,29}$' then raise exception 'รหัสบทบาทต้องเป็นตัวอักษรอังกฤษพิมพ์เล็ก ตัวเลข หรือ _ (2-30 ตัว ขึ้นต้นด้วยตัวอักษร)'; end if;
+  if coalesce(trim(p_name), '') = '' then raise exception 'กรุณากรอกชื่อบทบาท'; end if;
+  if p_permissions is null or jsonb_typeof(p_permissions) <> 'array' then raise exception 'รูปแบบสิทธิ์ไม่ถูกต้อง'; end if;
+  select coalesce(array_agg(distinct x), '{}'::text[]) into v_perms from jsonb_array_elements_text(p_permissions) x;
+  select x into bad from unnest(v_perms) x where not (x = any (public._app_perm_catalog())) limit 1;
+  if bad is not null then raise exception 'ไม่รู้จักสิทธิ์ %', bad; end if;
+  select * into ex from public.app_roles where key = v_key for update;
+  if found then
+    if public._app_managers(null, v_key, v_perms) = 0 then
+      raise exception 'ต้องมีผู้ดูแลระบบ (ผู้ที่จัดการผู้ใช้และสิทธิ์ได้) ที่ใช้งานอยู่อย่างน้อย 1 คน — บทบาทนี้ต้องคงสิทธิ์จัดการผู้ใช้ไว้';
+    end if;
+    if not ('request.create' = any (v_perms)) and exists (select 1 from public.app_budgets b join public.profiles p on p.id = b.owner_id where p.role = v_key) then
+      raise exception 'มีงบที่ผู้ใช้บทบาทนี้เป็นเจ้าของอยู่ ต้องคงสิทธิ์ขอเบิกใช้งบไว้';
+    end if;
+    update public.app_roles set name = trim(p_name), description = trim(coalesce(p_description, '')), permissions = v_perms where key = v_key;
+  else
+    insert into public.app_roles (key, name, description, permissions, is_system) values (v_key, trim(p_name), trim(coalesce(p_description, '')), v_perms, false);
+  end if;
+  return (select jsonb_build_object('key', r.key, 'name', r.name, 'description', r.description, 'permissions', to_jsonb(r.permissions), 'isSystem', r.is_system)
+          from public.app_roles r where r.key = v_key);
+end $$;
+
+create or replace function public.app_delete_role(p_key text) returns void
+language plpgsql security definer set search_path = public as $$
+declare ex public.app_roles;
+begin
+  perform public._app_need('user.manage');
+  select * into ex from public.app_roles where key = p_key for update;
+  if not found then raise exception 'ไม่พบบทบาท'; end if;
+  if ex.is_system then raise exception 'ลบบทบาทตั้งต้นไม่ได้'; end if;
+  if exists (select 1 from public.profiles where role = p_key) then raise exception 'ลบไม่ได้ — ยังมีผู้ใช้ที่ใช้บทบาทนี้อยู่'; end if;
+  delete from public.app_roles where key = p_key;
 end $$;
 
 -- ---------------------------------------------------------------- permissions

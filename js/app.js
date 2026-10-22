@@ -37,6 +37,24 @@
     accounting: 'บัญชี'
   };
 
+  /** สิทธิ์ทั้งหมดของระบบ (ต้องตรงกับ _app_perm_catalog() ใน supabase/schema.sql) */
+  const PERMISSIONS = [
+    { key: 'budget.view_all', group: 'การมองเห็น', label: 'ดูงบและคำขอของทุกคน', hint: 'ถ้าไม่มี จะเห็นเฉพาะงบที่ตนเป็นเจ้าของ (สิทธิ์อนุมัติ/งวดจ่าย/บัญชี/จัดการงบ เห็นทั้งหมดโดยอัตโนมัติ)' },
+    { key: 'request.create', group: 'ผู้ขอใช้งบ', label: 'ขอเบิกใช้งบ', hint: 'ของงบที่ตนเป็นเจ้าของ และยกเลิกคำขอของตนเอง · บทบาทนี้เลือกเป็นเจ้าของงบได้' },
+    { key: 'request.decide', group: 'การเงิน', label: 'ตรวจสอบ / อนุมัติเอกสาร CAPEX', hint: 'อนุมัติ (ออกใบเบิก) หรือไม่อนุมัติพร้อมเหตุผล' },
+    { key: 'payment.record', group: 'การเงิน', label: 'บันทึกงวดจ่าย (CAPEX)', hint: 'วันวางบิล วันกำหนดจ่าย ยอดงวด' },
+    { key: 'budget.manage', group: 'การเงิน', label: 'ตั้ง / ปรับ / ลบงบ', hint: 'งบ CAPEX, CBS และประวัติการปรับงบ' },
+    { key: 'accounting.record', group: 'บัญชี', label: 'บันทึกข้อมูลบัญชี', hint: 'วันที่จ่ายจริง (ตัดงบ) · Asset/Expenses · GL Code · สถานะจ่าย CBS' },
+    { key: 'master.manage', group: 'ผู้ดูแลระบบ', label: 'จัดการข้อมูลหลัก', hint: 'บริษัท หน่วยงาน กลุ่มงบ ประเภทสินทรัพย์ GL Code' },
+    { key: 'user.manage', group: 'ผู้ดูแลระบบ', label: 'จัดการผู้ใช้ บทบาท และสิทธิ์', hint: 'หน้า Admin นี้' }
+  ];
+  /** โหมดทดลอง: สิทธิ์ตั้งต้นของแต่ละบทบาท (โหมด Supabase แก้ได้ที่หน้า Admin) */
+  const DEMO_ROLE_PERMS = {
+    requester: ['request.create'],
+    finance: ['budget.view_all', 'budget.manage', 'master.manage', 'request.decide', 'payment.record'],
+    accounting: ['budget.view_all', 'accounting.record']
+  };
+
   const COMPANIES = { PSL: 'บริษัท PSL (ตัวอย่าง)', PCC: 'บริษัท PCC (ตัวอย่าง)' };
   const TYPE_LABEL = { CAPEX: 'งบลงทุน (CAPEX)', CBS: 'งบโครงการ (CBS)' };
   const STATUS_LABEL = {
@@ -231,11 +249,13 @@
 
   // ---- โหมด Supabase: โหลดข้อมูลจากเซิร์ฟเวอร์ และเรียกฟังก์ชันที่ตรวจสิทธิ์ฝั่งเซิร์ฟเวอร์
   let remoteSnapshot = '';
+  let adminCounts = { pending: 0 }; // จำนวนผู้ใช้ที่รอกำหนดบทบาท (เห็นเฉพาะผู้ที่มีสิทธิ์จัดการผู้ใช้)
 
   async function reloadRemote() {
     const d = await window.RemoteApi.load();
     USERS = d.users || [];
     remoteMe = d.me;
+    adminCounts = { pending: d.pendingUsers || 0 };
     db = ensureMaster({ seq: { req: 0, id: 0, doc: {} }, master: d.master || {}, budgets: d.budgets || [], requests: d.requests || [] });
     remoteSnapshot = JSON.stringify([USERS, db]);
   }
@@ -308,6 +328,12 @@
   const user = (id) => USERS.find((u) => u.id === id);
   const userName = (id) => (user(id) ? user(id).name : '-');
   const me = () => (REMOTE ? remoteMe : (user(currentUserId) || USERS[0]));
+  const permsOf = (u) => (u && (u.perms || DEMO_ROLE_PERMS[u.role])) || [];
+  const can = (perm) => permsOf(me()).includes(perm);
+  /** เห็นงบและคำขอของทุกคน (สิทธิ์ดูทั้งหมด หรือสิทธิ์ที่ต้องทำงานกับเอกสารของคนอื่น) */
+  const canViewAll = () => ['budget.view_all', 'budget.manage', 'request.decide', 'payment.record', 'accounting.record'].some(can);
+  const roleLabel = (u) => (u && (u.roleName || ROLE_LABEL[u.role] || u.role)) || '';
+  const canRequestUser = (x) => (x.canRequest !== undefined ? x.canRequest : permsOf(x).includes('request.create'));
   const budgetById = (id) => db.budgets.find((b) => b.id === id);
   const requestById = (id) => db.requests.find((r) => r.id === id);
   const itemById = (b, id) => (b ? b.items.find((i) => i.id === id) : null);
@@ -384,7 +410,7 @@
   }
 
   const currentStep = (r) => (r.status === 'pending' ? r.steps.find((s) => s.status === 'waiting') : null);
-  const canAct = (u, step) => !!step && (step.assignee === u.id || (step.role && step.role === u.role));
+  const canAct = (u, step) => !!step && (step.assignee === u.id || permsOf(u).includes('request.decide'));
   const stepAssigneeText = (step) => (step.assignee ? userName(step.assignee) : ROLE_LABEL[step.role]);
   const inbox = (u) => db.requests.filter((r) => canAct(u, currentStep(r)));
 
@@ -491,9 +517,12 @@
   // ---------------------------------------------------------------- navigation
 
   function homeFor(u) {
-    if (u.role === 'finance') return '#/budgets';
-    if (u.role === 'accounting') return '#/accounting';
-    return '#/my-budgets';
+    const has = (p) => permsOf(u).includes(p);
+    if (has('budget.manage') || has('request.decide')) return '#/budgets';
+    if (has('accounting.record')) return '#/accounting';
+    if (has('request.create')) return '#/my-budgets';
+    if (REMOTE && has('user.manage')) return '#/admin';
+    return '#/dashboard';
   }
 
   const NAV_ICON = '<svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true">' +
@@ -506,18 +535,15 @@
     const links = [];
     // [href, ข้อความ, เส้นทางที่ให้ไฮไลต์เมนูนี้]
     links.push(['#/dashboard', 'ภาพรวม', ['#/dashboard']]);
-    if (u.role === 'finance') links.push(['#/budgets', 'จัดการงบประมาณ', ['#/budgets', '#/budget/']]);
-    if (u.role === 'accounting') links.push(['#/budgets', 'งบประมาณ', ['#/budgets', '#/budget/']]);
-    if (u.role === 'requester') links.push(['#/my-budgets', 'งบของฉัน', ['#/my-budgets', '#/budget/', '#/request/new']]);
-    if (u.role === 'finance') {
-      links.push(['#/approvals', 'รอตรวจสอบ' + count(inbox(u).length), ['#/approvals']]);
-      links.push(['#/payments', 'งวดจ่ายค้าง' + count(db.requests.filter(needsPayment).length), ['#/payments']]);
-    }
-    if (u.role === 'accounting') {
-      links.push(['#/accounting', 'รอบันทึกบัญชี' + count(db.requests.filter(needsAccounting).length), ['#/accounting']]);
-    }
-    links.push(['#/requests', u.role === 'requester' ? 'คำขอของฉัน' : 'คำขอใช้งบทั้งหมด', ['#/requests', '#/request/', '#/doc/']]);
-    if (u.role === 'finance') links.push(['#/master', 'ข้อมูลหลัก', ['#/master']]);
+    if (can('budget.manage')) links.push(['#/budgets', 'จัดการงบประมาณ', ['#/budgets', '#/budget/']]);
+    else if (canViewAll()) links.push(['#/budgets', 'งบประมาณ', ['#/budgets', '#/budget/']]);
+    if (can('request.create')) links.push(['#/my-budgets', 'งบของฉัน', ['#/my-budgets', '#/budget/', '#/request/new']]);
+    if (can('request.decide')) links.push(['#/approvals', 'รอตรวจสอบ' + count(inbox(u).length), ['#/approvals']]);
+    if (can('payment.record')) links.push(['#/payments', 'งวดจ่ายค้าง' + count(db.requests.filter(needsPayment).length), ['#/payments']]);
+    if (can('accounting.record')) links.push(['#/accounting', 'รอบันทึกบัญชี' + count(db.requests.filter(needsAccounting).length), ['#/accounting']]);
+    if (canViewAll() || can('request.create')) links.push(['#/requests', canViewAll() ? 'คำขอใช้งบทั้งหมด' : 'คำขอของฉัน', ['#/requests', '#/request/', '#/doc/']]);
+    if (can('master.manage')) links.push(['#/master', 'ข้อมูลหลัก', ['#/master']]);
+    if (REMOTE && can('user.manage')) links.push(['#/admin', 'ผู้ใช้และสิทธิ์' + count(adminCounts.pending), ['#/admin']]);
     let activeDone = false;
     document.getElementById('nav').innerHTML = links.map(([href, text, prefixes]) => {
       const active = !activeDone && prefixes.some((p) => route.startsWith(p));
@@ -541,9 +567,9 @@
     return parts.filter(Boolean).map(esc).join(' · ');
   }
 
-  function viewBudgets(params) {
+  function viewBudgets(params, mineRoute) {
     const u = me();
-    const mine = u.role === 'requester';
+    const mine = !!mineRoute || !canViewAll();
     const all = db.budgets.filter((b) => !mine || b.ownerId === u.id);
     const count = (t) => (t === 'ALL' ? all.length : all.filter((b) => b.type === t).length);
     const type = TYPE_LABEL[params.get('type')] ? params.get('type') : 'ALL';
@@ -553,7 +579,7 @@
       label + '<span class="tab-count">(' + count(t) + ')</span></a>';
     const depts = uniq(all.map((b) => b.department)).sort();
     const years = uniq(all.map((b) => String(b.fiscalYear))).sort().reverse();
-    const title = mine ? 'งบของฉัน' : u.role === 'finance' ? 'จัดการงบประมาณ' : 'งบประมาณ';
+    const title = mine ? 'งบของฉัน' : can('budget.manage') ? 'จัดการงบประมาณ' : 'งบประมาณ';
 
     let html = '<div class="page-head"><h1>' + title + '</h1>' +
       '<span class="pill">' + esc(u.title) + '</span></div>' + takeFlash() +
@@ -565,7 +591,7 @@
       depts.map((d) => opt(d, 'หน่วยงาน: ' + d, budgetFilter.dept)).join('') + '</select></label>' +
       '<label class="input-wrap"><select id="fYear" aria-label="ปีงบประมาณ">' + opt('', 'ปี: ทั้งหมด', budgetFilter.year) +
       years.map((y) => opt(y, 'ปี: ' + y, budgetFilter.year)).join('') + '</select>' + ICON_CAL + '</label>' +
-      (u.role === 'finance'
+      (can('budget.manage')
         ? '<a class="btn primary tall" href="#/budget/new"><span aria-hidden="true">+</span> เพิ่มงบที่อนุมัติ</a>'
         : '<span></span>') +
       '</div>';
@@ -588,7 +614,7 @@
         '<div class="usage-strip">' + usageBar(us) + '</div>' +
         '<div class="card-foot">' +
         '<a class="btn" href="#/budget/' + b.id + '">รายละเอียด</a>' +
-        (u.role === 'finance' ? '<a class="btn" href="#/budget/' + b.id + '/edit">แก้ไข</a>' : '') +
+        (can('budget.manage') ? '<a class="btn" href="#/budget/' + b.id + '/edit">แก้ไข</a>' : '') +
         (mine && b.ownerId === u.id ? '<a class="btn primary" href="#/request/new/' + b.id + '">ขอเบิกใช้งบ</a>' : '') +
         '</div></article>';
     }).join('') + '</div>' +
@@ -662,7 +688,7 @@
 
   function viewBudgetForm(id) {
     const u = me();
-    if (u.role !== 'finance') return '<div class="alert error">เฉพาะการเงินเท่านั้นที่บันทึก/แก้ไขงบได้</div>';
+    if (!can('budget.manage')) return '<div class="alert error">ไม่มีสิทธิ์บันทึก/แก้ไขงบ</div>';
     const b = id ? budgetById(id) : null;
     if (id && !b) return notFound();
     const hasRequests = b && db.requests.some((r) => r.budgetId === b.id);
@@ -673,7 +699,7 @@
     };
     const prod = v.production || {};
     const used = usedItemIds();
-    const requesters = USERS.filter((x) => x.role === 'requester');
+    const requesters = USERS.filter(canRequestUser);
     const capexItems = v.type === 'CAPEX' && v.items.length ? v.items : [{ code: '', name: '', amount: '' }];
     const cbsItems = v.type === 'CBS' && v.items.length ? sortedItems(v) : CBS_TEMPLATE;
     const field = (label, inner, extra) => '<label class="field"' + (extra || '') + '><span>' + label + '</span>' + inner + '</label>';
@@ -952,7 +978,7 @@
     const u = me();
     const us = usage(b);
     const reqs = db.requests.filter((r) => r.budgetId === b.id);
-    const canRequest = u.role === 'requester' && b.ownerId === u.id;
+    const canRequest = can('request.create') && b.ownerId === u.id;
     const isCapex = b.type === 'CAPEX';
     const prod = b.production || {};
     const first = (b.revisions && b.revisions[0]) ? b.revisions[0].items : [];
@@ -960,7 +986,7 @@
     // ---- หัวหน้า + ปุ่มคำสั่ง
     const actions = [];
     if (canRequest) actions.push('<a class="btn primary" href="#/request/new/' + b.id + '">ขอเบิกใช้งบ</a>');
-    if (u.role === 'finance') actions.push('<a class="btn" href="#/budget/' + b.id + '/edit">แก้ไข / ' + (isCapex ? 'ปรับงบ' : 'Revise CBS') + '</a>');
+    if (can('budget.manage')) actions.push('<a class="btn" href="#/budget/' + b.id + '/edit">แก้ไข / ' + (isCapex ? 'ปรับงบ' : 'Revise CBS') + '</a>');
     let html = '<div class="page-head detail-head"><div>' +
       '<div class="eyebrow">' + (isCapex ? 'งบลงทุน' : 'งบโครงการ') + ' · ' + badge(b.type, b.type) + ' ' + esc(b.code) +
       (b.parentCode ? ' <span class="muted">(โครงการหลัก ' + esc(b.parentCode) + ')</span>' : '') + '</div>' +
@@ -1454,8 +1480,8 @@
 
   function viewRequests() {
     const u = me();
-    const list = u.role === 'requester' ? db.requests.filter((r) => r.requesterId === u.id) : db.requests;
-    return '<div class="page-head"><h1>' + (u.role === 'requester' ? 'คำขอของฉัน' : 'คำขอใช้งบทั้งหมด') + '</h1></div>' + takeFlash() + requestTable(list, true);
+    const list = canViewAll() ? db.requests : db.requests.filter((r) => r.requesterId === u.id);
+    return '<div class="page-head"><h1>' + (canViewAll() ? 'คำขอใช้งบทั้งหมด' : 'คำขอของฉัน') + '</h1></div>' + takeFlash() + requestTable(list, true);
   }
 
   function viewApprovals() {
@@ -1463,14 +1489,14 @@
   }
 
   function viewAccounting() {
-    if (me().role !== 'accounting') return '<div class="alert error">เฉพาะฝ่ายบัญชี</div>';
+    if (!can('accounting.record')) return '<div class="alert error">ไม่มีสิทธิ์บันทึกข้อมูลบัญชี</div>';
     return '<div class="page-head"><h1>รอบันทึกข้อมูลบัญชี</h1></div>' + takeFlash() +
       '<p class="muted">บัญชีลงวันที่จ่ายจริงแล้วงบจึงจะถูกตัดเป็น "ใช้แล้ว" · CAPEX: งวดจ่ายที่การเงินบันทึกแล้วแต่บัญชียังไม่ได้ลงวันที่จ่าย / แยก Asset-Expenses · CBS: เอกสารที่ยังไม่ได้ยืนยัน GL Code และบันทึกจ่ายเงิน</p>' +
       requestTable(db.requests.filter(needsAccounting), true);
   }
 
   function viewPayments() {
-    if (me().role !== 'finance') return '<div class="alert error">เฉพาะฝ่ายการเงิน</div>';
+    if (!can('payment.record')) return '<div class="alert error">ไม่มีสิทธิ์บันทึกงวดจ่าย</div>';
     const list = db.requests.filter(needsPayment).sort((a, b) => a.approvedAt.localeCompare(b.approvedAt));
     let html = '<div class="page-head"><h1>งวดจ่ายค้าง (CAPEX)</h1></div>' + takeFlash() +
       '<p class="muted">ใบเบิกที่อนุมัติแล้ว แต่ยังบันทึกงวดจ่ายไม่ครบยอด — เปิดใบเบิกเพื่อบันทึกงวดเมื่อได้รับบิล</p>';
@@ -1595,8 +1621,8 @@
   /** งวดจ่ายของใบเบิก CAPEX: การเงินบันทึกงวด (วันวางบิล/กำหนดจ่าย/ยอด) และบัญชีแยก Asset/Expenses รายงวด */
   function paymentsPanel(r, u) {
     const pays = r.payments || [];
-    const canFin = u.role === 'finance';
-    const canAcc = u.role === 'accounting';
+    const canFin = can('payment.record');
+    const canAcc = can('accounting.record');
     const left = outstanding(r);
     let html = '<h2>งวดการจ่ายเงิน' + (needsAccounting(r) ? ' <span class="badge pending">รอบัญชีจ่าย / แยก Asset-Expenses</span>' : '') + '</h2>' +
       '<p class="muted small-note" style="margin:0 0 .5rem">งบจะถูกตัดเป็น "ใช้แล้ว" เมื่อฝ่ายบัญชีลงวันที่จ่ายจริงของแต่ละงวดเท่านั้น — ก่อนหน้านั้นนับเป็น "จองไว้"</p>' +
@@ -1666,7 +1692,7 @@
 
   /** CBS: บัญชียืนยัน GL รายบรรทัด และสถานะจ่ายของทั้งใบ */
   function cbsAccountingPanel(b, r, u) {
-    const canAcc = u.role === 'accounting';
+    const canAcc = can('accounting.record');
     const acc = r.accounting || {};
     if (!canAcc) {
       return '<h2>ข้อมูลบัญชี' + (needsAccounting(r) ? ' <span class="badge pending">รอบัญชีจ่ายเงิน</span>' : '') + '</h2>' +
@@ -1816,7 +1842,7 @@
         const r = requestById(acct.dataset.id);
         const f = acct.elements;
         const u = me();
-        if (u.role !== 'accounting') return;
+        if (!can('accounting.record')) return;
         const now = new Date().toISOString();
         if (r.type === 'CAPEX') {
           const errors = [];
@@ -2006,7 +2032,7 @@
   const monthLabel = (key) => TH_MONTH[Number(key.slice(5, 7)) - 1] + ' ' + String((Number(key.slice(0, 4)) + 543) % 100);
 
   /** งบที่ผู้ใช้เห็นได้ (ผู้ขอเห็นเฉพาะงบของตนเอง) */
-  const visibleBudgets = () => db.budgets.filter((b) => me().role !== 'requester' || b.ownerId === me().id);
+  const visibleBudgets = () => db.budgets.filter((b) => canViewAll() || b.ownerId === me().id);
 
   /** วันที่และยอดที่ฝ่ายบัญชีจ่ายแล้วของคำขอ — ใช้ทำกราฟรายเดือน */
   function paidEntries(r) {
@@ -2110,18 +2136,20 @@
     // ---- งานที่ต้องทำ
     const mineReq = db.requests.filter((r) => r.requesterId === u.id);
     const task = (label, n, href, note) => '<li><a href="' + href + '"><span>' + label + (note ? '<small>' + note + '</small>' : '') + '</span><b class="' + (n ? 'has' : '') + '">' + n + '</b></a></li>';
-    let tasks = [];
-    if (u.role === 'finance') {
+    const tasks = [];
+    if (can('request.decide')) tasks.push(task('เอกสาร CAPEX รอตรวจสอบ', inbox(u).length, '#/approvals'));
+    if (can('payment.record')) {
       const pay = db.requests.filter(needsPayment);
-      tasks = [task('เอกสาร CAPEX รอตรวจสอบ', inbox(u).length, '#/approvals'),
-        task('งวดจ่ายค้างบันทึก', pay.length, '#/payments', pay.length ? 'ค้าง ' + money(pay.reduce((s2, r) => s2 + outstanding(r), 0)) + ' บาท' : '')];
-    } else if (u.role === 'accounting') {
-      tasks = [task('รอบันทึกข้อมูลบัญชี / จ่ายเงิน', db.requests.filter(needsAccounting).length, '#/accounting')];
-    } else {
-      tasks = [task('คำขอรอการเงินตรวจสอบ', mineReq.filter((r) => r.status === 'pending').length, '#/requests'),
-        task('ไม่อนุมัติ รอแก้ไข', mineReq.filter((r) => r.status === 'rejected').length, '#/requests'),
-        task('ออกเอกสารแล้ว รอบัญชีจ่าย', mineReq.filter((r) => r.status === 'approved' && paidByAccounting(r) < r.amount).length, '#/requests')];
+      tasks.push(task('งวดจ่ายค้างบันทึก', pay.length, '#/payments', pay.length ? 'ค้าง ' + money(pay.reduce((s2, r) => s2 + outstanding(r), 0)) + ' บาท' : ''));
     }
+    if (can('accounting.record')) tasks.push(task('รอบันทึกข้อมูลบัญชี / จ่ายเงิน', db.requests.filter(needsAccounting).length, '#/accounting'));
+    if (can('request.create')) {
+      tasks.push(task('คำขอของฉันที่รอการเงินตรวจสอบ', mineReq.filter((r) => r.status === 'pending').length, '#/requests'),
+        task('ไม่อนุมัติ รอแก้ไข', mineReq.filter((r) => r.status === 'rejected').length, '#/requests'),
+        task('ออกเอกสารแล้ว รอบัญชีจ่าย', mineReq.filter((r) => r.status === 'approved' && paidByAccounting(r) < r.amount).length, '#/requests'));
+    }
+    if (REMOTE && can('user.manage')) tasks.push(task('ผู้ใช้ที่รอกำหนดบทบาท', Number(adminCounts.pending || 0), '#/admin'));
+    if (!tasks.length) tasks.push('<li><span class="muted">ไม่มีงานที่ต้องทำสำหรับบทบาทนี้</span></li>');
     const tasksCard = '<section class="card"><h2 class="section-title side-title">งานที่ต้องทำ</h2><ul class="task-list">' + tasks.join('') + '</ul></section>';
 
     // ---- งบที่ต้องจับตา (เกินงบ / เหลือไม่ถึง 10%)
@@ -2136,7 +2164,7 @@
         (w.x.u.remaining < 0 ? '<span class="badge rejected">เกินงบ</span>' : w.over ? '<span class="badge rejected">เกินงบ ' + w.over + ' รายการ</span>' : '<span class="badge pending">ใกล้หมด</span>') + '</a></li>').join('') + '</ul>'
       : '<p class="muted">ไม่มีงบที่เกินหรือใกล้หมด (เหลือน้อยกว่า 10%)</p>') + '</section>';
 
-    return '<div class="page-head"><div><h1>ภาพรวมงบประมาณ</h1><div class="page-sub">' + (u.role === 'requester' ? 'เฉพาะงบของคุณ' : 'ทุกงบในระบบ') + ' · ' + list.length + ' งบ</div></div>' + filters + '</div>' +
+    return '<div class="page-head"><div><h1>ภาพรวมงบประมาณ</h1><div class="page-sub">' + (canViewAll() ? 'ทุกงบในระบบ' : 'เฉพาะงบของคุณ') + ' · ' + list.length + ' งบ</div></div>' + filters + '</div>' +
       '<div class="kpis">' +
       kpi('งบที่ได้รับอนุมัติ', money(tot.approved), list.length + ' งบ') +
       kpi('ตัดงบแล้ว (บัญชีจ่ายแล้ว)', money(tot.used), pctText(tot.used, tot.approved) + ' ของงบ') +
@@ -2187,7 +2215,7 @@
 
   function viewMaster() {
     const u = me();
-    if (u.role !== 'finance') return '<div class="alert error">เฉพาะฝ่ายการเงินจัดการข้อมูลหลักได้</div>';
+    if (!can('master.manage')) return '<div class="alert error">ไม่มีสิทธิ์จัดการข้อมูลหลัก</div>';
     const sections = MASTER_SECTIONS.map((sec) => '<section class="card form-section"><div class="section-head"><div><h2 class="section-title">' + sec.title +
       '</h2><div class="muted section-hint">' + sec.hint + '</div></div></div>' +
       '<form class="master-form" data-key="' + sec.key + '"><div class="table-wrap"><table class="edit-table"><thead><tr>' +
@@ -2198,48 +2226,17 @@
 
     const doa = Object.keys(DOA).map((k) => '<h3 class="side-title">' + esc(DOA[k].short) + '</h3><div class="table-wrap"><table><thead><tr><th>ข้อ</th><th>วงเงิน</th><th>ผู้อนุมัติ</th></tr></thead><tbody>' +
       DOA[k].rows.map((r) => '<tr><td class="nowrap">' + esc(r.code) + '</td><td>' + esc(r.label) + '</td><td>' + esc(r.approver) + '</td></tr>').join('') + '</tbody></table></div>').join('');
-    const users = REMOTE ? '<div id="usersBox"><p class="muted">กำลังโหลดรายชื่อผู้ใช้…</p></div>'
-      : '<div class="table-wrap"><table><thead><tr><th>ชื่อ</th><th>ตำแหน่ง</th><th>บทบาท</th></tr></thead><tbody>' +
-        USERS.map((x) => '<tr><td>' + esc(x.name) + '</td><td>' + esc(x.title) + '</td><td>' + esc(ROLE_LABEL[x.role]) + '</td></tr>').join('') + '</tbody></table></div>';
-    const usersHint = REMOTE
-      ? 'สร้างบัญชีใหม่ที่ Supabase Dashboard (Authentication → Users) แล้วมากำหนดชื่อและบทบาทที่นี่ — ผู้ใช้ที่ยังไม่ได้รับบทบาทจะเข้าข้อมูลไม่ได้'
-      : 'อ่านอย่างเดียว — โหมดทดลองยังไม่มีระบบล็อกอิน ใช้เมนูผู้ใช้มุมขวาบนสลับบทบาทเพื่อทดสอบ';
-    return '<div class="page-head"><div><h1>ข้อมูลหลัก</h1><div class="page-sub">ค่าที่ใช้เป็นตัวเลือกในฟอร์มและรายงาน แก้ไขโดยฝ่ายการเงิน</div></div></div>' + takeFlash() +
+    const users = '<div class="table-wrap"><table><thead><tr><th>ชื่อ</th><th>ตำแหน่ง</th><th>บทบาท</th></tr></thead><tbody>' +
+      USERS.map((x) => '<tr><td>' + esc(x.name) + '</td><td>' + esc(x.title) + '</td><td>' + esc(roleLabel(x)) + '</td></tr>').join('') + '</tbody></table></div>';
+    const usersSection = REMOTE ? '' :
+      '<section class="card form-section"><div class="section-head"><div><h2 class="section-title">ผู้ใช้และบทบาท</h2><div class="muted section-hint">อ่านอย่างเดียว — โหมดทดลองยังไม่มีระบบล็อกอิน ใช้เมนูผู้ใช้มุมขวาบนสลับบทบาทเพื่อทดสอบ</div></div></div>' + users + '</section>';
+    return '<div class="page-head"><div><h1>ข้อมูลหลัก</h1><div class="page-sub">ค่าที่ใช้เป็นตัวเลือกในฟอร์มและรายงาน</div></div></div>' + takeFlash() +
       '<div id="formError"></div><div class="form-main">' + sections +
       '<section class="card form-section"><div class="section-head"><div><h2 class="section-title">ตารางอำนาจอนุมัติ (DOA)</h2><div class="muted section-hint">อ่านอย่างเดียว — ใช้ติ๊กระดับผู้อนุมัติบนใบเบิก CAPEX ตามยอดเงิน (หน่วย: ล้านบาท)</div></div></div>' + doa + '</section>' +
-      '<section class="card form-section"><div class="section-head"><div><h2 class="section-title">ผู้ใช้และบทบาท</h2><div class="muted section-hint">' + usersHint + '</div></div></div>' + users + '</section></div>';
-  }
-
-  /** โหมด Supabase: ตารางจัดการผู้ใช้และบทบาท (การเงิน) */
-  async function loadUsersBox() {
-    const box = document.getElementById('usersBox');
-    if (!box) return;
-    const res = await run(() => window.RemoteApi.listUsers());
-    if (!res || !document.getElementById('usersBox')) return;
-    const roles = ['', 'requester', 'finance', 'accounting'];
-    box.innerHTML = '<datalist id="deptList">' + db.master.departments.map((d) => '<option value="' + esc(d.name) + '"></option>').join('') + '</datalist>' +
-      '<div class="table-wrap"><table class="edit-table users-table"><thead><tr><th>อีเมล</th><th>ชื่อ-นามสกุล</th><th>ตำแหน่ง</th><th>หน่วยงาน</th><th>บทบาท</th><th>ใช้งาน</th><th></th></tr></thead><tbody>' +
-      res.value.map((u) => '<tr data-uid="' + esc(u.id) + '"><td class="nowrap">' + esc(u.email) + (u.id === me().id ? ' <span class="muted">(คุณ)</span>' : '') + '</td>' +
-        '<td><input data-u="name" value="' + esc(u.name) + '" aria-label="ชื่อ"></td><td><input data-u="title" value="' + esc(u.title) + '" aria-label="ตำแหน่ง"></td>' +
-        '<td><input data-u="department" list="deptList" value="' + esc(u.department) + '" aria-label="หน่วยงาน"></td>' +
-        '<td><div class="select-wrap"><select data-u="role" aria-label="บทบาท">' + roles.map((r) => opt(r, r ? ROLE_LABEL[r] : '— ยังไม่กำหนดสิทธิ์ —', u.role || '')).join('') + '</select></div></td>' +
-        '<td class="center"><input type="checkbox" data-u="active" aria-label="ใช้งาน"' + (u.active ? ' checked' : '') + '></td>' +
-        '<td><button type="button" class="btn small primary" data-u-save>บันทึก</button></td></tr>').join('') + '</tbody></table></div>';
-    box.onclick = async (e) => {
-      const btn = e.target.closest('[data-u-save]');
-      if (!btn) return;
-      const tr = btn.closest('tr');
-      const val = (k) => tr.querySelector('[data-u="' + k + '"]');
-      const user2 = { id: tr.dataset.uid, name: val('name').value.trim(), title: val('title').value.trim(), department: val('department').value.trim(), role: val('role').value, active: val('active').checked };
-      if (user2.role && !user2.name) { alert('กรุณากรอกชื่อ-นามสกุลก่อนกำหนดบทบาท'); return; }
-      if (!(await runAndReload(() => window.RemoteApi.updateUser(user2)))) return;
-      setFlash('success', 'บันทึกข้อมูลผู้ใช้ ' + (user2.name || '') + ' แล้ว');
-      go('#/master');
-    };
+      usersSection + '</div>';
   }
 
   function bindMaster() {
-    loadUsersBox();
     document.querySelectorAll('.master-form').forEach((form) => {
       const sec = MASTER_SECTIONS.find((x) => x.key === form.dataset.key);
       const tbody = form.querySelector('tbody');
@@ -2281,6 +2278,164 @@
         setFlash('success', 'บันทึก' + sec.title + 'แล้ว');
         go('#/master');
       });
+    });
+  }
+
+
+  // ---------------------------------------------------------------- Admin: ผู้ใช้ บทบาท สิทธิ์ (โหมด Supabase)
+
+  function viewAdmin(params) {
+    if (!REMOTE) return '<div class="alert info">หน้านี้ใช้ในโหมด Supabase (หลังตั้งค่าตาม supabase/SETUP.md) — โหมดทดลองสลับผู้ใช้ตัวอย่างที่เมนูมุมขวาบน</div>';
+    if (!can('user.manage')) return '<div class="alert error">ไม่มีสิทธิ์จัดการผู้ใช้และสิทธิ์</div>';
+    const tab = params.get('tab') === 'roles' ? 'roles' : 'users';
+    const t = (key, label) => '<a href="#/admin' + (key === 'roles' ? '?tab=roles' : '') + '"' + (tab === key ? ' class="active" aria-current="page"' : '') + '>' + label + '</a>';
+    return '<div class="page-head"><div><h1>ผู้ใช้และสิทธิ์</h1><div class="page-sub">จัดการผู้ใช้ บทบาท และสิทธิ์ของแต่ละบทบาท — มีผลทันที ตรวจสอบที่ฝั่งฐานข้อมูล</div></div></div>' + takeFlash() +
+      '<nav class="tabs" aria-label="หมวด">' + t('users', 'ผู้ใช้') + t('roles', 'บทบาทและสิทธิ์') + '</nav>' +
+      '<div id="adminBox" data-tab="' + tab + '"><p class="muted">กำลังโหลด…</p></div>';
+  }
+
+  async function bindAdmin() {
+    const box = document.getElementById('adminBox');
+    if (!box) return;
+    const [ru, rr] = await Promise.all([run(() => window.RemoteApi.listUsers()), run(() => window.RemoteApi.listRoles())]);
+    if (!ru || !rr || !document.getElementById('adminBox')) return;
+    const users = ru.value;
+    const { roles, catalog } = rr.value;
+    adminCounts.pending = users.filter((x) => x.active && !x.role).length;
+    renderNav(location.hash.split('?')[0]);
+    if (box.dataset.tab === 'roles') renderRolesTab(box, users, roles, catalog); else renderUsersTab(box, users, roles);
+  }
+
+  function renderUsersTab(box, users, roles) {
+    const stat = (label, n, cls) => '<div class="stat' + (cls ? ' ' + cls : '') + '"><strong>' + n + '</strong><span>' + label + '</span></div>';
+    const pending = users.filter((x) => x.active && !x.role).length;
+    const disabled = users.filter((x) => !x.active).length;
+    const roleOpts = (cur) => opt('', '— ยังไม่กำหนดสิทธิ์ —', cur || '') + roles.map((r) => opt(r.key, r.name, cur || '')).join('');
+    box.innerHTML =
+      '<div class="admin-stats">' + stat('ผู้ใช้ทั้งหมด', users.length) + stat('รอกำหนดบทบาท', pending, pending ? 'warn' : '') + stat('ปิดการใช้งาน', disabled) + '</div>' +
+      '<section class="card form-section"><div class="section-head"><div><h2 class="section-title">รายชื่อผู้ใช้</h2>' +
+      '<div class="muted section-hint">เพิ่มผู้ใช้ใหม่ที่ Supabase Dashboard → Authentication → Users → Add user (ใส่อีเมลและรหัสผ่าน) ผู้ใช้จะปรากฏที่นี่เองเป็น "รอกำหนดบทบาท" แล้วมากำหนดชื่อและบทบาทให้</div></div></div>' +
+      '<div class="admin-filters"><label class="input-wrap search">' + ICON_SEARCH + '<input id="uSearch" type="search" placeholder="ค้นหาชื่อ อีเมล หน่วยงาน" aria-label="ค้นหา"></label>' +
+      '<div class="select-wrap"><select id="uRole" aria-label="กรองตามบทบาท">' + opt('', 'บทบาท: ทั้งหมด', '') + opt('none', 'บทบาท: รอกำหนด', '') + roles.map((r) => opt(r.key, 'บทบาท: ' + r.name, '')).join('') + '</select></div>' +
+      '<div class="select-wrap"><select id="uStatus" aria-label="กรองตามสถานะ">' + opt('', 'สถานะ: ทั้งหมด', '') + opt('on', 'สถานะ: ใช้งาน', '') + opt('off', 'สถานะ: ปิดการใช้งาน', '') + '</select></div></div>' +
+      '<datalist id="deptList">' + db.master.departments.map((d) => '<option value="' + esc(d.name) + '"></option>').join('') + '</datalist>' +
+      '<div class="table-wrap"><table class="edit-table users-table"><thead><tr><th>อีเมล</th><th>ชื่อ-นามสกุล</th><th>ตำแหน่ง</th><th>หน่วยงาน</th><th>บทบาท</th><th>ใช้งาน</th><th></th></tr></thead><tbody id="uRows">' +
+      users.map((u) => '<tr data-uid="' + esc(u.id) + '" data-search="' + esc((u.email + ' ' + u.name + ' ' + u.department).toLowerCase()) + '" data-role="' + esc(u.role || 'none') + '" data-active="' + (u.active ? 'on' : 'off') + '">' +
+        '<td class="nowrap">' + esc(u.email) + (u.id === me().id ? ' <span class="muted">(คุณ)</span>' : '') + (!u.role && u.active ? '<div><span class="badge pending">รอกำหนดบทบาท</span></div>' : '') + '</td>' +
+        '<td><input data-u="name" value="' + esc(u.name) + '" aria-label="ชื่อ"></td><td><input data-u="title" value="' + esc(u.title) + '" aria-label="ตำแหน่ง"></td>' +
+        '<td><input data-u="department" list="deptList" value="' + esc(u.department) + '" aria-label="หน่วยงาน"></td>' +
+        '<td><div class="select-wrap"><select data-u="role" aria-label="บทบาท">' + roleOpts(u.role) + '</select></div></td>' +
+        '<td class="center"><input type="checkbox" data-u="active" aria-label="ใช้งาน"' + (u.active ? ' checked' : '') + '></td>' +
+        '<td><button type="button" class="btn small primary" data-u-save>บันทึก</button></td></tr>').join('') + '</tbody></table></div>' +
+      '<p class="muted small-note" id="uEmpty" hidden>ไม่พบผู้ใช้ตามเงื่อนไข</p></section>';
+    const rows = Array.from(box.querySelectorAll('#uRows tr'));
+    const apply = () => {
+      const q = box.querySelector('#uSearch').value.trim().toLowerCase();
+      const r = box.querySelector('#uRole').value;
+      const st = box.querySelector('#uStatus').value;
+      let shown = 0;
+      rows.forEach((tr) => {
+        const okRow = (!q || tr.dataset.search.includes(q)) && (!r || tr.dataset.role === r) && (!st || tr.dataset.active === st);
+        tr.hidden = !okRow;
+        if (okRow) shown += 1;
+      });
+      box.querySelector('#uEmpty').hidden = shown > 0;
+    };
+    ['#uSearch', '#uRole', '#uStatus'].forEach((sel) => box.querySelector(sel).addEventListener('input', apply));
+    box.querySelector('#uRows').addEventListener('click', async (e) => {
+      const btn = e.target.closest('[data-u-save]');
+      if (!btn) return;
+      const tr = btn.closest('tr');
+      const val = (k) => tr.querySelector('[data-u="' + k + '"]');
+      const next = { id: tr.dataset.uid, name: val('name').value.trim(), title: val('title').value.trim(), department: val('department').value.trim(), role: val('role').value, active: val('active').checked };
+      if (next.role && !next.name) { alert('กรุณากรอกชื่อ-นามสกุลก่อนกำหนดบทบาท'); return; }
+      if (!(await runAndReload(() => window.RemoteApi.updateUser(next)))) return;
+      setFlash('success', 'บันทึกข้อมูลผู้ใช้ ' + (next.name || '') + ' แล้ว');
+      go('#/admin');
+    });
+  }
+
+  function renderRolesTab(box, users, roles, catalog) {
+    const groups = [];
+    PERMISSIONS.filter((p) => catalog.includes(p.key)).forEach((p) => {
+      let g = groups.find((x) => x.name === p.group);
+      if (!g) { g = { name: p.group, items: [] }; groups.push(g); }
+      g.items.push(p);
+    });
+    const IMPLIES_VIEW = ['budget.manage', 'request.decide', 'payment.record', 'accounting.record'];
+    const locked = (r, perm) => r.key === 'admin' && perm === 'user.manage';
+    const cols = roles.length + 1;
+    const matrix = '<div class="table-wrap"><table class="perm-matrix"><thead><tr><th>สิทธิ์</th>' +
+      roles.map((r) => '<th class="perm-col"><div class="role-name">' + esc(r.name) + '</div><div class="muted">' + esc(r.key) + ' · ' + r.users + ' คน</div></th>').join('') + '</tr></thead><tbody>' +
+      groups.map((g) => '<tr class="perm-group"><td colspan="' + cols + '">' + esc(g.name) + '</td></tr>' + g.items.map((p) =>
+        '<tr><td><strong>' + esc(p.label) + '</strong><div class="muted">' + esc(p.hint) + '</div></td>' + roles.map((r) =>
+          '<td class="center"><input type="checkbox" data-role="' + esc(r.key) + '" data-perm="' + p.key + '"' + (r.permissions.includes(p.key) || locked(r, p.key) ? ' checked' : '') +
+          (locked(r, p.key) ? ' disabled title="Admin ต้องมีสิทธิ์นี้เสมอ"' : '') + ' aria-label="' + esc(r.name + ': ' + p.label) + '"></td>').join('') + '</tr>').join('')).join('') +
+      '</tbody></table></div>';
+    const details = '<div class="table-wrap"><table class="edit-table"><thead><tr><th>รหัส</th><th>ชื่อบทบาท</th><th>คำอธิบาย</th><th>ผู้ใช้</th><th></th></tr></thead><tbody>' +
+      roles.map((r) => '<tr data-rkey="' + esc(r.key) + '"><td class="nowrap">' + esc(r.key) + (r.isSystem ? '<div class="muted">บทบาทตั้งต้น</div>' : '') + '</td>' +
+        '<td><input data-r="name" value="' + esc(r.name) + '" aria-label="ชื่อบทบาท"></td><td><input data-r="description" value="' + esc(r.description) + '" aria-label="คำอธิบาย"></td>' +
+        '<td class="num">' + r.users + '</td><td>' + (r.isSystem ? '' : '<button type="button" class="btn small bad" data-r-del title="' + (r.users ? 'ลบไม่ได้ — ยังมีผู้ใช้' : 'ลบบทบาท') + '"' + (r.users ? ' disabled' : '') + '>ลบ</button>') + '</td></tr>').join('') + '</tbody></table></div>';
+    box.innerHTML = '<section class="card form-section"><div class="section-head"><div><h2 class="section-title">ตารางสิทธิ์ของแต่ละบทบาท</h2>' +
+      '<div class="muted section-hint">ติ๊กเพื่อให้บทบาทนั้นทำสิ่งนั้นได้ — มีผลกับผู้ใช้ทุกคนในบทบาททันที สิทธิ์อนุมัติ งวดจ่าย บัญชี และจัดการงบ เห็นงบและคำขอทั้งหมดโดยอัตโนมัติ</div></div></div>' +
+      matrix + '<h3 class="side-title" style="margin-top:var(--s-6)">ชื่อและคำอธิบายบทบาท</h3>' + details +
+      '<div class="actions"><button type="button" class="btn primary" id="saveRoles">บันทึกการเปลี่ยนแปลง</button></div></section>' +
+      '<section class="card form-section"><div class="section-head"><div><h2 class="section-title">สร้างบทบาทใหม่</h2><div class="muted section-hint">เช่น ผู้จัดการฝ่าย, ผู้ตรวจสอบ (ดูอย่างเดียว) หรือ Admin + การเงิน สำหรับทีมเล็กที่คนเดียวทำหลายหน้าที่</div></div></div>' +
+      '<form id="newRole" class="form-grid"><label class="field"><span>รหัสบทบาท (อังกฤษพิมพ์เล็ก เช่น manager)</span><input name="key" required pattern="[a-z][a-z0-9_]{1,29}" maxlength="30"></label>' +
+      '<label class="field"><span>ชื่อบทบาท</span><input name="name" required></label>' +
+      '<label class="field full"><span>คำอธิบาย</span><input name="description"></label>' +
+      '<label class="field"><span>คัดลอกสิทธิ์จาก</span><div class="select-wrap"><select name="copy">' + opt('', '— เริ่มจากไม่มีสิทธิ์ —', '') + roles.map((r) => opt(r.key, r.name, '')).join('') + '</select></div></label>' +
+      '<div class="field"><span>&nbsp;</span><button class="btn primary" type="submit">สร้างบทบาท</button></div></form></section>';
+
+    // สิทธิ์ที่ต้องเห็นเอกสารของคนอื่น → ช่อง "ดูงบและคำขอของทุกคน" ถูกรวมไว้แล้ว
+    const syncImplied = () => roles.forEach((r) => {
+      const view = box.querySelector('[data-role="' + r.key + '"][data-perm="budget.view_all"]');
+      if (!view) return;
+      const implied = IMPLIES_VIEW.some((k) => { const c = box.querySelector('[data-role="' + r.key + '"][data-perm="' + k + '"]'); return c && c.checked; });
+      view.title = implied ? 'รวมอยู่แล้วจากสิทธิ์อื่นของบทบาทนี้' : '';
+      view.closest('td').classList.toggle('implied', implied);
+    });
+    box.addEventListener('change', syncImplied);
+    syncImplied();
+
+    box.querySelector('#saveRoles').addEventListener('click', async () => {
+      const changed = [];
+      let invalid = false;
+      roles.forEach((r) => {
+        const tr = box.querySelector('tr[data-rkey="' + r.key + '"]');
+        const name = tr.querySelector('[data-r="name"]').value.trim();
+        const description = tr.querySelector('[data-r="description"]').value.trim();
+        const permissions = PERMISSIONS.map((p) => p.key).filter((k) => catalog.includes(k) && box.querySelector('[data-role="' + r.key + '"][data-perm="' + k + '"]').checked);
+        const same = name === r.name && description === r.description && permissions.length === r.permissions.length && permissions.every((k) => r.permissions.includes(k));
+        if (!name) { alert('กรุณากรอกชื่อบทบาท ' + r.key); invalid = true; return; }
+        if (!same) changed.push({ key: r.key, name, description, permissions });
+      });
+      if (invalid) return;
+      if (!changed.length) { alert('ยังไม่มีการเปลี่ยนแปลง'); return; }
+      for (const c of changed) {
+        if (!(await run(() => window.RemoteApi.saveRole(c)))) { await run(reloadRemote); go('#/admin?tab=roles'); return; }
+      }
+      if (!(await run(reloadRemote))) return;
+      setFlash('success', 'บันทึกสิทธิ์ของ ' + changed.length + ' บทบาทแล้ว — มีผลกับผู้ใช้ทันที');
+      go('#/admin?tab=roles');
+    });
+    box.querySelector('table.edit-table tbody').addEventListener('click', async (e) => {
+      const del = e.target.closest('[data-r-del]');
+      if (!del) return;
+      const key = del.closest('tr').dataset.rkey;
+      if (!confirm('ลบบทบาท ' + key + ' ?')) return;
+      if (!(await runAndReload(() => window.RemoteApi.deleteRole(key)))) return;
+      setFlash('info', 'ลบบทบาท ' + key + ' แล้ว');
+      go('#/admin?tab=roles');
+    });
+    box.querySelector('#newRole').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const f = e.target.elements;
+      const src = roles.find((r) => r.key === f.copy.value);
+      const role = { key: f.key.value.trim(), name: f.name.value.trim(), description: f.description.value.trim(), permissions: src ? src.permissions.filter((k) => k !== 'user.manage') : [] };
+      if (!(await runAndReload(() => window.RemoteApi.saveRole(role)))) return;
+      setFlash('success', 'สร้างบทบาท ' + role.name + ' แล้ว — ติ๊กสิทธิ์ในตารางด้านบน');
+      go('#/admin?tab=roles');
     });
   }
 
@@ -2330,7 +2485,7 @@
   }
   const previousPage = () => (navStack.length > 1 ? navStack[navStack.length - 2] : null);
 
-  const LIST_PAGES = ['dashboard', 'master', 'budgets', 'my-budgets', 'requests', 'approvals', 'accounting', 'payments'];
+  const LIST_PAGES = ['dashboard', 'master', 'admin', 'budgets', 'my-budgets', 'requests', 'approvals', 'accounting', 'payments'];
   let lastBudgetList = null; // หน้ารายการงบล่าสุด (จำแท็บ/ตัวกรอง)
   let lastRequestParent = null; // หน้าที่เปิดคำขอมาล่าสุด: รายการคำขอ / รอตรวจสอบ / งวดจ่าย / หน้ารายละเอียดงบ
 
@@ -2351,8 +2506,9 @@
     }
     const titles = {
       dashboard: 'ภาพรวมงบประมาณ', master: 'ข้อมูลหลัก',
-      budgets: me().role === 'finance' ? 'จัดการงบประมาณ' : 'งบประมาณ', 'my-budgets': 'งบของฉัน',
-      requests: me().role === 'requester' ? 'คำขอของฉัน' : 'คำขอใช้งบทั้งหมด',
+      admin: 'ผู้ใช้และสิทธิ์',
+      budgets: can('budget.manage') ? 'จัดการงบประมาณ' : 'งบประมาณ', 'my-budgets': 'งบของฉัน',
+      requests: canViewAll() ? 'คำขอใช้งบทั้งหมด' : 'คำขอของฉัน',
       approvals: 'รอตรวจสอบ', accounting: 'รอบันทึกบัญชี', payments: 'งวดจ่ายค้าง'
     };
     return titles[p[0]] || 'กลับ';
@@ -2360,7 +2516,7 @@
 
   /** ปลายทางของปุ่มย้อนกลับ ตามชนิดหน้า (null = หน้ารายการ ไม่ต้องมีปุ่ม) */
   function backTarget(parts) {
-    const budgetList = lastBudgetList || (me().role === 'requester' ? '#/my-budgets' : '#/budgets');
+    const budgetList = lastBudgetList || (canViewAll() ? '#/budgets' : '#/my-budgets');
     if (parts[0] === 'budget' && parts[1] === 'new') return budgetList;
     if (parts[0] === 'budget' && parts[2] === 'edit') return '#/budget/' + parts[1];
     if (parts[0] === 'budget') return budgetList;
@@ -2383,7 +2539,8 @@
 
     if (parts[0] === 'dashboard') html = viewDashboard(params);
     else if (parts[0] === 'master') html = viewMaster();
-    else if (parts[0] === 'budgets' || parts[0] === 'my-budgets') html = viewBudgets(params);
+    else if (parts[0] === 'admin') html = viewAdmin(params);
+    else if (parts[0] === 'budgets' || parts[0] === 'my-budgets') html = viewBudgets(params, parts[0] === 'my-budgets');
     else if (parts[0] === 'budget' && parts[1] === 'new') html = viewBudgetForm(null);
     else if (parts[0] === 'budget' && parts[2] === 'edit') html = viewBudgetForm(parts[1]);
     else if (parts[0] === 'budget') html = viewBudgetDetail(parts[1]);
@@ -2414,6 +2571,7 @@
     bindBudgetForm();
     bindDashboard();
     bindMaster();
+    bindAdmin();
     bindRequestForm();
     bindRequestDetail();
     bindBudgetFilters();
@@ -2456,13 +2614,13 @@
     const fill = () => {
       if (REMOTE) {
         menu.innerHTML = '<div class="menu-label">เข้าสู่ระบบในฐานะ</div><div class="menu-user"><strong>' + esc(me().name) + '</strong><small>' +
-          esc((me().title ? me().title + ' · ' : '') + ROLE_LABEL[me().role]) + '</small></div><hr>' +
+          esc((me().title ? me().title + ' · ' : '') + roleLabel(me())) + '</small></div><hr>' +
           '<button type="button" role="menuitem" data-logout>ออกจากระบบ</button>';
         return;
       }
       menu.innerHTML = '<div class="menu-label">เข้าใช้งานในฐานะ (ทดสอบ)</div>' +
         USERS.map((x) => '<button type="button" role="menuitemradio" data-user="' + x.id + '" aria-checked="' + (x.id === me().id) + '">' +
-          esc(x.name) + '<small>' + esc(x.title + ' · ' + ROLE_LABEL[x.role]) + '</small></button>').join('') +
+          esc(x.name) + '<small>' + esc(x.title + ' · ' + roleLabel(x)) + '</small></button>').join('') +
         '<hr><button type="button" role="menuitem" class="danger" data-reset>รีเซ็ตข้อมูลตัวอย่าง</button>';
     };
     renderUserButton();

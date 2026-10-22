@@ -126,6 +126,9 @@
     deletePayment: (id, payId) => rpc('app_delete_payment', { p_id: id, p_pay_id: payId }),
     accountingSave: (id, data) => rpc('app_accounting_save', { p_id: id, p_data: data }),
     listUsers: () => rpc('app_list_users'),
+    listRoles: () => rpc('app_list_roles'),
+    saveRole: (r) => rpc('app_save_role', { p_key: r.key, p_name: r.name, p_description: r.description || '', p_permissions: r.permissions || [] }),
+    deleteRole: (key) => rpc('app_delete_role', { p_key: key }),
     updateUser: (u) => rpc('app_update_user', { p_id: u.id, p_name: u.name, p_title: u.title, p_department: u.department, p_role: u.role || '', p_active: u.active })
   };
 })();

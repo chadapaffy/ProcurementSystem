@@ -46,6 +46,12 @@ const iso = (y, m, d) => `${y}-${String(m).padStart(2, '0')}-${String(d).padStar
   await db.connect();
   await db.query('truncate public.app_requests, public.app_budgets, public.app_master, public.app_counters cascade');
   await db.query('delete from auth.users');
+  // คืนบทบาทตั้งต้นและลบบทบาทที่การทดสอบรอบก่อนสร้างไว้
+  await db.query('delete from public.app_roles where not is_system');
+  await db.query(`update public.app_roles r set permissions = d.p from (values
+    ('admin', array['budget.view_all','master.manage','user.manage']), ('requester', array['request.create']),
+    ('finance', array['budget.view_all','budget.manage','master.manage','request.decide','payment.record']),
+    ('accounting', array['budget.view_all','accounting.record'])) as d(k, p) where r.key = d.k`);
 
   // ---- ผู้ใช้ (สร้างใน auth.users เหมือนที่ Supabase Dashboard ทำ → trigger สร้าง profile)
   const mk = async (email) => (await db.query("insert into auth.users (email) values ($1) returning id", [email])).rows[0].id;
@@ -55,13 +61,15 @@ const iso = (y, m, d) => `${y}-${String(m).padStart(2, '0')}-${String(d).padStar
   const R2 = await mk('req2@example.com');
   const A = await mk('acc@example.com');
   const X = await mk('new@example.com'); // ยังไม่ได้รับบทบาท
+  const ADM = await mk('admin@example.com');
   const profiles = (await db.query('select count(*)::int n from public.profiles')).rows[0].n;
-  ok('trigger สร้าง profile ให้ผู้ใช้ใหม่ทุกคน', profiles === 6, profiles);
+  ok('trigger สร้าง profile ให้ผู้ใช้ใหม่ทุกคน', profiles === 7, profiles);
   await db.query("update public.profiles set role='finance', name='การเงิน 1' where id=$1", [F]);
   await db.query("update public.profiles set role='finance', name='การเงิน 2' where id=$1", [F2]);
   await db.query("update public.profiles set role='requester', name='ผู้ขอ 1' where id=$1", [R1]);
   await db.query("update public.profiles set role='requester', name='ผู้ขอ 2' where id=$1", [R2]);
   await db.query("update public.profiles set role='accounting', name='บัญชี' where id=$1", [A]);
+  await db.query("update public.profiles set role='admin', name='ผู้ดูแล' where id=$1", [ADM]);
 
   // ---- 1. ปิดการเข้าถึงตารางตรง ๆ
   for (const t of ['profiles', 'app_budgets', 'app_requests', 'app_master', 'app_counters']) {
@@ -118,7 +126,9 @@ const iso = (y, m, d) => `${y}-${String(m).padStart(2, '0')}-${String(d).padStar
   ok('ผู้ขอ 2 เห็นเฉพาะงบของตน', l2.budgets.length === 1 && l2.budgets[0].id === 'b3');
   ok('บัญชีเห็นงบทั้งหมด', la.budgets.length === 2);
   ok('งบที่โหลดมีเวอร์ชันและ id', lf.budgets[0].id && lf.budgets[0].version >= 1);
-  ok('รายชื่อผู้ใช้ไม่มีผู้ที่ยังไม่มีบทบาท', lf.users.length === 5 && !lf.users.some((u) => u.id === X), lf.users.length);
+  ok('รายชื่อผู้ใช้ไม่มีผู้ที่ยังไม่มีบทบาท', lf.users.length === 6 && !lf.users.some((u) => u.id === X), lf.users.length);
+  ok('รายชื่อผู้ใช้บอกว่าใครขอเบิกได้ (canRequest)', lf.users.find((u) => u.id === R1).canRequest === true && lf.users.find((u) => u.id === F).canRequest === false);
+  ok('app_load ส่งสิทธิ์ของผู้ใช้', lf.me.perms.includes('request.decide') && l1.me.perms.length === 1 && l1.me.perms[0] === 'request.create' && l1.me.roleName === 'ผู้ขอใช้งบ', [lf.me.perms, l1.me]);
   ok('รายชื่อผู้ใช้ไม่เปิดเผยอีเมล', !lf.users.some((u) => 'email' in u));
 
   // ---- 5. ขอเบิก CAPEX
@@ -208,17 +218,20 @@ const iso = (y, m, d) => `${y}-${String(m).padStart(2, '0')}-${String(d).padStar
 
   // ---- 10. ผู้ใช้
   ok('ผู้ขอดูรายชื่อผู้ใช้ทั้งหมดไม่ได้', !!(await call(R1, 'select public.app_list_users() as r')).error);
-  const ul = await call(F, 'select public.app_list_users() as r');
-  ok('การเงินดูรายชื่อผู้ใช้ทั้งหมดพร้อมอีเมลได้ (รวมคนที่ยังไม่มีบทบาท)', ul.data && ul.data.length === 6 && ul.data.some((u) => u.email === 'new@example.com' && u.role === null), ul);
+  ok('การเงินจัดการผู้ใช้ไม่ได้ (เป็นสิทธิ์ของ Admin)', !!(await call(F, 'select public.app_list_users() as r')).error);
+  const ul = await call(ADM, 'select public.app_list_users() as r');
+  ok('Admin ดูรายชื่อผู้ใช้ทั้งหมดพร้อมอีเมลได้ (รวมคนที่ยังไม่มีบทบาท)', ul.data && ul.data.length === 7 && ul.data.some((u) => u.email === 'new@example.com' && u.role === null), ul);
   const setUser = (uid, id, name, title, dept, role, active) => call(uid, 'select public.app_update_user($1::uuid, $2, $3, $4, $5, $6::boolean) as r', [id, name, title, dept, role, active]);
   ok('ผู้ขอแก้สิทธิ์ผู้ใช้ไม่ได้', !!(await setUser(R1, R1, 'x', '', '', 'finance', true)).error);
-  const nu = await setUser(F, X, 'พนักงานใหม่', 'เจ้าหน้าที่', 'ฝ่ายผลิต', 'requester', true);
-  ok('การเงินกำหนดบทบาทให้ผู้ใช้ใหม่', nu.data && nu.data.role === 'requester' && nu.data.name === 'พนักงานใหม่', nu);
+  const nu = await setUser(ADM, X, 'พนักงานใหม่', 'เจ้าหน้าที่', 'ฝ่ายผลิต', 'requester', true);
+  ok('Admin กำหนดบทบาทให้ผู้ใช้ใหม่', nu.data && nu.data.role === 'requester' && nu.data.name === 'พนักงานใหม่', nu);
   ok('ผู้ใช้ใหม่เข้าใช้งานได้หลังได้บทบาท', !!(await call(X, 'select public.app_load() as r')).data);
-  ok('ผู้ที่เป็นเจ้าของงบเปลี่ยนบทบาทไม่ได้', /เจ้าของงบ/.test((await setUser(F, R1, 'ผู้ขอ 1', '', '', 'accounting', true)).error || ''));
-  ok('ปิดการใช้งาน → เข้าใช้ไม่ได้', await (async () => { await setUser(F, X, 'พนักงานใหม่', '', '', 'requester', false); return !!(await call(X, 'select public.app_load() as r')).error; })());
-  ok('ปิดการเงินคนที่ 2 ได้ (ยังเหลือ 1)', !!(await setUser(F, F2, 'การเงิน 2', '', '', 'finance', false)).data);
-  ok('ลดบทบาท/ปิดการเงินคนสุดท้ายไม่ได้', /อย่างน้อย 1 คน/.test((await setUser(F, F, 'การเงิน 1', '', '', 'accounting', true)).error || ''));
+  ok('ผู้ที่เป็นเจ้าของงบเปลี่ยนบทบาทไม่ได้', /เจ้าของงบ/.test((await setUser(ADM, R1, 'ผู้ขอ 1', '', '', 'accounting', true)).error || ''));
+  ok('ปิดการใช้งาน → เข้าใช้ไม่ได้', await (async () => { await setUser(ADM, X, 'พนักงานใหม่', '', '', 'requester', false); return !!(await call(X, 'select public.app_load() as r')).error; })());
+  ok('ปิดบัญชีการเงินคนที่ 2 ได้', !!(await setUser(ADM, F2, 'การเงิน 2', '', '', 'finance', false)).data);
+  ok('Admin คนสุดท้ายลดบทบาทตัวเองไม่ได้', /อย่างน้อย 1 คน/.test((await setUser(ADM, ADM, 'ผู้ดูแล', '', '', 'accounting', true)).error || ''));
+  ok('Admin คนสุดท้ายปิดบัญชีตัวเองไม่ได้', /อย่างน้อย 1 คน/.test((await setUser(ADM, ADM, 'ผู้ดูแล', '', '', 'admin', false)).error || ''));
+  ok('กำหนดบทบาทที่ไม่มีอยู่ → error', /ไม่พบบทบาท/.test((await setUser(ADM, F2, 'การเงิน 2', '', '', 'nope', true)).error || ''));
 
   // ---- 11. ข้อมูลหลัก + เปลี่ยนชื่อแบบ cascade
   ok('ผู้ขอบันทึกข้อมูลหลักไม่ได้', !!(await call(R1, "select public.app_save_master('departments', '[]'::jsonb) as r")).error);
@@ -237,6 +250,45 @@ const iso = (y, m, d) => `${y}-${String(m).padStart(2, '0')}-${String(d).padStar
   await rpc(F, 'app_save_budget', [Object.assign({}, cbs, { id: 'b9', code: 'PJ9999', ownerId: R2 })]);
   ok('ผู้ขอลบงบไม่ได้', !!(await call(R2, 'select public.app_delete_budget($1) as r', ['b9'])).error);
   ok('การเงินลบงบที่ไม่มีคำขอได้', !(await call(F, 'select public.app_delete_budget($1) as r', ['b9'])).error);
+
+  // ---- 13. Admin แยกจากการเงิน + บทบาท/สิทธิ์ปรับได้
+  const lAdm = (await call(ADM, 'select public.app_load() as r')).data;
+  ok('Admin เห็นงบ/คำขอทั้งหมด (สิทธิ์ดูทั้งหมด)', lAdm.budgets.length === 2 && lAdm.requests.length >= 2, [lAdm.budgets.length, lAdm.requests.length]);
+  ok('Admin บันทึกงบไม่ได้', !!(await rpc(ADM, 'app_save_budget', [Object.assign({}, cbs, { id: 'bz', code: 'ZZ1' })])).error);
+  ok('Admin อนุมัติเอกสารไม่ได้', !!(await call(ADM, "select public.app_decide_request($1, 'approved', '') as r", [id1])).error);
+  ok('Admin จัดการข้อมูลหลักได้', !!(await call(ADM, "select public.app_save_master('departments', $1::jsonb) as r", [JSON.stringify([{ name: 'ฝ่ายวิศวกรรมใหม่' }, { name: 'ฝ่ายโครงการ' }])])).data);
+  ok('การเงินดูรายการบทบาทไม่ได้', !!(await call(F, 'select public.app_list_roles() as r')).error);
+  const lr = (await call(ADM, 'select public.app_list_roles() as r')).data;
+  ok('Admin ดูรายการบทบาท + รายการสิทธิ์ทั้งหมด', lr.roles.length === 4 && lr.catalog.length === 8 && lr.roles.find((r) => r.key === 'finance').users >= 1, lr.roles.map((r) => r.key));
+  const saveRole = (uid, key, name, desc, perms) => call(uid, 'select public.app_save_role($1, $2, $3, $4::jsonb) as r', [key, name, desc, JSON.stringify(perms)]);
+  ok('ผู้ขอสร้างบทบาทไม่ได้', !!(await saveRole(R1, 'hack', 'x', '', ['user.manage'])).error);
+  ok('รหัสบทบาทไม่ถูกรูปแบบ → error', !!(await saveRole(ADM, 'Bad Key', 'x', '', [])).error);
+  ok('สิทธิ์ที่ไม่รู้จัก → error', /ไม่รู้จักสิทธิ์/.test((await saveRole(ADM, 'mgr', 'ผู้จัดการ', '', ['fly.rocket'])).error || ''));
+  const mg = await saveRole(ADM, 'mgr', 'ผู้จัดการฝ่าย', 'อนุมัติเอกสารของฝ่าย', ['request.decide']);
+  ok('สร้างบทบาทใหม่ได้', mg.data && mg.data.key === 'mgr' && mg.data.isSystem === false && mg.data.permissions.length === 1, mg);
+  await setUser(ADM, X, 'พนักงานใหม่', '', '', 'mgr', true);
+  const px = (await call(X, 'select public.app_load() as r')).data;
+  ok('ผู้ใช้บทบาทใหม่ได้สิทธิ์ทันที: เห็นคำขอทั้งหมด (เพราะมีสิทธิ์อนุมัติ)', px && px.requests.length >= 2 && px.me.perms[0] === 'request.decide' && px.me.roleName === 'ผู้จัดการฝ่าย', px && px.me);
+  const pend = (await call(F, 'select public.app_load() as r')).data.requests.find((r) => r.status === 'pending');
+  ok('บทบาทใหม่อนุมัติได้ (ไม่ต้องเป็นการเงิน)', pend && !!(await call(X, "select public.app_decide_request($1, 'approved', 'ok') as r", [pend.id])).data, pend && pend.id);
+  ok('แต่บันทึกงวดจ่ายไม่ได้ (ไม่มีสิทธิ์)', !!(await rpc(X, 'app_record_payment', [id1, {}])).error);
+  ok('และขอเบิกไม่ได้', !!(await rpc(X, 'app_submit_request', [req()])).error);
+  // เอาสิทธิ์ออกจากบทบาท → มีผลทันที
+  await saveRole(ADM, 'finance', 'การเงิน', '', ['budget.view_all', 'master.manage', 'request.decide', 'payment.record']);
+  ok('ถอนสิทธิ์จัดการงบจากบทบาทการเงิน → บันทึกงบไม่ได้ทันที', !!(await rpc(F, 'app_save_budget', [Object.assign({}, sb.data, { name: 'x' })])).error);
+  await saveRole(ADM, 'finance', 'การเงิน', '', ['budget.view_all', 'budget.manage', 'master.manage', 'request.decide', 'payment.record']);
+  ok('คืนสิทธิ์แล้วบันทึกงบได้อีก', !!(await rpc(F, 'app_save_budget', [(await call(F, 'select public.app_load() as r')).data.budgets.find((b) => b.id === 'b1')])).data);
+  ok('ถอนสิทธิ์จัดการผู้ใช้จากบทบาท admin ไม่ได้ (เหลือผู้ดูแลไม่ถึง 1)', /อย่างน้อย 1 คน/.test((await saveRole(ADM, 'admin', 'ผู้ดูแลระบบ (Admin)', '', ['budget.view_all', 'master.manage'])).error || ''));
+  ok('ถอนสิทธิ์ขอเบิกจากผู้ขอที่เป็นเจ้าของงบไม่ได้', /เจ้าของอยู่/.test((await saveRole(ADM, 'requester', 'ผู้ขอใช้งบ', '', [])).error || ''));
+  ok('ลบบทบาทตั้งต้นไม่ได้', /ตั้งต้น/.test((await call(ADM, "select public.app_delete_role('finance') as r")).error || ''));
+  ok('ลบบทบาทที่ยังมีผู้ใช้ไม่ได้', /ยังมีผู้ใช้/.test((await call(ADM, "select public.app_delete_role('mgr') as r")).error || ''));
+  await setUser(ADM, X, 'พนักงานใหม่', '', '', 'requester', true);
+  ok('ลบบทบาทที่ไม่มีผู้ใช้ได้', !(await call(ADM, "select public.app_delete_role('mgr') as r")).error);
+  // บทบาทที่ไม่มีสิทธิ์เลย: เข้าระบบได้แต่เห็นเฉพาะของตน (ไม่เห็นอะไร)
+  await saveRole(ADM, 'viewer0', 'ไม่มีสิทธิ์', '', []);
+  await setUser(ADM, X, 'พนักงานใหม่', '', '', 'viewer0', true);
+  const v0 = (await call(X, 'select public.app_load() as r')).data;
+  ok('บทบาทไม่มีสิทธิ์: โหลดได้แต่ไม่เห็นงบ/คำขอของใคร', v0 && v0.budgets.length === 0 && v0.requests.length === 0, v0 && [v0.budgets.length, v0.requests.length]);
 
   console.log(`\n${passes} passed, ${fails} failed`);
   await db.end();
