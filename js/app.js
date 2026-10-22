@@ -19,12 +19,17 @@
   const DB_KEY = 'procurement.budget.v4';
   const VAT_RATE = 0.07;
 
-  const USERS = [
+  /** โหมดเชื่อม Supabase (ล็อกอินจริง ข้อมูลกลาง) เมื่อใส่ค่าใน js/config.js — ถ้าไม่ใส่จะเป็นโหมดทดลองในเบราว์เซอร์ */
+  const REMOTE = !!(window.RemoteApi && window.RemoteApi.enabled);
+
+  const DEMO_USERS = [
     { id: 'req1', name: 'สมชาย ใจดี', title: 'วิศวกร ฝ่ายวิศวกรรม', role: 'requester' },
     { id: 'req2', name: 'สุดา รักงาน', title: 'เจ้าหน้าที่โครงการ ฝ่ายโครงการ', role: 'requester' },
     { id: 'fin1', name: 'มาลี เงินดี', title: 'เจ้าหน้าที่การเงิน', role: 'finance' },
     { id: 'acc1', name: 'วิไล บัญชีดี', title: 'เจ้าหน้าที่บัญชี', role: 'accounting' }
   ];
+  let USERS = DEMO_USERS; // โหมด Supabase: แทนที่ด้วยรายชื่อผู้ใช้จากฐานข้อมูล
+  let remoteMe = null; // โหมด Supabase: ผู้ใช้ที่ล็อกอินอยู่ (null = ยังไม่ได้ล็อกอิน)
 
   const ROLE_LABEL = {
     requester: 'ผู้ขอใช้งบ',
@@ -80,7 +85,7 @@
     const list = (k) => (Array.isArray(m[k]) ? m[k] : []);
     const addBy = (arr, key, item) => { if (item[key] && !arr.some((x) => x[key] === item[key])) arr.push(item); };
     const companies = list('companies').slice();
-    Object.keys(COMPANIES).forEach((c) => addBy(companies, 'code', { code: c, name: COMPANIES[c] }));
+    if (!REMOTE) Object.keys(COMPANIES).forEach((c) => addBy(companies, 'code', { code: c, name: COMPANIES[c] }));
     const departments = list('departments').slice();
     const groups = list('groups').slice();
     const assetTypes = list('assetTypes').slice();
@@ -209,12 +214,52 @@
   try { currentUserId = localStorage.getItem(DB_KEY + '.user') || currentUserId; } catch (e) { /* ignore */ }
 
   function save() {
+    if (REMOTE) { console.error('save() ถูกเรียกในโหมด Supabase — ข้อมูลต้องบันทึกผ่านเซิร์ฟเวอร์'); return; }
     try { localStorage.setItem(DB_KEY, JSON.stringify(db)); } catch (e) { /* ignore */ }
   }
 
   function nextId(prefix) {
+    if (REMOTE) {
+      // โหมด Supabase: หลายคนสร้างรายการพร้อมกันได้ จึงใช้รหัสสุ่มแทนตัวนับในเครื่อง
+      const a = new Uint8Array(6);
+      window.crypto.getRandomValues(a);
+      return prefix + Array.from(a, (x) => x.toString(36).padStart(2, '0')).join('').slice(0, 10);
+    }
     db.seq.id += 1;
     return prefix + db.seq.id;
+  }
+
+  // ---- โหมด Supabase: โหลดข้อมูลจากเซิร์ฟเวอร์ และเรียกฟังก์ชันที่ตรวจสิทธิ์ฝั่งเซิร์ฟเวอร์
+  let remoteSnapshot = '';
+
+  async function reloadRemote() {
+    const d = await window.RemoteApi.load();
+    USERS = d.users || [];
+    remoteMe = d.me;
+    db = ensureMaster({ seq: { req: 0, id: 0, doc: {} }, master: d.master || {}, budgets: d.budgets || [], requests: d.requests || [] });
+    remoteSnapshot = JSON.stringify([USERS, db]);
+  }
+
+  /** เรียกเซิร์ฟเวอร์ ถ้าไม่สำเร็จแจ้งผู้ใช้ (หมดเวลา → กลับหน้าล็อกอิน) แล้วคืน null; สำเร็จคืน { value } */
+  async function run(fn) {
+    document.body.classList.add('busy');
+    try {
+      return { value: await fn() };
+    } catch (e) {
+      if (e && e.code === 'AUTH') signedOut('หมดเวลาเข้าใช้งาน กรุณาเข้าสู่ระบบใหม่');
+      else alert((e && e.message) || 'ทำรายการไม่สำเร็จ');
+      return null;
+    } finally {
+      document.body.classList.remove('busy');
+    }
+  }
+
+  /** เรียกเซิร์ฟเวอร์แล้วโหลดข้อมูลใหม่ (หลังบันทึก) — คืน { value } หรือ null */
+  async function runAndReload(fn) {
+    const res = await run(fn);
+    if (!res) return null;
+    const re = await run(reloadRemote);
+    return re ? res : null;
   }
 
   function nextReqNo() {
@@ -262,7 +307,7 @@
 
   const user = (id) => USERS.find((u) => u.id === id);
   const userName = (id) => (user(id) ? user(id).name : '-');
-  const me = () => user(currentUserId) || USERS[0];
+  const me = () => (REMOTE ? remoteMe : (user(currentUserId) || USERS[0]));
   const budgetById = (id) => db.budgets.find((b) => b.id === id);
   const requestById = (id) => db.requests.find((r) => r.id === id);
   const itemById = (b, id) => (b ? b.items.find((i) => i.id === id) : null);
@@ -653,7 +698,7 @@
       '</div>' +
       '<div class="row">' +
       field('หน่วยงาน', select('department', '<option value="">— เลือก —</option>' + optList(db.master.departments, 'name', (d) => d.name, v.department), ' required')) +
-      field('ผู้ขอใช้งบ (เจ้าของงบ)', select('ownerId', requesters.map((x) => opt(x.id, x.name + ' — ' + x.title, v.ownerId)).join(''))) +
+      field('ผู้ขอใช้งบ (เจ้าของงบ)', select('ownerId', requesters.map((x) => opt(x.id, x.name + (x.title ? ' — ' + x.title : ''), v.ownerId)).join(''))) +
       field('สถานะโครงการ', select('status', CBS_STATUS.map((s) => opt(s, s, v.status)).join('')), ' data-for="CBS"') +
       '</div>' +
       '<div class="row" data-for="CBS">' +
@@ -774,16 +819,20 @@
 
     const del = document.getElementById('deleteBudget');
     if (del) {
-      del.addEventListener('click', () => {
+      del.addEventListener('click', async () => {
         if (!confirm('ยืนยันการลบงบนี้?')) return;
-        db.budgets = db.budgets.filter((b) => b.id !== form.dataset.id);
-        save();
+        if (REMOTE) {
+          if (!(await runAndReload(() => window.RemoteApi.deleteBudget(form.dataset.id)))) return;
+        } else {
+          db.budgets = db.budgets.filter((b) => b.id !== form.dataset.id);
+          save();
+        }
         setFlash('success', 'ลบงบเรียบร้อยแล้ว');
         go('#/budgets');
       });
     }
 
-    form.addEventListener('submit', (e) => {
+    form.addEventListener('submit', async (e) => {
       e.preventDefault();
       const f = form.elements;
       const id = form.dataset.id;
@@ -873,18 +922,24 @@
         });
       }
       const at = new Date().toISOString();
+      let target;
       if (existing) {
-        Object.assign(existing, data, { updatedAt: at, updatedBy: me().id });
+        target = REMOTE ? JSON.parse(JSON.stringify(existing)) : existing;
+        Object.assign(target, data, { updatedAt: at, updatedBy: me().id });
         if (changed) {
-          existing.revisions.push({ no: existing.revisions.length, at, by: me().id, note: revisionNote, total: budgetTotal(existing), items: snapshot });
+          target.revisions.push({ no: target.revisions.length, at, by: me().id, note: revisionNote, total: budgetTotal(target), items: snapshot });
         }
       } else {
-        const b = Object.assign({ id: nextId('b'), createdAt: at, createdBy: me().id }, data);
-        b.revisions = [{ no: 0, at, by: me().id, note: 'บันทึกงบที่ได้รับอนุมัติ', total: budgetTotal(b), items: snapshot }];
-        db.budgets.push(b);
+        target = Object.assign({ id: nextId('b'), createdAt: at, createdBy: me().id }, data);
+        target.revisions = [{ no: 0, at, by: me().id, note: 'บันทึกงบที่ได้รับอนุมัติ', total: budgetTotal(target), items: snapshot }];
+        if (!REMOTE) db.budgets.push(target);
       }
-      save();
-      setFlash('success', 'บันทึกงบ ' + code + ' เรียบร้อยแล้ว' + (changed ? ' (บันทึกเป็นการปรับงบครั้งที่ ' + (existing.revisions.length - 1) + ')' : ''));
+      if (REMOTE) {
+        if (!(await runAndReload(() => window.RemoteApi.saveBudget(target, existing ? existing.version : null)))) return;
+      } else {
+        save();
+      }
+      setFlash('success', 'บันทึกงบ ' + code + ' เรียบร้อยแล้ว' + (changed ? ' (บันทึกเป็นการปรับงบครั้งที่ ' + (target.revisions.length - 1) + ')' : ''));
       go(existing ? '#/budget/' + existing.id : '#/budgets');
     });
   }
@@ -1263,7 +1318,7 @@
     });
     update();
 
-    form.addEventListener('submit', (e) => {
+    form.addEventListener('submit', async (e) => {
       e.preventDefault();
       const lines = readLines(form, isCapex);
       const errors = [];
@@ -1308,6 +1363,21 @@
         fields.expenseDate = f.expenseDate.value;
         fields.overBudget = over.length > 0;
         fields.overBudgetReason = over.length ? f.overBudgetReason.value.trim() : '';
+      }
+
+      if (REMOTE) {
+        // เซิร์ฟเวอร์คำนวณยอดซ้ำ ออกเลขที่คำขอ/ใบเบิก และตรวจงบคงเหลือให้
+        const payload = { id: existing ? existing.id : null, budgetId: b.id, payee: fields.payee, poNo: fields.poNo, lines: clean };
+        if (isCapex) Object.assign(payload, { purpose: fields.purpose, paymentPlan: plan, paymentTerms: fields.paymentTerms });
+        else Object.assign(payload, { expenseDate: fields.expenseDate, overBudgetReason: fields.overBudgetReason });
+        const res = await runAndReload(() => window.RemoteApi.submitRequest(payload));
+        if (!res) return;
+        const sent = requestById(res.value.id) || res.value;
+        setFlash('success', sent.status === 'approved'
+          ? 'จัดทำเอกสารเรียบร้อย เลขที่ ' + sent.docNo + (sent.overBudget ? ' (ใช้เกินงบ — บันทึกเหตุผลแล้ว)' : '')
+          : (existing ? 'ส่งคำขอ ' + sent.no + ' อีกครั้ง' : 'ส่งคำขอ ' + sent.no) + ' เรียบร้อยแล้ว รอฝ่ายการเงินตรวจสอบ');
+        go('#/request/' + sent.id);
+        return;
       }
 
       let r;
@@ -1626,9 +1696,9 @@
       let decision = 'approved';
       form.querySelectorAll('[data-decision]').forEach((btn) =>
         btn.addEventListener('click', () => { decision = btn.dataset.decision; }));
-      form.addEventListener('submit', (e) => {
+      form.addEventListener('submit', async (e) => {
         e.preventDefault();
-        const r = requestById(form.dataset.id);
+        let r = requestById(form.dataset.id);
         const b = budgetById(r.budgetId);
         const step = currentStep(r);
         const u = me();
@@ -1645,6 +1715,15 @@
             alert('งบไม่เพียงพอ กรุณาตรวจสอบวงเงินงบอีกครั้ง');
             return;
           }
+        }
+        if (REMOTE) {
+          if (!(await runAndReload(() => window.RemoteApi.decide(r.id, decision, comment)))) return;
+          r = requestById(r.id);
+          setFlash(decision === 'rejected' ? 'info' : 'success', decision === 'rejected'
+            ? 'ไม่อนุมัติคำขอ ' + r.no + ' แล้ว แจ้งเหตุผลให้ผู้ขอแก้ไขหรือยกเลิก งบที่จองไว้ถูกคืนเรียบร้อย'
+            : 'อนุมัติเอกสารแล้ว ออกใบเบิกงบประมาณเลขที่ ' + r.docNo);
+          go('#/request/' + r.id);
+          return;
         }
         Object.assign(step, { status: decision, by: u.id, at: new Date().toISOString(), comment });
         if (decision === 'rejected') {
@@ -1688,13 +1767,22 @@
       document.getElementById('payRest').addEventListener('click', fillRest);
       if (pay.dataset.rest === '1') fillRest();
       else calc();
-      pay.addEventListener('submit', (e) => {
+      pay.addEventListener('submit', async (e) => {
         e.preventDefault();
         const c = calc();
         const left = outstanding(r);
         if (!(c.before > 0)) { alert('จำนวนเงินต้องมากกว่า 0'); return; }
         if (c.total > left + 0.005) { alert('ยอดงวดนี้ (' + money(c.total) + ') เกินยอดค้างบันทึก ' + money(left) + ' บาท'); return; }
         if (!f.dueDate.value) { alert('กรุณาระบุวันที่กำหนดจ่ายเงิน'); return; }
+        if (REMOTE) {
+          const label = f.label.value.trim() || 'งวดที่ ' + ((r.payments || []).length + 1);
+          const payload = { label, deliveryDate: f.deliveryDate.value, dueDate: f.dueDate.value, amountBeforeVat: c.before, vat: c.vat };
+          if (!(await runAndReload(() => window.RemoteApi.recordPayment(r.id, payload)))) return;
+          const nr = requestById(r.id);
+          setFlash('success', 'บันทึก' + label + ' ' + money(c.total) + ' บาทแล้ว · ค้างบันทึก ' + money(outstanding(nr)) + ' บาท');
+          go('#/request/' + r.id);
+          return;
+        }
         r.payments = r.payments || [];
         r.payments.push({
           id: nextId('p'), no: r.payments.length + 1, label: f.label.value.trim() || 'งวดที่ ' + (r.payments.length + 1),
@@ -1709,17 +1797,21 @@
 
     const acct = document.getElementById('acctForm');
     if (acct) {
-      acct.addEventListener('click', (e) => {
+      acct.addEventListener('click', async (e) => {
         const del = e.target.closest('[data-del-pay]');
         if (!del) return;
         const r = requestById(acct.dataset.id);
         if (!confirm('ลบงวดนี้?')) return;
-        r.payments = r.payments.filter((p) => p.id !== del.dataset.delPay);
-        save();
+        if (REMOTE) {
+          if (!(await runAndReload(() => window.RemoteApi.deletePayment(r.id, del.dataset.delPay)))) return;
+        } else {
+          r.payments = r.payments.filter((p) => p.id !== del.dataset.delPay);
+          save();
+        }
         setFlash('info', 'ลบงวดจ่ายแล้ว');
         go('#/request/' + r.id);
       });
-      acct.addEventListener('submit', (e) => {
+      acct.addEventListener('submit', async (e) => {
         e.preventDefault();
         const r = requestById(acct.dataset.id);
         const f = acct.elements;
@@ -1742,6 +1834,13 @@
           });
           if (errors.length) { alert(errors.join('\n')); return; }
           if (!updates.length) { alert('ยังไม่ได้กรอกวันที่จ่าย หรือข้อมูล Asset / Expenses'); return; }
+          if (REMOTE) {
+            const payload = { payments: updates.map(([p, hasSplit, asset, expense, paid]) => ({ id: p.id, paidAt: paid, asset: hasSplit ? asset : '', expense: hasSplit ? expense : '' })) };
+            if (!(await runAndReload(() => window.RemoteApi.accountingSave(r.id, payload)))) return;
+            setFlash('success', 'บันทึกข้อมูลบัญชีของ ' + r.docNo + ' แล้ว (' + updates.length + ' งวด)');
+            go('#/request/' + r.id);
+            return;
+          }
           updates.forEach(([p, hasSplit, asset, expense, paid]) => {
             p.paidAt = paid || null;
             p.paidBy = paid ? u.id : null;
@@ -1750,6 +1849,13 @@
           setFlash('success', 'บันทึกข้อมูลบัญชีของ ' + r.docNo + ' แล้ว (' + updates.length + ' งวด)');
         } else {
           if (f.paymentStatus.value === 'จ่ายแล้ว' && !f.paidAt.value) { alert('กรุณาระบุวันที่จ่ายจริง'); return; }
+          if (REMOTE) {
+            const payload = { paymentStatus: f.paymentStatus.value, paidAt: f.paidAt.value, lines: r.lines.map((l, i) => ({ glCode: f['gl-' + i].value.trim(), glName: f['gln-' + i].value.trim() })) };
+            if (!(await runAndReload(() => window.RemoteApi.accountingSave(r.id, payload)))) return;
+            setFlash('success', 'บันทึกข้อมูลบัญชีของ ' + r.docNo + ' แล้ว');
+            go('#/request/' + r.id);
+            return;
+          }
           r.lines.forEach((l, i) => {
             l.glCode = f['gl-' + i].value.trim();
             l.glName = f['gln-' + i].value.trim();
@@ -1764,8 +1870,8 @@
 
     const cancel = document.getElementById('cancelRequest');
     if (cancel) {
-      cancel.addEventListener('click', () => {
-        const r = requestById(cancel.dataset.id);
+      cancel.addEventListener('click', async () => {
+        let r = requestById(cancel.dataset.id);
         let reason = '';
         if (r.status === 'approved') {
           // เอกสารที่ออกไปแล้วต้องระบุเหตุผลการยกเลิกไว้ตรวจสอบย้อนหลัง
@@ -1775,11 +1881,16 @@
           return;
         }
         const wasIssued = r.status === 'approved';
-        r.status = 'cancelled';
-        r.cancelledAt = new Date().toISOString();
-        r.cancelledBy = me().id;
-        r.cancelReason = reason;
-        save();
+        if (REMOTE) {
+          if (!(await runAndReload(() => window.RemoteApi.cancel(r.id, reason)))) return;
+          r = requestById(r.id);
+        } else {
+          r.status = 'cancelled';
+          r.cancelledAt = new Date().toISOString();
+          r.cancelledBy = me().id;
+          r.cancelReason = reason;
+          save();
+        }
         setFlash('info', wasIssued
           ? 'ยกเลิกเอกสาร ' + r.docNo + ' แล้ว คืนยอด ' + money(r.amount) + ' บาทเข้างบเรียบร้อย'
           : 'ยกเลิกคำขอ ' + r.no + ' แล้ว');
@@ -2087,15 +2198,48 @@
 
     const doa = Object.keys(DOA).map((k) => '<h3 class="side-title">' + esc(DOA[k].short) + '</h3><div class="table-wrap"><table><thead><tr><th>ข้อ</th><th>วงเงิน</th><th>ผู้อนุมัติ</th></tr></thead><tbody>' +
       DOA[k].rows.map((r) => '<tr><td class="nowrap">' + esc(r.code) + '</td><td>' + esc(r.label) + '</td><td>' + esc(r.approver) + '</td></tr>').join('') + '</tbody></table></div>').join('');
-    const users = '<div class="table-wrap"><table><thead><tr><th>ชื่อ</th><th>ตำแหน่ง</th><th>บทบาท</th></tr></thead><tbody>' +
-      USERS.map((x) => '<tr><td>' + esc(x.name) + '</td><td>' + esc(x.title) + '</td><td>' + esc(ROLE_LABEL[x.role]) + '</td></tr>').join('') + '</tbody></table></div>';
+    const users = REMOTE ? '<div id="usersBox"><p class="muted">กำลังโหลดรายชื่อผู้ใช้…</p></div>'
+      : '<div class="table-wrap"><table><thead><tr><th>ชื่อ</th><th>ตำแหน่ง</th><th>บทบาท</th></tr></thead><tbody>' +
+        USERS.map((x) => '<tr><td>' + esc(x.name) + '</td><td>' + esc(x.title) + '</td><td>' + esc(ROLE_LABEL[x.role]) + '</td></tr>').join('') + '</tbody></table></div>';
+    const usersHint = REMOTE
+      ? 'สร้างบัญชีใหม่ที่ Supabase Dashboard (Authentication → Users) แล้วมากำหนดชื่อและบทบาทที่นี่ — ผู้ใช้ที่ยังไม่ได้รับบทบาทจะเข้าข้อมูลไม่ได้'
+      : 'อ่านอย่างเดียว — โหมดทดลองยังไม่มีระบบล็อกอิน ใช้เมนูผู้ใช้มุมขวาบนสลับบทบาทเพื่อทดสอบ';
     return '<div class="page-head"><div><h1>ข้อมูลหลัก</h1><div class="page-sub">ค่าที่ใช้เป็นตัวเลือกในฟอร์มและรายงาน แก้ไขโดยฝ่ายการเงิน</div></div></div>' + takeFlash() +
       '<div id="formError"></div><div class="form-main">' + sections +
       '<section class="card form-section"><div class="section-head"><div><h2 class="section-title">ตารางอำนาจอนุมัติ (DOA)</h2><div class="muted section-hint">อ่านอย่างเดียว — ใช้ติ๊กระดับผู้อนุมัติบนใบเบิก CAPEX ตามยอดเงิน (หน่วย: ล้านบาท)</div></div></div>' + doa + '</section>' +
-      '<section class="card form-section"><div class="section-head"><div><h2 class="section-title">ผู้ใช้และบทบาท</h2><div class="muted section-hint">อ่านอย่างเดียว — ต้นแบบนี้ยังไม่มีระบบล็อกอิน ใช้เมนูผู้ใช้มุมขวาบนสลับบทบาทเพื่อทดสอบ</div></div></div>' + users + '</section></div>';
+      '<section class="card form-section"><div class="section-head"><div><h2 class="section-title">ผู้ใช้และบทบาท</h2><div class="muted section-hint">' + usersHint + '</div></div></div>' + users + '</section></div>';
+  }
+
+  /** โหมด Supabase: ตารางจัดการผู้ใช้และบทบาท (การเงิน) */
+  async function loadUsersBox() {
+    const box = document.getElementById('usersBox');
+    if (!box) return;
+    const res = await run(() => window.RemoteApi.listUsers());
+    if (!res || !document.getElementById('usersBox')) return;
+    const roles = ['', 'requester', 'finance', 'accounting'];
+    box.innerHTML = '<datalist id="deptList">' + db.master.departments.map((d) => '<option value="' + esc(d.name) + '"></option>').join('') + '</datalist>' +
+      '<div class="table-wrap"><table class="edit-table users-table"><thead><tr><th>อีเมล</th><th>ชื่อ-นามสกุล</th><th>ตำแหน่ง</th><th>หน่วยงาน</th><th>บทบาท</th><th>ใช้งาน</th><th></th></tr></thead><tbody>' +
+      res.value.map((u) => '<tr data-uid="' + esc(u.id) + '"><td class="nowrap">' + esc(u.email) + (u.id === me().id ? ' <span class="muted">(คุณ)</span>' : '') + '</td>' +
+        '<td><input data-u="name" value="' + esc(u.name) + '" aria-label="ชื่อ"></td><td><input data-u="title" value="' + esc(u.title) + '" aria-label="ตำแหน่ง"></td>' +
+        '<td><input data-u="department" list="deptList" value="' + esc(u.department) + '" aria-label="หน่วยงาน"></td>' +
+        '<td><div class="select-wrap"><select data-u="role" aria-label="บทบาท">' + roles.map((r) => opt(r, r ? ROLE_LABEL[r] : '— ยังไม่กำหนดสิทธิ์ —', u.role || '')).join('') + '</select></div></td>' +
+        '<td class="center"><input type="checkbox" data-u="active" aria-label="ใช้งาน"' + (u.active ? ' checked' : '') + '></td>' +
+        '<td><button type="button" class="btn small primary" data-u-save>บันทึก</button></td></tr>').join('') + '</tbody></table></div>';
+    box.onclick = async (e) => {
+      const btn = e.target.closest('[data-u-save]');
+      if (!btn) return;
+      const tr = btn.closest('tr');
+      const val = (k) => tr.querySelector('[data-u="' + k + '"]');
+      const user2 = { id: tr.dataset.uid, name: val('name').value.trim(), title: val('title').value.trim(), department: val('department').value.trim(), role: val('role').value, active: val('active').checked };
+      if (user2.role && !user2.name) { alert('กรุณากรอกชื่อ-นามสกุลก่อนกำหนดบทบาท'); return; }
+      if (!(await runAndReload(() => window.RemoteApi.updateUser(user2)))) return;
+      setFlash('success', 'บันทึกข้อมูลผู้ใช้ ' + (user2.name || '') + ' แล้ว');
+      go('#/master');
+    };
   }
 
   function bindMaster() {
+    loadUsersBox();
     document.querySelectorAll('.master-form').forEach((form) => {
       const sec = MASTER_SECTIONS.find((x) => x.key === form.dataset.key);
       const tbody = form.querySelector('tbody');
@@ -2111,7 +2255,7 @@
           tr.remove();
         }
       });
-      form.addEventListener('submit', (e) => {
+      form.addEventListener('submit', async (e) => {
         e.preventDefault();
         const keyCol = sec.cols[0].k;
         const rows = Array.from(tbody.rows).map((tr) => {
@@ -2125,9 +2269,15 @@
         const keys = rows.map((it) => it[keyCol].toLowerCase());
         if (keys.some((k, i) => k && keys.indexOf(k) !== i)) errors.push(sec.cols[0].label + 'ซ้ำกัน');
         if (errors.length) { showErrors(errors); return; }
-        if (sec.rename) rows.forEach((it) => { if (it.orig && it.orig !== it[keyCol]) sec.rename(it.orig, it[keyCol]); });
-        db.master[sec.key] = rows.map((it) => { const o = {}; sec.cols.forEach((c) => { o[c.k] = it[c.k]; }); return o; });
-        save();
+        const data = rows.map((it) => { const o = {}; sec.cols.forEach((c) => { o[c.k] = it[c.k]; }); return o; });
+        if (REMOTE) {
+          const renames = sec.rename ? rows.filter((it) => it.orig && it.orig !== it[keyCol]).map((it) => ({ from: it.orig, to: it[keyCol] })) : [];
+          if (!(await runAndReload(() => window.RemoteApi.saveMaster(sec.key, data, renames)))) return;
+        } else {
+          if (sec.rename) rows.forEach((it) => { if (it.orig && it.orig !== it[keyCol]) sec.rename(it.orig, it[keyCol]); });
+          db.master[sec.key] = data;
+          save();
+        }
         setFlash('success', 'บันทึก' + sec.title + 'แล้ว');
         go('#/master');
       });
@@ -2222,6 +2372,7 @@
   }
 
   function render() {
+    if (REMOTE && !remoteMe) return; // ยังไม่ได้ล็อกอิน
     const hash = location.hash || homeFor(me());
     const [path, query] = hash.slice(1).split('?');
     const params = new URLSearchParams(query || '');
@@ -2297,10 +2448,18 @@
 
   /** เมนูผู้ใช้มุมขวาบน: สลับผู้ใช้ตัวอย่าง (ต้นแบบยังไม่มีล็อกอิน) และรีเซ็ตข้อมูล */
   function initUserMenu() {
+    if (userMenuReady) { renderUserButton(); return; }
+    userMenuReady = true;
     const btn = document.getElementById('userBtn');
     const menu = document.getElementById('userMenu');
     const close = () => { menu.hidden = true; btn.setAttribute('aria-expanded', 'false'); };
     const fill = () => {
+      if (REMOTE) {
+        menu.innerHTML = '<div class="menu-label">เข้าสู่ระบบในฐานะ</div><div class="menu-user"><strong>' + esc(me().name) + '</strong><small>' +
+          esc((me().title ? me().title + ' · ' : '') + ROLE_LABEL[me().role]) + '</small></div><hr>' +
+          '<button type="button" role="menuitem" data-logout>ออกจากระบบ</button>';
+        return;
+      }
       menu.innerHTML = '<div class="menu-label">เข้าใช้งานในฐานะ (ทดสอบ)</div>' +
         USERS.map((x) => '<button type="button" role="menuitemradio" data-user="' + x.id + '" aria-checked="' + (x.id === me().id) + '">' +
           esc(x.name) + '<small>' + esc(x.title + ' · ' + ROLE_LABEL[x.role]) + '</small></button>').join('') +
@@ -2319,6 +2478,7 @@
       if (!item) return;
       e.stopPropagation();
       close();
+      if (item.hasAttribute('data-logout')) { logout(); return; }
       if (item.hasAttribute('data-reset')) {
         if (!confirm('ล้างข้อมูลทั้งหมดและกลับไปใช้ข้อมูลตัวอย่าง?')) return;
         db = seed();
@@ -2338,13 +2498,129 @@
     document.addEventListener('keydown', (e) => { if (e.key === 'Escape') close(); });
   }
 
+  // ---------------------------------------------------------------- เข้าสู่ระบบ (โหมด Supabase)
+
+  function authShell(inner) {
+    document.body.classList.add('auth-screen');
+    document.getElementById('app').innerHTML = '<div class="auth-wrap">' + inner + '</div>';
+  }
+
+  function showLogin(message) {
+    remoteMe = null;
+    db = null;
+    navStack = [];
+    authShell('<div class="card auth-card"><h1>เข้าสู่ระบบ</h1><p class="muted">ระบบขอเบิกใช้งบประมาณ</p>' +
+      '<div id="loginError">' + (message ? '<div class="alert error">' + esc(message) + '</div>' : '') + '</div>' +
+      '<form id="loginForm"><label class="field"><span>อีเมล</span><input name="email" type="email" autocomplete="username" required></label>' +
+      '<label class="field"><span>รหัสผ่าน</span><input name="password" type="password" autocomplete="current-password" required></label>' +
+      '<button class="btn primary tall" type="submit">เข้าสู่ระบบ</button></form>' +
+      '<p class="muted small-note">บัญชีผู้ใช้สร้างโดยผู้ดูแลระบบ หากเข้าสู่ระบบไม่ได้กรุณาติดต่อฝ่ายการเงิน</p></div>');
+    const form = document.getElementById('loginForm');
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const btn = form.querySelector('button');
+      btn.disabled = true;
+      try {
+        await window.RemoteApi.signIn(form.elements.email.value.trim(), form.elements.password.value);
+      } catch (err) {
+        document.getElementById('loginError').innerHTML = '<div class="alert error">' + esc(err.message) + '</div>';
+        btn.disabled = false;
+        return;
+      }
+      await enterApp();
+    });
+    form.elements.email.focus();
+  }
+
+  function showPending(meRow) {
+    const inactive = meRow && meRow.active === false;
+    authShell('<div class="card auth-card"><h1>' + (inactive ? 'บัญชีถูกปิดการใช้งาน' : 'รอผู้ดูแลกำหนดสิทธิ์') + '</h1>' +
+      '<p class="muted">' + (inactive
+        ? 'บัญชีนี้ถูกปิดการใช้งาน กรุณาติดต่อฝ่ายการเงิน'
+        : 'เข้าสู่ระบบสำเร็จ แต่ยังไม่ได้รับสิทธิ์ใช้งาน กรุณาแจ้งฝ่ายการเงินให้กำหนดชื่อและบทบาทให้บัญชีนี้') + '</p>' +
+      '<p><strong>' + esc((meRow && meRow.email) || (window.RemoteApi.sessionUser() || {}).email || '') + '</strong></p>' +
+      '<div class="actions"><button class="btn primary" id="recheck">ตรวจสอบอีกครั้ง</button><button class="btn" id="pendingLogout">ออกจากระบบ</button></div></div>');
+    document.getElementById('recheck').addEventListener('click', enterApp);
+    document.getElementById('pendingLogout').addEventListener('click', logout);
+  }
+
+  function showFatal(message) {
+    authShell('<div class="card auth-card"><h1>เปิดระบบไม่สำเร็จ</h1><div class="alert error">' + esc(message) + '</div>' +
+      '<div class="actions"><button class="btn primary" id="retry">ลองใหม่</button><button class="btn" id="fatalLogout">ออกจากระบบ</button></div></div>');
+    document.getElementById('retry').addEventListener('click', enterApp);
+    document.getElementById('fatalLogout').addEventListener('click', logout);
+  }
+
+  /** ออกจากระบบเมื่อหมดเวลาเข้าใช้งาน (session หมดอายุ) */
+  function signedOut(message) {
+    window.RemoteApi.signOut();
+    showLogin(message);
+  }
+
+  async function logout() {
+    await window.RemoteApi.signOut();
+    try { history.replaceState(null, '', location.pathname + location.search); } catch (e) { /* ignore */ }
+    showLogin();
+  }
+
+  async function enterApp() {
+    authShell('<div class="card auth-card"><p class="muted">กำลังเข้าสู่ระบบ…</p></div>');
+    let meRow;
+    try {
+      meRow = await window.RemoteApi.me();
+      if (meRow && meRow.active && meRow.role) await reloadRemote();
+    } catch (e) {
+      if (e && e.code === 'AUTH') showLogin(e.message); else showFatal((e && e.message) || 'เกิดข้อผิดพลาด');
+      return;
+    }
+    if (!meRow || !meRow.active || !meRow.role) { showPending(meRow); return; }
+    document.body.classList.remove('auth-screen');
+    renderUserButton();
+    initUserMenu();
+    startPolling();
+    render();
+  }
+
+  // โหลดข้อมูลใหม่เป็นระยะ (และเมื่อกลับมาที่แท็บ) เพื่อให้เห็นงานที่คนอื่นทำ — ข้ามเมื่อกำลังกรอกฟอร์ม
+  let pollTimer = null;
+  async function silentRefresh() {
+    if (!REMOTE || !remoteMe || document.visibilityState !== 'visible' || isFormHash(location.hash || '')) return;
+    const ae = document.activeElement;
+    if (ae && /^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName) && document.getElementById('app').contains(ae)) return;
+    const before = remoteSnapshot;
+    try {
+      await reloadRemote();
+    } catch (e) {
+      if (e && e.code === 'AUTH') signedOut('หมดเวลาเข้าใช้งาน กรุณาเข้าสู่ระบบใหม่');
+      return;
+    }
+    if (remoteSnapshot !== before) {
+      const y = window.scrollY;
+      render();
+      window.scrollTo(0, y);
+    }
+  }
+  function startPolling() {
+    if (pollTimer) return;
+    pollTimer = setInterval(silentRefresh, 60000);
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') silentRefresh(); });
+  }
+
+  let userMenuReady = false;
+
   function init() {
-    db = load();
+    if (!REMOTE) db = load();
     checkForUpdate();
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'visible') checkForUpdate();
     });
-    initUserMenu();
+    if (REMOTE) {
+      document.body.classList.add('remote');
+      const note = document.querySelector('.sidebar-note');
+      if (note) note.textContent = 'ข้อมูลเก็บบนเซิร์ฟเวอร์ — ทุกคนในองค์กรเห็นข้อมูลเดียวกันตามสิทธิ์ของบทบาท';
+    } else {
+      initUserMenu();
+    }
     const toggle = document.getElementById('menuToggle');
     const backdrop = document.createElement('div');
     backdrop.className = 'backdrop no-print';
@@ -2356,7 +2632,12 @@
     toggle.addEventListener('click', () => setNav(!document.body.classList.contains('nav-open')));
     backdrop.addEventListener('click', () => setNav(false));
     window.addEventListener('hashchange', render);
-    render();
+    if (REMOTE) {
+      document.body.classList.add('auth-screen');
+      if (window.RemoteApi.hasSession()) enterApp(); else showLogin();
+    } else {
+      render();
+    }
   }
 
   init();

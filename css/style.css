@@ -492,6 +492,20 @@ button.link { background: none; border: 0; padding: 0; color: var(--primary); cu
 .master-form .actions { margin-top: var(--s-4); }
 input.locked { background: var(--surface-2); color: var(--muted); }
 
+/* ---------- login (โหมด Supabase) ---------- */
+body.auth-screen .sidebar, body.auth-screen .user-menu, body.auth-screen .menu-toggle { display: none; }
+.auth-wrap { min-height: calc(100vh - var(--topbar-h) - var(--s-7) - var(--s-6)); display: grid; place-items: center; }
+.auth-card { width: 100%; max-width: 400px; padding: var(--s-6); }
+.auth-card h1 { margin-bottom: var(--s-1); }
+.auth-card > .muted { margin: 0 0 var(--s-5); }
+.auth-card form .btn { width: 100%; margin-top: var(--s-2); }
+.auth-card .small-note { margin: var(--s-4) 0 0; }
+.user-dropdown .menu-user { padding: var(--s-2); display: flex; flex-direction: column; gap: 2px; }
+.user-dropdown .menu-user small { color: var(--muted); font-size: var(--fs-xs); }
+body.busy, body.busy * { cursor: progress; }
+body.busy button, body.busy .btn { pointer-events: none; opacity: .7; }
+.users-table input:not([type="checkbox"]), .users-table select { min-width: 8rem; }
+
 /* ---------- responsive ---------- */
 @media (max-width: 1100px) {
   .filters { grid-template-columns: 1fr 1fr; }
