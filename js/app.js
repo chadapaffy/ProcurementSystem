@@ -644,7 +644,7 @@
       (b ? field('เหตุผลการปรับงบ (จำเป็นเมื่อเปลี่ยนวงเงินหรือรายการ — จะบันทึกเป็นประวัติการปรับงบ)',
         '<textarea name="revisionNote" placeholder="เช่น ปรับเพิ่มตามใบเสนอราคาจริง / Revise CBS ครั้งที่ ' + ((b.revisions || []).length) + '"></textarea>') : '') +
       '<div class="actions"><button class="btn primary" type="submit">บันทึก</button>' +
-      '<a class="btn" href="' + (b ? '#/budget/' + b.id : '#/budgets') + '">ยกเลิก</a>' +
+      '<a class="btn" data-back href="' + (b ? '#/budget/' + b.id : '#/budgets') + '">ยกเลิก</a>' +
       (b && !hasRequests ? '<button type="button" class="btn bad" id="deleteBudget">ลบงบนี้</button>' : '') +
       '</div></form>';
   }
@@ -1030,7 +1030,7 @@
       '<dt>คงเหลือหลังขอเบิก</dt><dd id="sideAfter">' + moneyCell(remaining) + '</dd></dl>' +
       '<div class="actions side-actions"><button class="btn primary tall" type="submit">' +
       (isCapex ? (existing ? 'ส่งเอกสารให้ฝ่ายการเงินอีกครั้ง' : 'ส่งเอกสารให้ฝ่ายการเงิน') : 'จัดทำเอกสาร') + '</button>' +
-      '<a class="btn" href="' + (existing ? '#/request/' + existing.id : '#/budget/' + b.id) + '">ยกเลิก</a></div></div>' +
+      '<a class="btn" data-back href="' + (existing ? '#/request/' + existing.id : '#/budget/' + b.id) + '">ยกเลิก</a></div></div>' +
       '<div class="card form-tip"><h3 class="side-title">คำแนะนำ</h3><p class="muted">' +
       (isCapex
         ? 'ใบเบิก 1 ใบ ใช้กับรายการย่อยเดียว ใส่ได้หลายบรรทัด ถ้าจ่ายเป็นงวดให้ขอเบิกยอดเต็มครั้งเดียว แล้วกำหนดเงื่อนไขการจ่ายไว้ในใบเบิก'
@@ -1843,7 +1843,46 @@
 
   // ---------------------------------------------------------------- router
 
-  // ---- ปุ่มย้อนกลับ: กลับไปหน้าที่เป็น "ต้นทาง" ของหน้านี้ (ไม่ใช้ history เพราะหลังส่งฟอร์ม history จะพากลับไปหน้าฟอร์มเดิม)
+  // ---- ปุ่มย้อนกลับ: กลับไปหน้าก่อนหน้าที่ผู้ใช้เปิดมาจริง ๆ (ใช้ stack ของตัวเอง แทน history ของเบราว์เซอร์
+  //      เพราะหลังส่งฟอร์ม history จะพากลับไปหน้าฟอร์มเดิม) ถ้าไม่มีหน้าก่อนหน้า (เปิดลิงก์ตรง) จะกลับไปหน้า "ต้นทาง" ตามชนิดหน้า
+  const NAV_KEY = DB_KEY + '.nav';
+  const NAV_MAX = 40;
+  let navStack = [];
+  try { navStack = JSON.parse(sessionStorage.getItem(NAV_KEY) || '[]'); } catch (err) { navStack = []; }
+  if (!Array.isArray(navStack)) navStack = [];
+
+  const navPath = (hash) => hash.split('?')[0];
+  /** หน้าฟอร์ม (สร้าง/แก้ไข) ไม่ใช่ที่ที่ควรย้อนกลับมา — หลังส่งหรือยกเลิกแล้วจะถูกตัดออกจาก stack */
+  function isFormHash(hash) {
+    const p = navPath(hash).slice(2).split('/');
+    return (p[0] === 'budget' && (p[1] === 'new' || p[2] === 'edit')) || (p[0] === 'request' && (p[1] === 'new' || p[2] === 'edit'));
+  }
+  /** หน้าที่อ้างถึงข้อมูลที่ถูกลบไปแล้วไม่ใช้เป็นปลายทางย้อนกลับ */
+  function navValid(hash) {
+    const p = navPath(hash).slice(2).split('/');
+    if (p[0] === 'budget' && p[1] !== 'new') return !!budgetById(p[1]);
+    if (p[0] === 'request' && p[1] !== 'new') return !!requestById(p[1]);
+    if (p[0] === 'doc') return !!requestById(p[1]);
+    return true;
+  }
+  function trackNav(here) {
+    navStack = navStack.filter(navValid);
+    const top = navStack[navStack.length - 1];
+    if (top !== here) {
+      if (navStack.length > 1 && navStack[navStack.length - 2] === here) {
+        navStack.pop(); // ย้อนกลับ (ปุ่มย้อนกลับหรือปุ่มย้อนของเบราว์เซอร์)
+      } else {
+        if (top && isFormHash(top)) navStack.pop();
+        const prevTop = navStack[navStack.length - 1];
+        if (prevTop && navPath(prevTop) === navPath(here)) navStack.pop(); // หน้าเดิมแต่เปลี่ยนแท็บ/ตัวกรอง
+        navStack.push(here);
+      }
+      if (navStack.length > NAV_MAX) navStack = navStack.slice(-NAV_MAX);
+    }
+    try { sessionStorage.setItem(NAV_KEY, JSON.stringify(navStack)); } catch (err) { /* ignore */ }
+  }
+  const previousPage = () => (navStack.length > 1 ? navStack[navStack.length - 2] : null);
+
   const LIST_PAGES = ['budgets', 'my-budgets', 'requests', 'approvals', 'accounting', 'payments'];
   let lastBudgetList = null; // หน้ารายการงบล่าสุด (จำแท็บ/ตัวกรอง)
   let lastRequestParent = null; // หน้าที่เปิดคำขอมาล่าสุด: รายการคำขอ / รอตรวจสอบ / งวดจ่าย / หน้ารายละเอียดงบ
@@ -1855,8 +1894,13 @@
       return b ? b.code + ' ' + b.name : 'งบประมาณ';
     }
     if (p[0] === 'request') {
+      if (p[1] === 'new') return 'ขอเบิกใช้งบ';
       const r = requestById(p[1]);
       return r ? 'คำขอ ' + r.no : 'คำขอ';
+    }
+    if (p[0] === 'doc') {
+      const r = requestById(p[1]);
+      return r && r.docNo ? 'เอกสาร ' + r.docNo : 'เอกสาร';
     }
     const titles = {
       budgets: me().role === 'finance' ? 'จัดการงบประมาณ' : 'งบประมาณ', 'my-budgets': 'งบของฉัน',
@@ -1903,7 +1947,9 @@
     else html = notFound();
 
     const here = '#' + path + (query ? '?' + query : '');
-    const back = backTarget(parts);
+    trackNav(here);
+    const fallback = backTarget(parts);
+    const back = fallback && (previousPage() || fallback);
     if (back) html = '<div class="back-bar no-print"><a class="back-link" href="' + esc(back) + '">' +
       '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M15 18l-6-6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>' +
       esc(backLabel(back)) + '</a></div>' + html;
@@ -1912,6 +1958,8 @@
 
     renderNav('#' + path);
     app.innerHTML = html;
+    // ปุ่ม "ยกเลิก" ในฟอร์มกลับไปหน้าก่อนหน้าเช่นเดียวกับปุ่มย้อนกลับ
+    if (back) app.querySelectorAll('[data-back]').forEach((a) => { a.setAttribute('href', back); });
     bindBudgetForm();
     bindRequestForm();
     bindRequestDetail();
@@ -1972,11 +2020,13 @@
       if (item.hasAttribute('data-reset')) {
         if (!confirm('ล้างข้อมูลทั้งหมดและกลับไปใช้ข้อมูลตัวอย่าง?')) return;
         db = seed();
+        navStack = [];
         save();
       } else {
         currentUserId = item.dataset.user;
         lastBudgetList = null;
         lastRequestParent = null;
+        navStack = [];
         try { localStorage.setItem(DB_KEY + '.user', currentUserId); } catch (err) { /* ignore */ }
         renderUserButton();
       }
