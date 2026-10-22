@@ -69,6 +69,38 @@
 
   // ---------------------------------------------------------------- storage
 
+  const DEFAULT_GROUP_NAMES = { '01': 'สายการผลิต', '02': 'สาธารณูปโภค', '04': 'คลังสินค้าและโลจิสติกส์' };
+
+  /**
+   * ข้อมูลหลัก (การเงินแก้ได้ที่เมนู "ข้อมูลหลัก"): บริษัท, หน่วยงาน, กลุ่มงบ, ประเภทสินทรัพย์, GL Code
+   * เติมค่าตั้งต้นให้ครบ รวมค่าที่งบเดิมใช้อยู่แล้ว จะได้ไม่มีงบที่อ้างถึงค่าที่ไม่มีในรายการ
+   */
+  function ensureMaster(d) {
+    const m = d.master || {};
+    const list = (k) => (Array.isArray(m[k]) ? m[k] : []);
+    const addBy = (arr, key, item) => { if (item[key] && !arr.some((x) => x[key] === item[key])) arr.push(item); };
+    const companies = list('companies').slice();
+    Object.keys(COMPANIES).forEach((c) => addBy(companies, 'code', { code: c, name: COMPANIES[c] }));
+    const departments = list('departments').slice();
+    const groups = list('groups').slice();
+    const assetTypes = list('assetTypes').slice();
+    ASSET_TYPES.forEach((t) => addBy(assetTypes, 'name', { name: t }));
+    const glCodes = list('glCodes').slice();
+    (d.budgets || []).forEach((b) => {
+      addBy(companies, 'code', { code: b.company, name: '' });
+      addBy(departments, 'name', { name: b.department });
+      if (b.type === 'CAPEX') addBy(groups, 'code', { code: b.group, name: DEFAULT_GROUP_NAMES[b.group] || '' });
+      (b.items || []).forEach((it) => {
+        if (b.type === 'CAPEX') addBy(assetTypes, 'name', { name: it.assetType });
+        else addBy(glCodes, 'code', { code: it.glCode, name: it.glName || '' });
+      });
+    });
+    d.master = { companies, departments, groups, assetTypes, glCodes };
+    return d;
+  }
+  const companyMap = () => Object.fromEntries(db.master.companies.map((c) => [c.code, c.name]));
+  const assetTypeList = () => db.master.assetTypes.map((x) => x.name);
+
   function seed() {
     const now = new Date().toISOString();
     const year = new Date().getFullYear();
@@ -133,7 +165,7 @@
     budgets[0].revisions[0].items[0].total = 400000;
     budgets[0].revisions[0].total -= 100000;
     budgets[0].revisions.push({ no: 1, at: now, by: 'fin1', note: 'ปรับเพิ่มงบเครื่องตัดชิ้นงานตามใบเสนอราคาจริง', total: budgetTotal(budgets[0]), items: snapshotItems(budgets[0]) });
-    return { seq: { req: 0, id: 100, doc: {} }, budgets, requests: [] };
+    return ensureMaster({ seq: { req: 0, id: 100, doc: {} }, budgets, requests: [] });
   }
 
   function load() {
@@ -146,6 +178,7 @@
 
   /** แปลงคำขอรูปแบบเดิม (1 ใบ = 1 บรรทัด) เป็นแบบหลายบรรทัด + งวดจ่าย โดยไม่ทำให้ข้อมูลหาย */
   function migrate(d) {
+    ensureMaster(d);
     (d.requests || []).forEach((r) => {
       if (r.lines) return;
       const acc = r.accounting || {};
@@ -402,6 +435,12 @@
     else location.hash = hash;
   }
 
+  /** ตัวเลือกจากข้อมูลหลัก — ถ้าค่าปัจจุบันไม่มีในรายการ (เช่น ถูกลบไปแล้ว) ยังคงแสดงไว้ไม่ให้ข้อมูลเดิมหาย */
+  function optList(items, key, labelFn, selected) {
+    const known = items.some((x) => String(x[key]) === String(selected));
+    return (selected && !known ? opt(selected, selected, selected) : '') +
+      items.map((x) => opt(x[key], labelFn(x), selected)).join('');
+  }
   const opt = (v, label, sel) => '<option value="' + esc(v) + '"' + (String(v) === String(sel) ? ' selected' : '') + '>' + esc(label) + '</option>';
 
   // ---------------------------------------------------------------- navigation
@@ -421,6 +460,7 @@
     const count = (n) => (n ? '<span class="count">' + n + '</span>' : '');
     const links = [];
     // [href, ข้อความ, เส้นทางที่ให้ไฮไลต์เมนูนี้]
+    links.push(['#/dashboard', 'ภาพรวม', ['#/dashboard']]);
     if (u.role === 'finance') links.push(['#/budgets', 'จัดการงบประมาณ', ['#/budgets', '#/budget/']]);
     if (u.role === 'accounting') links.push(['#/budgets', 'งบประมาณ', ['#/budgets', '#/budget/']]);
     if (u.role === 'requester') links.push(['#/my-budgets', 'งบของฉัน', ['#/my-budgets', '#/budget/', '#/request/new']]);
@@ -432,6 +472,7 @@
       links.push(['#/accounting', 'รอบันทึกบัญชี' + count(db.requests.filter(needsAccounting).length), ['#/accounting']]);
     }
     links.push(['#/requests', u.role === 'requester' ? 'คำขอของฉัน' : 'คำขอใช้งบทั้งหมด', ['#/requests', '#/request/', '#/doc/']]);
+    if (u.role === 'finance') links.push(['#/master', 'ข้อมูลหลัก', ['#/master']]);
     let activeDone = false;
     document.getElementById('nav').innerHTML = links.map(([href, text, prefixes]) => {
       const active = !activeDone && prefixes.some((p) => route.startsWith(p));
@@ -547,7 +588,7 @@
       '<td><input name="itCode" value="' + esc(it.code) + '" placeholder="2026-01-XX001" aria-label="รหัสรายการย่อย"></td>' +
       '<td><input name="itName" value="' + esc(it.name) + '" aria-label="ชื่อรายการ"></td>' +
       '<td><div class="select-wrap"><select name="itAsset" aria-label="ประเภทสินทรัพย์">' +
-      ASSET_TYPES.map((t) => opt(t, t, it.assetType || ASSET_TYPES[0])).join('') + '</select></div></td>' +
+      optList(db.master.assetTypes, 'name', (t) => t.name, it.assetType || assetTypeList()[0]) + '</select></div></td>' +
       '<td><div class="select-wrap"><select name="itDoa" aria-label="หมวด DOA">' + opt('2.4', '2.4 สินทรัพย์ลงทุน', it.doa) +
       opt('2.5', '2.5 ดำเนินงานทั่วไป', it.doa || '2.5') + '</select></div></td>' +
       '<td><input name="itAmount" type="number" min="0" step="0.01" class="right" value="' + esc(it.amount) + '" aria-label="วงเงิน"></td>' +
@@ -562,7 +603,7 @@
       '<td><input name="itUnit" value="' + esc(it.unit) + '" aria-label="หน่วย"></td>' +
       '<td><input name="itAmount" type="number" min="0" step="0.01" class="right" value="' + esc(it.amount || '') + '" aria-label="ก่อน VAT"></td>' +
       '<td class="center"><input name="itVat" type="checkbox"' + (Number(it.vat) > 0 ? ' checked' : '') + ' aria-label="VAT 7%"></td>' +
-      '<td><input name="itGl" value="' + esc(it.glCode) + '" aria-label="GL Code"></td>' +
+      '<td><input name="itGl" list="glList" value="' + esc(it.glCode) + '" aria-label="GL Code"></td>' +
       '<td><input name="itGlName" value="' + esc(it.glName) + '" aria-label="GL Name"></td>' +
       '<td>' + (locked ? '<span class="muted" title="มีการเบิกใช้แล้ว ลบไม่ได้">🔒</span>' : '<button type="button" class="btn small bad" data-remove-item title="ลบ">×</button>') + '</td></tr>';
   }
@@ -596,11 +637,13 @@
     return '<div class="page-head"><h1>' + (b ? 'แก้ไขงบ ' + esc(b.code) : 'บันทึกงบที่ได้รับอนุมัติ') + '</h1></div>' +
       '<div id="formError"></div>' +
       '<form id="budgetForm" class="card" data-id="' + esc(id || '') + '">' +
+      '<datalist id="glList">' + db.master.glCodes.map((g) => '<option value="' + esc(g.code) + '">' + esc(g.name) + '</option>').join('') + '</datalist>' +
       '<div class="row">' +
       field('ประเภทงบ', select('type', ['CAPEX', 'CBS'].map((t) => opt(t, TYPE_LABEL[t], v.type)).join(''), hasRequests ? ' disabled' : '')) +
-      field('บริษัท', select('company', Object.keys(COMPANIES).map((c) => opt(c, c + ' — ' + COMPANIES[c], v.company)).join(''))) +
+      field('บริษัท', select('company', optList(db.master.companies, 'code', (c) => c.code + (c.name ? ' — ' + c.name : ''), v.company))) +
       field('ปีงบประมาณ', '<input name="fiscalYear" type="number" required value="' + esc(v.fiscalYear) + '">') +
-      field('กลุ่มงบประมาณ', '<input name="group" value="' + esc(v.group || '') + '" placeholder="เช่น 01">', ' data-for="CAPEX"') +
+      field('กลุ่มงบประมาณ', select('group', '<option value="">— เลือก —</option>' +
+        optList(db.master.groups, 'code', (g) => g.code + (g.name ? ' — ' + g.name : ''), v.group)), ' data-for="CAPEX"') +
       '</div>' +
       '<div class="row">' +
       field('<span data-code-label>' + (v.type === 'CBS' ? 'Job No.' : 'รหัสโครงการ (Project No.)') + '</span>',
@@ -609,7 +652,7 @@
       field('ชื่อโครงการ / ชื่องบ', '<input name="name" required value="' + esc(v.name) + '">') +
       '</div>' +
       '<div class="row">' +
-      field('หน่วยงาน', '<input name="department" required value="' + esc(v.department) + '">') +
+      field('หน่วยงาน', select('department', '<option value="">— เลือก —</option>' + optList(db.master.departments, 'name', (d) => d.name, v.department), ' required')) +
       field('ผู้ขอใช้งบ (เจ้าของงบ)', select('ownerId', requesters.map((x) => opt(x.id, x.name + ' — ' + x.title, v.ownerId)).join(''))) +
       field('สถานะโครงการ', select('status', CBS_STATUS.map((s) => opt(s, s, v.status)).join('')), ' data-for="CBS"') +
       '</div>' +
@@ -695,7 +738,15 @@
     };
     typeSel.addEventListener('change', sync);
     form.addEventListener('input', recalc);
-    form.addEventListener('change', recalc);
+    form.addEventListener('change', (e) => {
+      // เลือก GL Code จากข้อมูลหลักแล้วเติมชื่อ GL ให้ ถ้ายังไม่ได้กรอก
+      if (e.target.matches('[name="itGl"]')) {
+        const g = db.master.glCodes.find((x) => x.code === e.target.value.trim());
+        const nameEl = e.target.closest('tr').querySelector('[name="itGlName"]');
+        if (g && nameEl && !nameEl.value.trim()) nameEl.value = g.name;
+      }
+      recalc();
+    });
     form.addEventListener('click', (e) => {
       if (e.target.matches('[data-remove-item]')) {
         const tbody = e.target.closest('tbody');
@@ -865,7 +916,7 @@
     const fact = (label, value, wide) => (value || value === 0
       ? '<div class="fact' + (wide ? ' wide' : '') + '"><span>' + label + '</span><strong>' + value + '</strong></div>' : '');
     const facts = '<section class="card"><div class="facts">' +
-      fact('บริษัท', esc(b.company) + '<small>' + esc(COMPANIES[b.company] || '') + '</small>') +
+      fact('บริษัท', esc(b.company) + '<small>' + esc(companyMap()[b.company] || '') + '</small>') +
       fact('ปีงบประมาณ', esc(b.fiscalYear)) +
       (isCapex ? fact('กลุ่มงบประมาณ', esc(b.group)) : fact('ระยะเวลา', b.startDate ? fmtDay(b.startDate) + '<small>ถึง ' + fmtDay(b.endDate) + '</small>' : '')) +
       fact('หน่วยงาน', esc(b.department)) +
@@ -1779,7 +1830,7 @@
       tr('จำนวนงบประมาณที่ขอเบิกครั้งนี้ (รวม VAT)', '<span class="num-cell"><strong>' + money(bal.now) + ' บาท</strong></span>') +
       tr('งบประมาณคงเหลือ (หลังเบิกครั้งนี้)', '<span class="num-cell">' + moneyCell(bal.after) + ' บาท</span>') + '</tbody></table>';
 
-    const head = '<header><div><h1>' + esc(COMPANIES[b.company] || b.company) + '</h1><div class="doc-sub">' +
+    const head = '<header><div><h1>' + esc(companyMap()[b.company] || b.company) + '</h1><div class="doc-sub">' +
       (isCapex ? 'ใบเบิกงบประมาณ (งบลงทุน CAPEX)' : 'เอกสารการเบิกขอใช้งบประมาณ (งบโครงการ CBS)') + '</div></div>' +
       '<div class="docno">ใบเบิกเลขที่ <strong>' + esc(r.docNo) + '</strong><br>วันที่ออกเอกสาร ' + fmtDay(r.approvedAt) +
       (isCapex ? '<br><span class="stamp">การเงินตรวจสอบแล้ว</span>' : '') + '</div></header>';
@@ -1837,6 +1888,252 @@
       '</article>';
   }
 
+
+  // ---------------------------------------------------------------- dashboard
+
+  const TH_MONTH = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'];
+  const monthLabel = (key) => TH_MONTH[Number(key.slice(5, 7)) - 1] + ' ' + String((Number(key.slice(0, 4)) + 543) % 100);
+
+  /** งบที่ผู้ใช้เห็นได้ (ผู้ขอเห็นเฉพาะงบของตนเอง) */
+  const visibleBudgets = () => db.budgets.filter((b) => me().role !== 'requester' || b.ownerId === me().id);
+
+  /** วันที่และยอดที่ฝ่ายบัญชีจ่ายแล้วของคำขอ — ใช้ทำกราฟรายเดือน */
+  function paidEntries(r) {
+    if (r.status !== 'approved') return [];
+    if (r.type === 'CAPEX') return (r.payments || []).filter((p) => p.paidAt).map((p) => ({ date: p.paidAt, amount: p.amount }));
+    const acc = r.accounting || {};
+    return acc.paymentStatus === 'จ่ายแล้ว' ? [{ date: acc.paidAt || (acc.updatedAt || '').slice(0, 10), amount: r.amount }] : [];
+  }
+
+  function dashDimension(by, b) {
+    if (by === 'group') {
+      if (b.type === 'CBS') return { key: 'CBS', label: 'งบโครงการ (CBS)' };
+      const g = db.master.groups.find((x) => x.code === b.group);
+      return { key: 'G' + (b.group || '-'), label: 'CAPEX กลุ่ม ' + (b.group || '-') + (g && g.name ? ' — ' + g.name : '') };
+    }
+    if (by === 'dept') return { key: b.department || '-', label: b.department || '-' };
+    if (by === 'type') return { key: b.type, label: TYPE_LABEL[b.type] };
+    return { key: b.company, label: b.company + (companyMap()[b.company] ? ' — ' + companyMap()[b.company] : '') };
+  }
+
+  function viewDashboard(params) {
+    const u = me();
+    const all = visibleBudgets();
+    const years = uniq(all.map((b) => String(b.fiscalYear))).sort().reverse();
+    const thisYear = String(new Date().getFullYear());
+    const year = params.has('year') ? params.get('year') : (years.includes(thisYear) ? thisYear : 'all');
+    const company = params.get('company') || 'all';
+    const type = TYPE_LABEL[params.get('type')] ? params.get('type') : 'all';
+    const by = ['company', 'group', 'dept', 'type'].includes(params.get('by')) ? params.get('by') : 'company';
+    const list = all.filter((b) => (year === 'all' || String(b.fiscalYear) === year) && (company === 'all' || b.company === company) && (type === 'all' || b.type === type));
+    const q = (o) => '#/dashboard?' + Object.entries(Object.assign({ year, company, type, by }, o)).map(([k, v]) => k + '=' + encodeURIComponent(v)).join('&');
+
+    // ---- รวมยอด
+    const rows = list.map((b) => ({ b, u: usage(b) }));
+    const sum = (k) => round2(rows.reduce((s2, x) => s2 + x.u[k], 0));
+    const tot = { approved: sum('approved'), used: sum('used'), reserved: sum('reserved'), remaining: sum('remaining') };
+    const pct = (v, of) => (of > 0 ? Math.max(0, Math.min(100, (v / of) * 100)) : 0);
+    const pctText = (v, of) => (of > 0 ? (Math.round((v / of) * 1000) / 10).toLocaleString('th-TH') + '%' : '-');
+    const kpi = (label, value, sub, cls) => '<div class="card kpi' + (cls ? ' ' + cls : '') + '"><span class="kpi-label">' + label + '</span>' +
+      '<strong class="kpi-value">' + value + '</strong><span class="kpi-sub">' + sub + '</span></div>';
+
+    // ---- ตัวกรอง
+    const sel = (name, label, options, cur) => '<label class="field"><span>' + label + '</span><div class="select-wrap"><select data-dash="' + name + '">' +
+      options.map(([v, t]) => opt(v, t, cur)).join('') + '</select></div></label>';
+    const filters = '<div class="dash-filters">' +
+      sel('year', 'ปีงบประมาณ', [['all', 'ทุกปี']].concat(years.map((y) => [y, y])), year) +
+      sel('company', 'บริษัท', [['all', 'ทุกบริษัท']].concat(uniq(all.map((b) => b.company)).sort().map((c) => [c, c])), company) +
+      sel('type', 'ประเภทงบ', [['all', 'ทั้งหมด'], ['CAPEX', 'CAPEX'], ['CBS', 'CBS']], type) + '</div>';
+
+    // ---- ตารางสรุปตามมิติที่เลือก
+    const groups = {};
+    rows.forEach((x) => {
+      const d = dashDimension(by, x.b);
+      const g = groups[d.key] || (groups[d.key] = { label: d.label, n: 0, approved: 0, used: 0, reserved: 0, remaining: 0 });
+      g.n += 1;
+      ['approved', 'used', 'reserved', 'remaining'].forEach((k) => { g[k] = round2(g[k] + x.u[k]); });
+    });
+    const gl = Object.values(groups).sort((a, b) => b.approved - a.approved);
+    const seg = [['company', 'บริษัท'], ['group', 'กลุ่มงบ'], ['dept', 'หน่วยงาน'], ['type', 'ประเภทงบ']]
+      .map(([k, t]) => '<a href="' + q({ by: k }) + '"' + (by === k ? ' class="active" aria-current="true"' : '') + '>' + t + '</a>').join('');
+    const miniBar = (g) => '<div class="bar mini" role="img" aria-label="ตัดงบแล้ว ' + pctText(g.used, g.approved) + ' จองไว้ ' + pctText(g.reserved, g.approved) + '">' +
+      '<div class="used" style="width:' + pct(g.used, g.approved) + '%"></div><div class="reserved" style="width:' + pct(g.reserved, g.approved) + '%"></div></div>';
+    const breakdown = '<section class="card"><div class="section-head"><h2 class="section-title">สรุปงบตาม</h2><div class="seg">' + seg + '</div></div>' +
+      (gl.length
+        ? '<div class="table-wrap"><table><thead><tr><th>' + { company: 'บริษัท', group: 'กลุ่มงบ', dept: 'หน่วยงาน', type: 'ประเภทงบ' }[by] + '</th><th class="num">งบ</th>' +
+          '<th class="num">งบที่ได้รับ</th><th class="num">ตัดงบแล้ว</th><th class="num">จองไว้</th><th class="num">คงเหลือ</th><th style="width:9rem">สัดส่วน</th></tr></thead><tbody>' +
+          gl.map((g) => '<tr><td>' + esc(g.label) + '</td><td class="num">' + g.n + '</td><td class="num">' + money(g.approved) + '</td><td class="num">' + money(g.used) +
+            '</td><td class="num">' + money(g.reserved) + '</td><td class="num"><strong>' + moneyCell(g.remaining) + '</strong></td><td>' + miniBar(g) + '</td></tr>').join('') +
+          '</tbody><tfoot><tr><td>รวม</td><td class="num">' + rows.length + '</td><td class="num">' + money(tot.approved) + '</td><td class="num">' + money(tot.used) + '</td>' +
+          '<td class="num">' + money(tot.reserved) + '</td><td class="num"><strong>' + moneyCell(tot.remaining) + '</strong></td><td></td></tr></tfoot></table></div>'
+        : '<p class="muted">ไม่มีงบตามเงื่อนไขที่เลือก</p>') + '</section>';
+
+    // ---- กราฟตัดงบรายเดือน (เฉพาะที่ฝ่ายบัญชีบันทึกจ่ายแล้ว)
+    const listIds = new Set(list.map((b) => b.id));
+    const months = {};
+    db.requests.filter((r) => listIds.has(r.budgetId)).forEach((r) => paidEntries(r).forEach((e) => {
+      if (!e.date) return;
+      const k = e.date.slice(0, 7);
+      months[k] = round2((months[k] || 0) + e.amount);
+    }));
+    const keys = Object.keys(months).sort();
+    let chart;
+    if (!keys.length) {
+      chart = '<p class="muted">ยังไม่มีรายการที่ฝ่ายบัญชีบันทึกจ่ายแล้ว</p>';
+    } else {
+      const last = keys[keys.length - 1];
+      const span = [];
+      let [yy, mm] = last.split('-').map(Number);
+      for (let i = 0; i < 6; i += 1) {
+        span.unshift(yy + '-' + String(mm).padStart(2, '0'));
+        mm -= 1;
+        if (mm === 0) { mm = 12; yy -= 1; }
+      }
+      const max = Math.max.apply(null, span.map((k) => months[k] || 0)) || 1;
+      chart = '<div class="chart" role="img" aria-label="ยอดตัดงบรายเดือน">' + span.map((k) => '<div class="chart-col"><span class="chart-val">' +
+        (months[k] ? money(months[k]) : '') + '</span><div class="chart-bar" style="height:' + Math.round(((months[k] || 0) / max) * 100) + '%"></div>' +
+        '<span class="chart-label">' + monthLabel(k) + '</span></div>').join('') + '</div>';
+    }
+    const monthly = '<section class="card"><div class="section-head"><h2 class="section-title">ตัดงบรายเดือน (จ่ายแล้ว 6 เดือนล่าสุด)</h2></div>' + chart + '</section>';
+
+    // ---- งานที่ต้องทำ
+    const mineReq = db.requests.filter((r) => r.requesterId === u.id);
+    const task = (label, n, href, note) => '<li><a href="' + href + '"><span>' + label + (note ? '<small>' + note + '</small>' : '') + '</span><b class="' + (n ? 'has' : '') + '">' + n + '</b></a></li>';
+    let tasks = [];
+    if (u.role === 'finance') {
+      const pay = db.requests.filter(needsPayment);
+      tasks = [task('เอกสาร CAPEX รอตรวจสอบ', inbox(u).length, '#/approvals'),
+        task('งวดจ่ายค้างบันทึก', pay.length, '#/payments', pay.length ? 'ค้าง ' + money(pay.reduce((s2, r) => s2 + outstanding(r), 0)) + ' บาท' : '')];
+    } else if (u.role === 'accounting') {
+      tasks = [task('รอบันทึกข้อมูลบัญชี / จ่ายเงิน', db.requests.filter(needsAccounting).length, '#/accounting')];
+    } else {
+      tasks = [task('คำขอรอการเงินตรวจสอบ', mineReq.filter((r) => r.status === 'pending').length, '#/requests'),
+        task('ไม่อนุมัติ รอแก้ไข', mineReq.filter((r) => r.status === 'rejected').length, '#/requests'),
+        task('ออกเอกสารแล้ว รอบัญชีจ่าย', mineReq.filter((r) => r.status === 'approved' && paidByAccounting(r) < r.amount).length, '#/requests')];
+    }
+    const tasksCard = '<section class="card"><h2 class="section-title side-title">งานที่ต้องทำ</h2><ul class="task-list">' + tasks.join('') + '</ul></section>';
+
+    // ---- งบที่ต้องจับตา (เกินงบ / เหลือไม่ถึง 10%)
+    const watch = rows.map((x) => {
+      const over = x.b.type === 'CBS' ? leaves(x.b).filter((i) => usage(x.b, i.id).remaining < 0).length : 0;
+      const ratio = x.u.approved > 0 ? x.u.remaining / x.u.approved : 1;
+      return { x, over, ratio };
+    }).filter((w) => w.over || w.x.u.remaining < 0 || w.ratio <= 0.1).sort((a, b) => a.ratio - b.ratio).slice(0, 6);
+    const watchCard = '<section class="card"><h2 class="section-title side-title">งบที่ต้องจับตา</h2>' + (watch.length
+      ? '<ul class="task-list">' + watch.map((w) => '<li><a href="#/budget/' + w.x.b.id + '"><span>' + esc(w.x.b.code) + ' ' + esc(w.x.b.name) +
+        '<small>คงเหลือ ' + money(w.x.u.remaining) + ' (' + pctText(w.x.u.remaining, w.x.u.approved) + ')</small></span>' +
+        (w.x.u.remaining < 0 ? '<span class="badge rejected">เกินงบ</span>' : w.over ? '<span class="badge rejected">เกินงบ ' + w.over + ' รายการ</span>' : '<span class="badge pending">ใกล้หมด</span>') + '</a></li>').join('') + '</ul>'
+      : '<p class="muted">ไม่มีงบที่เกินหรือใกล้หมด (เหลือน้อยกว่า 10%)</p>') + '</section>';
+
+    return '<div class="page-head"><div><h1>ภาพรวมงบประมาณ</h1><div class="page-sub">' + (u.role === 'requester' ? 'เฉพาะงบของคุณ' : 'ทุกงบในระบบ') + ' · ' + list.length + ' งบ</div></div>' + filters + '</div>' +
+      '<div class="kpis">' +
+      kpi('งบที่ได้รับอนุมัติ', money(tot.approved), list.length + ' งบ') +
+      kpi('ตัดงบแล้ว (บัญชีจ่ายแล้ว)', money(tot.used), pctText(tot.used, tot.approved) + ' ของงบ') +
+      kpi('จองไว้ (ยังไม่จ่าย)', money(tot.reserved), pctText(tot.reserved, tot.approved) + ' ของงบ') +
+      kpi('คงเหลือ', moneyCell(tot.remaining), pctText(tot.remaining, tot.approved) + ' ของงบ', tot.remaining < 0 ? 'bad' : '') + '</div>' +
+      '<div class="card dash-bar">' + usageBar(Object.assign({}, tot)) + '</div>' +
+      '<div class="dash-grid"><div class="dash-main">' + breakdown + monthly + '</div><aside class="dash-side">' + tasksCard + watchCard + '</aside></div>';
+  }
+
+  function bindDashboard() {
+    document.querySelectorAll('[data-dash]').forEach((el) => el.addEventListener('change', () => {
+      const cur = new URLSearchParams(location.hash.split('?')[1] || '');
+      document.querySelectorAll('[data-dash]').forEach((x) => cur.set(x.dataset.dash, x.value));
+      go('#/dashboard?' + cur.toString());
+    }));
+  }
+
+  // ---------------------------------------------------------------- master data (finance)
+
+  /** รายการข้อมูลหลัก: cols[0] เป็นรหัส/ชื่อที่ใช้อ้างอิง — รหัส (lock) แก้ไม่ได้หลังสร้าง, ชื่อที่ใช้อ้างอิง (เช่น หน่วยงาน) เปลี่ยนแล้วระบบแก้ให้ทุกงบ */
+  const MASTER_SECTIONS = [
+    { key: 'companies', title: 'บริษัท', hint: 'ใช้กับงบทุกประเภท และเป็นส่วนหน้าของเลขที่ใบเบิก CAPEX (เช่น PSL26-001)', lock: true,
+      cols: [{ k: 'code', label: 'รหัสบริษัท', w: '10rem' }, { k: 'name', label: 'ชื่อบริษัท' }],
+      inUse: (it) => db.budgets.some((b) => b.company === it.code) },
+    { key: 'departments', title: 'หน่วยงาน', hint: 'ตัวเลือกหน่วยงานของงบ และตัวกรองในหน้ารายการงบ', lock: false,
+      cols: [{ k: 'name', label: 'ชื่อหน่วยงาน' }],
+      inUse: (it) => db.budgets.some((b) => b.department === it.name),
+      rename: (from, to) => db.budgets.forEach((b) => { if (b.department === from) b.department = to; }) },
+    { key: 'groups', title: 'กลุ่มงบประมาณ (CAPEX)', hint: 'กลุ่มงบที่อยู่ในรหัสรายการย่อย เช่น 2026-01-EN001 → กลุ่ม 01', lock: true,
+      cols: [{ k: 'code', label: 'รหัสกลุ่ม', w: '10rem' }, { k: 'name', label: 'ชื่อกลุ่มงบ' }],
+      inUse: (it) => db.budgets.some((b) => b.type === 'CAPEX' && b.group === it.code) },
+    { key: 'assetTypes', title: 'ประเภทสินทรัพย์ (CAPEX)', hint: 'ตัวเลือกประเภทสินทรัพย์ของรายการย่อย', lock: false,
+      cols: [{ k: 'name', label: 'ประเภทสินทรัพย์' }],
+      inUse: (it) => db.budgets.some((b) => b.type === 'CAPEX' && b.items.some((i) => i.assetType === it.name)),
+      rename: (from, to) => db.budgets.forEach((b) => b.items.forEach((i) => { if (b.type === 'CAPEX' && i.assetType === from) i.assetType = to; })) },
+    { key: 'glCodes', title: 'GL Code (CBS)', hint: 'เลือก GL Code ในรายการต้นทุน แล้วระบบเติมชื่อ GL ให้', lock: true,
+      cols: [{ k: 'code', label: 'GL Code', w: '10rem' }, { k: 'name', label: 'ชื่อ GL' }],
+      inUse: (it) => db.budgets.some((b) => b.type === 'CBS' && b.items.some((i) => i.glCode === it.code)) ||
+        db.requests.some((r) => r.type === 'CBS' && r.lines.some((l) => l.glCode === it.code)) }
+  ];
+
+  function masterRow(sec, it, isNew) {
+    return '<tr data-orig="' + (isNew ? '' : esc(it[sec.cols[0].k])) + '">' + sec.cols.map((c, i) =>
+      '<td' + (c.w ? ' style="width:' + c.w + '"' : '') + '><input data-k="' + c.k + '" value="' + esc(it[c.k] || '') + '" aria-label="' + esc(c.label) + '"' +
+      (sec.lock && i === 0 && !isNew ? ' readonly class="locked"' : '') + '></td>').join('') +
+      '<td style="width:3rem"><button type="button" class="btn small bad" data-m-remove title="ลบ">×</button></td></tr>';
+  }
+
+  function viewMaster() {
+    const u = me();
+    if (u.role !== 'finance') return '<div class="alert error">เฉพาะฝ่ายการเงินจัดการข้อมูลหลักได้</div>';
+    const sections = MASTER_SECTIONS.map((sec) => '<section class="card form-section"><div class="section-head"><div><h2 class="section-title">' + sec.title +
+      '</h2><div class="muted section-hint">' + sec.hint + '</div></div></div>' +
+      '<form class="master-form" data-key="' + sec.key + '"><div class="table-wrap"><table class="edit-table"><thead><tr>' +
+      sec.cols.map((c) => '<th>' + c.label + '</th>').join('') + '<th></th></tr></thead><tbody>' +
+      db.master[sec.key].map((it) => masterRow(sec, it, false)).join('') + '</tbody></table></div>' +
+      '<template>' + masterRow(sec, {}, true) + '</template>' +
+      '<div class="actions"><button type="button" class="btn" data-m-add>+ เพิ่ม</button><button class="btn primary" type="submit">บันทึก' + sec.title + '</button></div></form></section>').join('');
+
+    const doa = Object.keys(DOA).map((k) => '<h3 class="side-title">' + esc(DOA[k].short) + '</h3><div class="table-wrap"><table><thead><tr><th>ข้อ</th><th>วงเงิน</th><th>ผู้อนุมัติ</th></tr></thead><tbody>' +
+      DOA[k].rows.map((r) => '<tr><td class="nowrap">' + esc(r.code) + '</td><td>' + esc(r.label) + '</td><td>' + esc(r.approver) + '</td></tr>').join('') + '</tbody></table></div>').join('');
+    const users = '<div class="table-wrap"><table><thead><tr><th>ชื่อ</th><th>ตำแหน่ง</th><th>บทบาท</th></tr></thead><tbody>' +
+      USERS.map((x) => '<tr><td>' + esc(x.name) + '</td><td>' + esc(x.title) + '</td><td>' + esc(ROLE_LABEL[x.role]) + '</td></tr>').join('') + '</tbody></table></div>';
+    return '<div class="page-head"><div><h1>ข้อมูลหลัก</h1><div class="page-sub">ค่าที่ใช้เป็นตัวเลือกในฟอร์มและรายงาน แก้ไขโดยฝ่ายการเงิน</div></div></div>' + takeFlash() +
+      '<div id="formError"></div><div class="form-main">' + sections +
+      '<section class="card form-section"><div class="section-head"><div><h2 class="section-title">ตารางอำนาจอนุมัติ (DOA)</h2><div class="muted section-hint">อ่านอย่างเดียว — ใช้ติ๊กระดับผู้อนุมัติบนใบเบิก CAPEX ตามยอดเงิน (หน่วย: ล้านบาท)</div></div></div>' + doa + '</section>' +
+      '<section class="card form-section"><div class="section-head"><div><h2 class="section-title">ผู้ใช้และบทบาท</h2><div class="muted section-hint">อ่านอย่างเดียว — ต้นแบบนี้ยังไม่มีระบบล็อกอิน ใช้เมนูผู้ใช้มุมขวาบนสลับบทบาทเพื่อทดสอบ</div></div></div>' + users + '</section></div>';
+  }
+
+  function bindMaster() {
+    document.querySelectorAll('.master-form').forEach((form) => {
+      const sec = MASTER_SECTIONS.find((x) => x.key === form.dataset.key);
+      const tbody = form.querySelector('tbody');
+      form.addEventListener('click', (e) => {
+        if (e.target.matches('[data-m-add]')) {
+          tbody.insertAdjacentHTML('beforeend', form.querySelector('template').innerHTML);
+          tbody.lastElementChild.querySelector('input').focus();
+        } else if (e.target.matches('[data-m-remove]')) {
+          const tr = e.target.closest('tr');
+          const orig = tr.dataset.orig;
+          const item = orig && db.master[sec.key].find((x) => x[sec.cols[0].k] === orig);
+          if (item && sec.inUse(item)) { alert('ลบไม่ได้ — "' + orig + '" ถูกใช้อยู่ในงบหรือเอกสารแล้ว'); return; }
+          tr.remove();
+        }
+      });
+      form.addEventListener('submit', (e) => {
+        e.preventDefault();
+        const keyCol = sec.cols[0].k;
+        const rows = Array.from(tbody.rows).map((tr) => {
+          const it = { orig: tr.dataset.orig };
+          sec.cols.forEach((c) => { it[c.k] = tr.querySelector('[data-k="' + c.k + '"]').value.trim(); });
+          return it;
+        }).filter((it) => it[keyCol] || it.orig);
+        const errors = [];
+        if (!rows.length) errors.push('ต้องมีอย่างน้อย 1 รายการ');
+        rows.forEach((it) => { if (!it[keyCol]) errors.push('กรุณากรอก' + sec.cols[0].label); });
+        const keys = rows.map((it) => it[keyCol].toLowerCase());
+        if (keys.some((k, i) => k && keys.indexOf(k) !== i)) errors.push(sec.cols[0].label + 'ซ้ำกัน');
+        if (errors.length) { showErrors(errors); return; }
+        if (sec.rename) rows.forEach((it) => { if (it.orig && it.orig !== it[keyCol]) sec.rename(it.orig, it[keyCol]); });
+        db.master[sec.key] = rows.map((it) => { const o = {}; sec.cols.forEach((c) => { o[c.k] = it[c.k]; }); return o; });
+        save();
+        setFlash('success', 'บันทึก' + sec.title + 'แล้ว');
+        go('#/master');
+      });
+    });
+  }
+
   function notFound() {
     return '<div class="card empty">ไม่พบข้อมูลที่ต้องการ</div>';
   }
@@ -1883,7 +2180,7 @@
   }
   const previousPage = () => (navStack.length > 1 ? navStack[navStack.length - 2] : null);
 
-  const LIST_PAGES = ['budgets', 'my-budgets', 'requests', 'approvals', 'accounting', 'payments'];
+  const LIST_PAGES = ['dashboard', 'master', 'budgets', 'my-budgets', 'requests', 'approvals', 'accounting', 'payments'];
   let lastBudgetList = null; // หน้ารายการงบล่าสุด (จำแท็บ/ตัวกรอง)
   let lastRequestParent = null; // หน้าที่เปิดคำขอมาล่าสุด: รายการคำขอ / รอตรวจสอบ / งวดจ่าย / หน้ารายละเอียดงบ
 
@@ -1903,6 +2200,7 @@
       return r && r.docNo ? 'เอกสาร ' + r.docNo : 'เอกสาร';
     }
     const titles = {
+      dashboard: 'ภาพรวมงบประมาณ', master: 'ข้อมูลหลัก',
       budgets: me().role === 'finance' ? 'จัดการงบประมาณ' : 'งบประมาณ', 'my-budgets': 'งบของฉัน',
       requests: me().role === 'requester' ? 'คำขอของฉัน' : 'คำขอใช้งบทั้งหมด',
       approvals: 'รอตรวจสอบ', accounting: 'รอบันทึกบัญชี', payments: 'งวดจ่ายค้าง'
@@ -1932,7 +2230,9 @@
     const app = document.getElementById('app');
     let html;
 
-    if (parts[0] === 'budgets' || parts[0] === 'my-budgets') html = viewBudgets(params);
+    if (parts[0] === 'dashboard') html = viewDashboard(params);
+    else if (parts[0] === 'master') html = viewMaster();
+    else if (parts[0] === 'budgets' || parts[0] === 'my-budgets') html = viewBudgets(params);
     else if (parts[0] === 'budget' && parts[1] === 'new') html = viewBudgetForm(null);
     else if (parts[0] === 'budget' && parts[2] === 'edit') html = viewBudgetForm(parts[1]);
     else if (parts[0] === 'budget') html = viewBudgetDetail(parts[1]);
@@ -1961,6 +2261,8 @@
     // ปุ่ม "ยกเลิก" ในฟอร์มกลับไปหน้าก่อนหน้าเช่นเดียวกับปุ่มย้อนกลับ
     if (back) app.querySelectorAll('[data-back]').forEach((a) => { a.setAttribute('href', back); });
     bindBudgetForm();
+    bindDashboard();
+    bindMaster();
     bindRequestForm();
     bindRequestDetail();
     bindBudgetFilters();
