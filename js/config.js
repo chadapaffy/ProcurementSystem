@@ -6,5 +6,5 @@
  */
 window.PROCUREMENT_CONFIG = Object.assign({
   supabaseUrl: 'https://mtvltrgszaybfwyzzkuh.supabase.co',
-  supabaseAnonKey: ''
+  supabaseAnonKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im10dmx0cmdzemF5YmZ3eXp6a3VoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTI2NTU4OTIsImV4cCI6MjEwODIzMTg5Mn0.NU0eLjXZr9s0UutyevRk1aV4WU0wTvuPKWYaPwYAE8k'
 }, window.PROCUREMENT_CONFIG || {});
