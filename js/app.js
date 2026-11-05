@@ -1695,14 +1695,18 @@
       '<div class="total-amount"><span id="sideTotal">0.00</span> <small>บาท</small></div>' +
       '<dl class="kv compact"><dt>งบคงเหลือทั้งโครงการ</dt><dd>' + moneyCell(remaining) + '</dd>' +
       '<dt>คงเหลือหลังขอใช้</dt><dd id="sideAfter">' + moneyCell(remaining) + '</dd></dl>' +
-      '<div class="actions side-actions"><button class="btn primary tall" type="submit">' +
-      (needMemo ? (existing && existing.status === 'memo' ? 'บันทึกและออก Memo ใหม่' : 'บันทึกและออก Memo') : existing ? 'ส่งให้ผู้คุมงบตรวจสอบอีกครั้ง' : 'ส่งให้ผู้คุมงบตรวจสอบ') + '</button>' +
-      '<a class="btn" data-back href="' + (existing ? '#/request/' + existing.id : '#/budget/' + b.id) + '">ยกเลิก</a></div></div>' +
+      '<div class="actions side-actions">' +
+      (needMemo ? '' : '<button class="btn primary tall" type="submit" data-action="send">' + (existing && existing.status === 'rejected' ? 'ส่งให้ผู้คุมงบตรวจสอบอีกครั้ง' : 'ส่งให้ผู้คุมงบตรวจสอบ') + '</button>') +
+      '<button class="btn ' + (needMemo ? 'primary tall' : 'memo-btn') + '" type="submit" data-action="memo">' + (existing && existing.status === 'memo' ? 'บันทึกและออก Memo ใหม่' : 'ทำ Memo ให้ผู้บริหารเซ็นก่อนส่ง') + '</button>' +
+      '<a class="btn" data-back href="' + (existing ? '#/request/' + existing.id : '#/budget/' + b.id) + '">ยกเลิก</a></div>' +
+      '<p class="muted memo-side-note">' + (needMemo ? '<strong>' + esc(memoReason(b)) + '</strong> — ส่งตรงให้ผู้คุมงบไม่ได้<br>' : '') +
+        '<strong>ทำ Memo:</strong> ระบบบันทึกคำขอ ออกเลขที่ Memo และจองงบไว้ → พิมพ์ Memo ไปให้ผู้บริหารเซ็น → กลับมาแนบไฟล์ที่เซ็นแล้วที่หน้าคำขอ จึงส่งให้ผู้คุมงบได้' +
+        (existing && existing.memo && existing.memo.no ? '<br>Memo เดิมเลขที่ ' + esc(existing.memo.no) + ' — แก้ไขแล้วต้องให้ผู้บริหารเซ็นใหม่' : '') + '</p></div>' +
       '<div class="card form-tip"><h3 class="side-title">คำแนะนำ</h3><p class="muted">' +
       (perLine ? 'ใส่ได้หลายบรรทัด แต่ละบรรทัดเลือกรายการต้นทุนเองได้'
         : isProject ? 'งบรวมโครงการ: แต่ละบรรทัดเลือกหมวดค่าใช้จ่ายและพิมพ์รายละเอียด' : 'ใบดำเนินการใช้งบ 1 ใบ ใช้กับรายการย่อยเดียว ใส่ได้หลายบรรทัด') +
           ' · ขอเกินงบรายการได้ถ้าไม่เกินงบรวมของโครงการ (ผู้คุมงบต้องใส่ Note) · ถ้าเกินงบโครงการ ผู้คุมงบจะพิจารณาโยกงบให้ หรือให้ขอเพิ่มงบ' +
-          (needMemo ? ' · <strong>' + esc(memoReason(b)) + ' — บันทึกแล้วพิมพ์ Memo ไปให้ผู้บริหารเซ็น แล้วกลับมาแนบก่อนส่งผู้คุมงบ</strong>' : '') + '</p></div>';
+          '</p></div>';
 
     return '<div class="page-head"><div><h1>' + (existing ? 'แก้ไขคำขอ ' + esc(existing.no) : 'ขอดำเนินการใช้งบ') + '</h1>' +
       '<div class="page-sub">' + badge(b.type, b.type) + ' ' + esc(b.code + ' ' + b.name) + '</div></div></div>' +
@@ -1711,13 +1715,6 @@
       '<form id="requestForm" class="req-form" data-budget="' + b.id + '" data-request="' + esc(requestId || '') + '" data-remaining="' + remaining + '">' +
       '<div class="detail-layout"><div class="detail-main form-main">' + general + linesCard +
       '<div id="planWrap">' + planFieldset(existing && existing.paymentPlan, 4) + '</div>' +
-      (needMemo ? '<section class="card form-section" id="memoSection">' + step(5, 'Memo ขออนุมัติ — ผู้บริหารเซ็น') +
-        '<p class="muted memo-hint">' + esc(memoReason(b)) + ' ก่อนส่งให้ผู้คุมงบ</p>' +
-        '<ol class="memo-steps"><li class="' + (existing && existing.memo ? 'done' : 'current') + '">กด <strong>บันทึกและออก Memo</strong> — ระบบบันทึกคำขอ ออกเลขที่ Memo และจองงบไว้</li>' +
-        '<li>พิมพ์ Memo จากหน้าคำขอ แล้วนำไปให้ผู้บริหารเซ็น</li>' +
-        '<li>กลับมาที่หน้าคำขอ แนบไฟล์ Memo ที่เซ็นแล้ว แล้วกด <strong>ส่งให้ผู้คุมงบตรวจสอบ</strong></li></ol>' +
-        (existing && existing.memo && existing.memo.no ? '<p class="muted memo-hint">Memo เดิมเลขที่ ' + esc(existing.memo.no) + ' — ถ้าแก้ไขข้อมูล ต้องพิมพ์ Memo ใหม่ให้ผู้บริหารเซ็นอีกครั้ง</p>' : '') +
-        '</section>' : '') +
       '</div><aside class="detail-side">' + side + '</aside></div></form>';
   }
 
@@ -1815,6 +1812,8 @@
       });
     }
     const needMemo = memoRequired(b);
+    let action = needMemo ? 'memo' : 'send';
+    form.querySelectorAll('[data-action]').forEach((btn) => btn.addEventListener('click', () => { action = btn.dataset.action; }));
     const useType = () => (form.querySelector('[name="useType"]:checked') || {}).value;
     const syncType = () => {
       const t = useType();
@@ -1920,6 +1919,8 @@
 
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
+      // ทำ Memo เมื่อผู้ขอเลือก หรือเมื่อเกณฑ์ของบริษัทบังคับ
+      const useMemo = needMemo || action === 'memo' || (e.submitter && e.submitter.dataset.action === 'memo');
       const lines = readLines(form, isCapex);
       const errors = [];
       if (!useType()) errors.push('กรุณาเลือกประเภทการดำเนินการใช้งบ');
@@ -1962,7 +1963,7 @@
       fields.cuts = [];
       fields.attachments = files;
       // ต้องใช้ Memo: บันทึกเป็น "รอแนบ Memo" ออกเลขที่ Memo (ใช้เลขเดิมถ้ามี) — แก้ข้อมูลแล้วต้องเซ็นใหม่ จึงล้างไฟล์ที่แนบไว้
-      if (needMemo) fields.memo = { no: (existing && existing.memo && existing.memo.no) || nextMemoNo(b), by: '', files: [], issuedAt: now };
+      if (useMemo) fields.memo = { no: (existing && existing.memo && existing.memo.no) || nextMemoNo(b), by: '', files: [], issuedAt: now };
       fields.requesterReason = f.requesterReason ? f.requesterReason.value.trim() : '';
 
       let r;
@@ -1970,17 +1971,18 @@
         // แก้ไขแล้วส่งใหม่: เก็บผลตรวจสอบรอบก่อนไว้เป็นประวัติ
         r = existing;
         if (existing.status === 'rejected') r.history = (r.history || []).concat(r.steps);
-        Object.assign(r, fields, { status: needMemo ? 'memo' : 'pending', steps: stepsFor(b), resubmittedAt: now });
+        Object.assign(r, fields, { status: useMemo ? 'memo' : 'pending', steps: stepsFor(b), resubmittedAt: now });
+        if (!useMemo) delete r.memo; // เลือกส่งตรงโดยไม่ใช้ Memo
       } else {
         r = Object.assign({
           id: nextId('r'), no: nextReqNo(), budgetId: b.id, type: b.type,
-          requesterId: me().id, createdAt: now, status: needMemo ? 'memo' : 'pending', steps: stepsFor(b), history: [], events: []
+          requesterId: me().id, createdAt: now, status: useMemo ? 'memo' : 'pending', steps: stepsFor(b), history: [], events: []
         }, fields);
         db.requests.push(r);
       }
-      addEvent(r, needMemo ? (existing ? 'แก้ไขคำขอ และออก Memo ' : 'บันทึกคำขอ (' + USE_TYPES[r.useType].short + ') และออก Memo ') + r.memo.no
+      addEvent(r, useMemo ? (existing ? 'แก้ไขคำขอ และออก Memo ' : 'บันทึกคำขอ (' + USE_TYPES[r.useType].short + ') และออก Memo ') + r.memo.no
         : existing ? 'แก้ไขและส่งใหม่' : 'ส่งขอดำเนินการใช้งบ (' + USE_TYPES[r.useType].short + ')', '');
-      if (needMemo) {
+      if (useMemo) {
         save();
         setFlash('success', 'บันทึกคำขอ ' + r.no + ' และออก Memo เลขที่ ' + r.memo.no + ' แล้ว — พิมพ์ Memo ให้ผู้บริหารเซ็น แล้วกลับมาแนบไฟล์ที่หน้านี้เพื่อส่งให้ผู้คุมงบ');
         go('#/request/' + r.id);
@@ -3608,6 +3610,7 @@
       ['ใช้งบ', 'จ่ายหลายงวด', 'ใช้ได้กับ PR/PO และจ่ายตรง — บันทึกจ่ายหลายครั้งแล้วปิดยอด'],
       ['ใช้งบ', 'Memo ผู้บริหารเซ็นตอนขอดำเนินการใช้งบ', 'ใช้เฉพาะงบที่ไม่มี Item (งบรวมโครงการ) ทั้ง CAPEX และ CBS · ตั้งเกณฑ์รายบริษัทได้ที่ข้อมูลหลัก (ไม่ต้องใช้ / เฉพาะงบที่ไม่มี Item / ทุกงบ) · ต้องแนบไฟล์ Memo ที่เซ็นแล้ว + เลขที่ + ชื่อผู้บริหาร ก่อนส่ง · ทุกประเภทและทุกยอดเงิน · ผู้บริหารเซ็นนอกระบบ'],
       ['ใช้งบ', 'แบบฟอร์ม Memo', 'ใช้แบบชั่วคราว (รอแบบฟอร์มจริงของบริษัท)'],
+      ['ใช้งบ', 'ใครเลือกว่าทำ Memo', 'ผู้ขอเลือกเองด้วยปุ่ม "ทำ Memo" ข้างปุ่มส่ง · ถ้าเกณฑ์ของบริษัทบังคับ (ตั้งต้น: งบที่ไม่มี Item) จะมีแค่ปุ่มทำ Memo'],
       ['ใช้งบ', 'ขั้นตอน Memo', 'บันทึกคำขอ → ระบบออกเลขที่ Memo (MEMO-บริษัทปี-ลำดับ) และจองงบไว้ → ผู้ขอพิมพ์ไปให้ผู้บริหารเซ็น → แนบไฟล์ที่เซ็นแล้ว + ชื่อผู้บริหาร → ส่งให้ผู้คุมงบ · แก้ไขคำขอระหว่างรอได้ (ต้องเซ็นใหม่ ใช้เลขที่เดิม)'],
       ['ใช้งบ', 'หมวดค่าใช้จ่าย', 'ใช้กับงบรวมโครงการ · แก้รายการหมวดได้ที่ข้อมูลหลัก'],
       ['CBS', 'ขั้นตอนการใช้งบ CBS', 'เหมือน CAPEX ทุกขั้น: ขอดำเนินการใช้งบ (4 ประเภท) → ผู้คุมงบตรวจสอบ → ตัดงบตามประเภท → ปิดยอดคืนส่วนต่าง · ขอเกินงบรายการต้องมี Note'],
