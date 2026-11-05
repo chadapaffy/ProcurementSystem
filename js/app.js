@@ -783,31 +783,42 @@
     return '#/dashboard';
   }
 
-  const NAV_ICON = '<svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true">' +
-    [4, 10, 16].map((y) => [4, 10, 16].map((x) =>
-      '<circle cx="' + x + '" cy="' + y + '" r="1.7" fill="currentColor"/>').join('')).join('') + '</svg>';
+  /** ไอคอนเมนู (เส้น 24×24) ให้ตรงกับชื่อเมนู */
+  const NAV_ICONS = {
+    dashboard: '<rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/>',
+    tasks: '<rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V3h6v1"/><path d="M8.5 12l2.2 2.2L15.5 9.5"/><path d="M9 17.5h6"/>',
+    budgets: '<path d="M4 7.5A2.5 2.5 0 0 1 6.5 5H18v3"/><rect x="4" y="8" width="16" height="12" rx="2.5"/><path d="M15.5 14h4.5"/><circle cx="16" cy="14" r=".8" fill="currentColor"/>',
+    requests: '<path d="M6 3h9l3 3v15l-2-1.3-2 1.3-2-1.3-2 1.3-2-1.3L6 21z"/><path d="M9 9h6M9 13h6M9 17h3"/>',
+    history: '<path d="M3.5 12a8.5 8.5 0 1 0 2.5-6"/><path d="M3 4v4h4"/><path d="M12 8v4l3 2"/>',
+    master: '<ellipse cx="12" cy="5.5" rx="7.5" ry="2.5"/><path d="M4.5 5.5v6.5c0 1.4 3.4 2.5 7.5 2.5s7.5-1.1 7.5-2.5V5.5"/><path d="M4.5 12v6.5c0 1.4 3.4 2.5 7.5 2.5s7.5-1.1 7.5-2.5V12"/>',
+    log: '<rect x="3.5" y="4" width="17" height="16" rx="2"/><path d="M7 9l3 3-3 3"/><path d="M12 15h5"/>',
+    admin: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.6 3.3-5.5 6.5-5.5s5.7 1.9 6.5 5.5"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7"/><path d="M18 14.8c1.9.7 3.1 2.4 3.5 5.2"/>',
+    assumptions: '<circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 1 1 3.6 2.2c-.7.4-1.1 1-1.1 1.8v.5"/><circle cx="12" cy="17" r=".9" fill="currentColor"/>'
+  };
+  const navIcon = (k) => '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+    (NAV_ICONS[k] || NAV_ICONS.dashboard) + '</svg>';
 
   function renderNav(route) {
     const u = me();
     const count = (n) => (n ? '<span class="count">' + n + '</span>' : '');
     const links = [];
-    // [href, ข้อความ, เส้นทางที่ให้ไฮไลต์เมนูนี้]
-    links.push(['#/dashboard', 'ภาพรวม', ['#/dashboard']]);
+    // [ไอคอน, href, ข้อความ, เส้นทางที่ให้ไฮไลต์เมนูนี้]
+    links.push(['dashboard', '#/dashboard', 'ภาพรวม', ['#/dashboard']]);
     const tabs = taskTabs(u);
-    if (tabs.length) links.push(['#/tasks', 'งานของฉัน' + count(tabs.reduce((n, t) => n + (t.act ? t.n : 0), 0)), ['#/tasks', '#/approvals', '#/po', '#/cuts', '#/accounting', '#/payments']]);
-    if (canViewAll()) links.push(['#/budgets', 'งบประมาณ', ['#/budgets', '#/budget/', '#/change/', '#/adjust']]);
-    if (can('request.create') || can('budget.create')) links.push(['#/my-budgets', 'งบของฉัน', ['#/my-budgets', '#/budget/', '#/request/new', '#/change/', '#/adjust']]);
-    if (canViewAll() || can('request.create')) links.push(['#/requests', canViewAll() ? 'รายการดำเนินการใช้งบ' : 'ดำเนินการใช้งบของฉัน', ['#/requests', '#/request/', '#/doc/']]);
-    if (isWorker(u)) links.push(['#/history', 'ประวัติการทำรายการ', ['#/history']]);
-    if (can('master.manage')) links.push(['#/master', 'ข้อมูลหลัก', ['#/master']]);
-    if (can('log.view')) links.push(['#/log', 'Log การทำงาน', ['#/log']]);
-    if (can('user.manage')) links.push(['#/admin', 'ผู้ใช้และสิทธิ์' + count(REMOTE ? adminCounts.pending : 0), ['#/admin']]);
-    links.push(['#/assumptions', 'สิ่งที่รอยืนยัน', ['#/assumptions']]);
+    if (tabs.length) links.push(['tasks', '#/tasks', 'งานทั้งหมด' + count(tabs.reduce((n, t) => n + (t.act ? t.n : 0), 0)), ['#/tasks', '#/approvals', '#/po', '#/cuts', '#/accounting', '#/payments']]);
+    if (canViewAll()) links.push(['budgets', '#/budgets', 'งบประมาณ', ['#/budgets', '#/budget/', '#/change/', '#/adjust']]);
+    else if (can('request.create') || can('budget.create')) links.push(['budgets', '#/my-budgets', 'งบประมาณ', ['#/my-budgets', '#/budget/', '#/request/new', '#/change/', '#/adjust']]);
+    if (canViewAll() || can('request.create')) links.push(['requests', '#/requests', 'รายการดำเนินการใช้งบ', ['#/requests', '#/request/', '#/doc/']]);
+    if (isWorker(u)) links.push(['history', '#/history', 'ประวัติการทำรายการ', ['#/history']]);
+    if (can('master.manage')) links.push(['master', '#/master', 'ข้อมูลหลัก', ['#/master']]);
+    if (can('log.view')) links.push(['log', '#/log', 'Log การทำงาน', ['#/log']]);
+    if (can('user.manage')) links.push(['admin', '#/admin', 'ผู้ใช้และสิทธิ์' + count(REMOTE ? adminCounts.pending : 0), ['#/admin']]);
+    links.push(['assumptions', '#/assumptions', 'สิ่งที่รอยืนยัน', ['#/assumptions']]);
     let activeDone = false;
-    document.getElementById('nav').innerHTML = links.map(([href, text, prefixes]) => {
+    document.getElementById('nav').innerHTML = links.map(([icon, href, text, prefixes]) => {
       const active = !activeDone && prefixes.some((p) => route.startsWith(p));
       if (active) activeDone = true;
-      return '<a href="' + href + '"' + (active ? ' class="active" aria-current="page"' : '') + '>' + NAV_ICON + '<span>' + text + '</span></a>';
+      return '<a href="' + href + '"' + (active ? ' class="active" aria-current="page"' : '') + '>' + navIcon(icon) + '<span>' + text + '</span></a>';
     }).join('');
   }
 
@@ -838,7 +849,7 @@
       label + '<span class="tab-count">(' + count(t) + ')</span></a>';
     const depts = uniq(all.map((b) => b.department)).sort();
     const years = uniq(all.map((b) => String(b.fiscalYear))).sort().reverse();
-    const title = mine ? 'งบของฉัน' : 'งบประมาณ';
+    const title = 'งบประมาณ';
     const states = Object.keys(BUDGET_STATE).filter((s) => all.some((b) => (b.state || 'active') === s));
 
     let html = '<div class="page-head"><h1>' + title + '</h1>' +
@@ -2049,7 +2060,7 @@
   function viewRequests() {
     const u = me();
     const list = canViewAll() ? db.requests : db.requests.filter((r) => r.requesterId === u.id);
-    return '<div class="page-head"><h1>' + (canViewAll() ? 'รายการดำเนินการใช้งบ' : 'ดำเนินการใช้งบของฉัน') + '</h1></div>' + takeFlash() + requestTable(list, true);
+    return '<div class="page-head"><h1>' + 'รายการดำเนินการใช้งบ' + '</h1></div>' + takeFlash() + requestTable(list, true);
   }
 
 
@@ -3413,7 +3424,7 @@
         '<td>' + esc(b.code) + '<div class="muted">' + esc(reqSummary(r)) + '</div></td><td class="nowrap">' + esc(USE_TYPES[r.useType].short) + '</td><td class="nowrap">' + esc(userName(r.requesterId)) + '</td>' +
         '<td class="num">' + money(r.amount) + '</td><td class="num">' + money(cutTotal(r)) + '</td>' + (withStep ? '<td>' + esc(nextCutStep(r)) + '</td>' : '') + '</tr>'; }).join('') + '</tbody></table></div>';
   }
-  // ---------------------------------------------------------------- งานของฉัน (รวมทุกคิวงานในหน้าเดียว แยกเป็นแท็บ)
+  // ---------------------------------------------------------------- งานทั้งหมด (รวมทุกคิวงานในหน้าเดียว แยกเป็นแท็บ)
 
   /** ผู้ใช้ที่ทำรายการในระบบ (Business / ผู้คุมงบ / จัดซื้อ) — Admin อย่างเดียวไม่มีงานและประวัติการทำรายการ */
   const WORK_PERMS = ['budget.create', 'request.create', 'budget.verify', 'budget.adjust', 'budget.manage', 'request.decide', 'cut.record', 'po.record'];
@@ -3431,7 +3442,7 @@
   }
 
   /**
-   * แท็บของหน้า "งานของฉัน" ตามสิทธิ์
+   * แท็บของหน้า "งานทั้งหมด" ตามสิทธิ์
    * act = งานที่ผู้ใช้ต้องลงมือ (นับรวมเป็นตัวเลขที่เมนู) · ไม่ act = รายการติดตามสถานะ
    */
   function taskTabs(u) {
@@ -3483,7 +3494,7 @@
     return tabs;
   }
 
-  /** เส้นทางเดิม (#/approvals, #/po ฯลฯ) → แท็บในหน้างานของฉัน */
+  /** เส้นทางเดิม (#/approvals, #/po ฯลฯ) → แท็บในหน้างานทั้งหมด */
   const OLD_TASK_ROUTES = { approvals: 'requests', po: 'po', cuts: 'cuts', payments: 'cuts', accounting: 'cuts' };
 
   function viewTasks(params, oldRoute) {
@@ -3496,7 +3507,7 @@
       esc(t.label) + '<span class="tab-badge' + (t.act && t.n ? ' act' : '') + '">' + t.n + '</span></a>').join('') + '</nav>';
     const multi = tab.sections.length > 1;
     const body = tab.sections.map((x) => (multi ? '<h2>' + x.title + ' <span class="muted count-note">(' + x.list.length + ')</span></h2>' : '') + x.table(x.list)).join('');
-    return '<div class="page-head"><div><h1>งานของฉัน</h1><div class="page-sub">' + esc(roleLabel(me())) + '</div></div></div>' + takeFlash() + nav +
+    return '<div class="page-head"><div><h1>งานทั้งหมด</h1><div class="page-sub">' + esc(roleLabel(me())) + '</div></div></div>' + takeFlash() + nav +
       '<p class="muted tab-hint">' + esc(tab.hint) + '</p>' + body;
   }
 
@@ -3913,9 +3924,9 @@
     const titles = {
       dashboard: 'ภาพรวมงบประมาณ', master: 'ข้อมูลหลัก',
       admin: 'ผู้ใช้และสิทธิ์',
-      budgets: can('budget.manage') ? 'จัดการงบประมาณ' : 'งบประมาณ', 'my-budgets': 'งบของฉัน',
-      requests: canViewAll() ? 'รายการดำเนินการใช้งบ' : 'ดำเนินการใช้งบของฉัน',
-      tasks: 'งานของฉัน', approvals: 'งานของฉัน', accounting: 'งานของฉัน', payments: 'งานของฉัน', po: 'งานของฉัน', cuts: 'งานของฉัน',
+      budgets: can('budget.manage') ? 'จัดการงบประมาณ' : 'งบประมาณ', 'my-budgets': 'งบประมาณ',
+      requests: 'รายการดำเนินการใช้งบ',
+      tasks: 'งานทั้งหมด', approvals: 'งานทั้งหมด', accounting: 'งานทั้งหมด', payments: 'งานทั้งหมด', po: 'งานทั้งหมด', cuts: 'งานทั้งหมด',
       history: 'ประวัติการทำรายการ', adjust: 'โยก / ลดงบ', log: 'Log การทำงาน', assumptions: 'สิ่งที่รอยืนยัน'
     };
     if (p[0] === 'change') {
