@@ -3627,6 +3627,222 @@
       rows.map((x) => '<tr><td class="nowrap">' + esc(x[0]) + '</td><td>' + esc(x[1]) + '</td><td>' + esc(x[2]) + '</td></tr>').join('') + '</tbody></table></div>';
   }
 
+  // ---------------------------------------------------------------- ช่องที่ต้องกรอก (*) และปิดปุ่มจนกว่าเงื่อนไขครบ
+
+  /** ใส่ * สีแดงให้ช่องที่ต้องกรอก (ตามชื่อช่อง) — ช่องที่มี required อยู่แล้วได้ * จาก CSS อัตโนมัติ */
+  function markReq(form, names) {
+    names.forEach((n) => form.querySelectorAll('[name="' + n + '"]').forEach((el) => {
+      const fld = el.closest('.field');
+      if (fld) fld.classList.add('req');
+    }));
+  }
+  /** ใส่ * ที่หัวตาราง / หัวข้อ ตามข้อความ */
+  function markReqText(root, selector, re) {
+    root.querySelectorAll(selector).forEach((el) => { if (re.test(el.textContent)) el.classList.add('req'); });
+  }
+
+  /**
+   * ปิดปุ่มจนกว่าจะกรอกครบ และบอกใต้ปุ่มว่ายังขาดอะไร
+   * rules = [{ btn: ตัวเลือกปุ่ม, label?: ชื่อสั้นของปุ่ม (เมื่อมีหลายปุ่ม), missing: (form) => ['สิ่งที่ยังขาด', ...] }]
+   */
+  function guard(form, rules, anchorSel) {
+    if (!form) return;
+    let hint = form.querySelector('.guard-hint');
+    if (!hint) {
+      hint = document.createElement('p');
+      hint.className = 'guard-hint';
+      const anchor = form.querySelector(anchorSel || '.side-actions, .decision-actions, .actions');
+      if (anchor) anchor.insertAdjacentElement('afterend', hint); else form.appendChild(hint);
+    }
+    const run = () => {
+      const notes = [];
+      rules.forEach((rule) => {
+        const miss = rule.missing(form).filter(Boolean);
+        form.querySelectorAll(rule.btn).forEach((btn) => {
+          btn.disabled = miss.length > 0;
+          btn.title = miss.length ? 'ยังขาด: ' + miss.join(', ') : '';
+        });
+        if (miss.length) notes.push((rules.length > 1 && rule.label ? rule.label + ': ' : '') + miss.join(' · '));
+      });
+      hint.textContent = notes.length ? (rules.length > 1 ? notes.join(' | ') : 'กรอกให้ครบก่อน: ' + notes[0]) : '';
+      hint.hidden = !notes.length;
+    };
+    form.addEventListener('input', run);
+    form.addEventListener('change', run);
+    form.addEventListener('click', () => setTimeout(run, 0)); // เพิ่ม/ลบแถว
+    run();
+  }
+  const filled = (el) => !!(el && String(el.value || '').trim());
+  const fileCount = (form) => form.querySelectorAll('.files li').length;
+
+  function bindGuards() {
+    // ---- ฟอร์มตั้งงบ / นำเข้างบ
+    const bf = document.getElementById('budgetForm');
+    if (bf) {
+      markReq(bf, ['type', 'company', 'fiscalYear', 'code', 'name', 'department', 'ownerId', 'meetingNo', 'projAmount']);
+      markReqText(bf, 'thead th', /^(รหัส|รหัสรายการย่อย|ชื่อรายการ|รายการ|วงเงิน \(รวม VAT\)|ก่อน VAT)$/);
+      guard(bf, [{ btn: 'button[type="submit"]', missing: (f) => {
+        const e = f.elements;
+        const m = [];
+        if (!filled(e.code)) m.push('รหัสโครงการ / Job No.');
+        if (!filled(e.name)) m.push('ชื่อโครงการ');
+        if (!filled(e.department)) m.push('หน่วยงาน');
+        if (!filled(e.fiscalYear)) m.push('ปีงบประมาณ');
+        if (f.dataset.mode === 'import') {
+          if (!filled(e.ownerId)) m.push('Business เจ้าของงบ');
+          if (!filled(e.meetingNo)) m.push('เลขที่มติ / เอกสารอนุมัติ');
+        }
+        const structure = (f.querySelector('[name="structure"]:checked') || {}).value;
+        const type = e.type.value;
+        if (structure === 'project') {
+          if (!(Number(e.projAmount.value) > 0)) m.push('วงเงินรวมทั้งโครงการ');
+        } else {
+          const rows = Array.from(f.querySelectorAll('#' + (type === 'CBS' ? 'cbs' : 'capex') + 'Rows tr')).map((tr) => ({
+            code: filled(tr.querySelector('[name="itCode"]')), name: filled(tr.querySelector('[name="itName"]')),
+            amount: Number((tr.querySelector('[name="itAmount"]') || {}).value || 0), parent: (tr.querySelector('[name="itAmount"]') || {}).disabled
+          })).filter((r) => r.code || r.name || r.amount);
+          if (!rows.length) m.push('รายการอย่างน้อย 1 รายการ');
+          else {
+            if (rows.some((r) => !r.code || !r.name)) m.push('รหัสและชื่อรายการทุกแถว');
+            if (type === 'CAPEX' && rows.some((r) => !(r.amount > 0))) m.push('วงเงินของทุกรายการย่อย');
+            if (type === 'CBS' && !rows.some((r) => r.amount > 0)) m.push('วงเงิน');
+          }
+        }
+        return m;
+      } }]);
+    }
+
+    // ---- แนบมติ / เอกสารอนุมัติแล้วส่งตรวจ (งบ และคำขอเพิ่มงบ)
+    ['submitBudget', 'submitChange'].forEach((id) => {
+      const f = document.getElementById(id);
+      if (!f) return;
+      markReq(f, ['meetingNo', 'meetingBy']);
+      f.querySelectorAll('input[type="file"]').forEach((el) => { const fld = el.closest('.field'); if (fld) fld.classList.add('req'); });
+      guard(f, [{ btn: 'button[type="submit"]', missing: (form) => [
+        !filled(form.elements.meetingNo) && (form.elements.meetingBy ? 'เลขที่เอกสารอนุมัติ' : 'เลขที่มติ'),
+        form.elements.meetingBy && !filled(form.elements.meetingBy) && 'ผู้บริหารที่อนุมัติ',
+        !fileCount(form) && 'ไฟล์' + (form.elements.meetingBy ? 'เอกสารอนุมัติ' : 'มติ')
+      ] }]);
+    });
+
+    // ---- ผู้คุมงบ: ส่งกลับต้องมีเหตุผล
+    ['verifyBudget', 'verifyChange'].forEach((id) => {
+      const f = document.getElementById(id);
+      if (!f) return;
+      guard(f, [{ btn: '[data-verify="returned"]', label: 'ส่งกลับ', missing: (form) => [!filled(form.elements.comment) && 'หมายเหตุ / เหตุผลที่ส่งกลับ'] }]);
+    });
+
+    // ---- ขอดำเนินการใช้งบ
+    const rf = document.getElementById('requestForm');
+    if (rf) {
+      markReq(rf, ['itemId', 'purpose']);
+      markReqText(rf, '.section-title', /ประเภทการดำเนินการใช้งบ/);
+      markReqText(rf, '.lines-table thead th', /^(รายการต้นทุน \(CBS\)|หมวดค่าใช้จ่าย|รายละเอียด|ก่อน VAT)/);
+      guard(rf, [{ btn: 'button[type="submit"]', missing: (f) => {
+        const e = f.elements;
+        const m = [];
+        if (!f.querySelector('[name="useType"]:checked')) m.push('ประเภทการดำเนินการใช้งบ');
+        if (e.itemId && e.itemId.tagName === 'SELECT' && !e.itemId.value) m.push('รายการย่อย');
+        if (!filled(e.purpose)) m.push('วัตถุประสงค์');
+        if (e.payee && e.payee.required && !filled(e.payee)) m.push('ผู้รับเงิน');
+        const rows = Array.from(f.querySelectorAll('#lineRows tr')).map((tr) => ({
+          desc: filled(tr.querySelector('[name="lnDesc"]')), amt: Number(tr.querySelector('[name="lnAmount"]').value || 0),
+          item: tr.querySelector('[name="lnItem"]'), cat: tr.querySelector('[name="lnCat"]')
+        }));
+        const used = rows.filter((r) => r.desc || r.amt);
+        if (!used.length) m.push('รายการที่ขอใช้อย่างน้อย 1 บรรทัด');
+        if (used.some((r) => !r.desc)) m.push('รายละเอียดทุกบรรทัด');
+        if (used.some((r) => !(r.amt > 0))) m.push('จำนวนเงินทุกบรรทัด');
+        if (used.some((r) => r.item && !r.item.value)) m.push('รายการต้นทุนทุกบรรทัด');
+        if (used.some((r) => r.cat && !r.cat.value)) m.push('หมวดค่าใช้จ่ายทุกบรรทัด');
+        const wrap = document.getElementById('planWrap');
+        const mode = f.querySelector('[name="payMode"]:checked');
+        if (wrap && !wrap.hidden && mode && mode.value === 'installments') {
+          const pcts = Array.from(f.querySelectorAll('#planRows [name="planPct"]')).map((x) => Number(x.value || 0)).filter((x) => x);
+          if (pcts.length < 2 || round2(pcts.reduce((s, x) => s + x, 0)) !== 100) m.push('งวดจ่ายอย่างน้อย 2 งวด รวม 100%');
+        }
+        return m;
+      } }]);
+    }
+
+    // ---- ผู้คุมงบตรวจคำขอ
+    const df = document.getElementById('decisionForm');
+    if (df) {
+      const r = requestById(df.dataset.id);
+      const ov = capexOver(r);
+      guard(df, [
+        { btn: '[data-decision="approved"]', label: 'อนุมัติ', missing: (form) => [
+          ov.project > 0 && 'เกินงบโครงการ ' + money(ov.project) + ' บาท — โยกงบเข้าก่อน',
+          ov.project <= 0 && ov.item > 0 && !filled(form.elements.comment) && 'Note เหตุผลที่ให้ผ่าน (ขอเกินงบรายการ)'] },
+        { btn: '[data-decision="rejected"]', label: 'ส่งกลับ', missing: (form) => [!filled(form.elements.comment) && 'เหตุผลที่ส่งกลับ'] }
+      ]);
+    }
+
+    // ---- แนบ Memo ที่เซ็นแล้ว
+    const ms = document.getElementById('memoSubmit');
+    if (ms) {
+      markReq(ms, ['memoBy']);
+      const fi = ms.querySelector('input[type="file"]');
+      if (fi && fi.closest('.field')) fi.closest('.field').classList.add('req');
+      guard(ms, [{ btn: 'button[type="submit"]', missing: (form) => [
+        !filled(form.elements.memoBy) && 'ผู้บริหารที่เซ็น', !fileCount(form) && 'ไฟล์ Memo ที่เซ็นแล้ว'] }]);
+    }
+
+    // ---- การตัดงบ
+    const af = document.getElementById('advForm');
+    if (af) guard(af, [{ btn: 'button[type="submit"]', missing: (f) => [!filled(f.elements.date) && 'วันที่จ่าย', !(Number(f.elements.amount.value) > 0) && 'ยอดเงินทดรอง'] }]);
+    const cf = document.getElementById('cutForm');
+    if (cf) {
+      const r = requestById(cf.dataset.id);
+      guard(cf, [{ btn: 'button[type="submit"]', missing: (f) => {
+        const e = f.elements;
+        const amt = Number(e.amount.value || 0);
+        return [e.prNo && !filled(e.prNo) && 'เลขที่ PR', e.poNo && !filled(e.poNo) && 'เลขที่ PO', !filled(e.date) && 'วันที่',
+          !(amt > 0) && 'ยอดเงิน', amt > 0 && round2(cutTotal(r) + amt) > r.amount + 0.005 && !filled(e.note) && 'หมายเหตุ (ยอดรวมเกินที่ขอ)'];
+      } }]);
+    }
+    const clf = document.getElementById('closeForm');
+    if (clf) {
+      const r = requestById(clf.dataset.id);
+      guard(clf, [{ btn: 'button[type="submit"]', missing: (f) => [cutTotal(r) > r.amount + 0.005 && !filled(f.elements.note) && 'หมายเหตุ (ยอดจริงเกินที่ขอ)'] }]);
+    }
+
+    // ---- คำขอเพิ่มงบ
+    const chf = document.getElementById('changeForm');
+    if (chf) {
+      markReq(chf, ['reason', 'projAdd']);
+      guard(chf, [{ btn: 'button[type="submit"]', missing: (f) => {
+        const m = [];
+        if (!filled(f.elements.reason)) m.push('เหตุผลที่ขอเพิ่มงบ');
+        if (f.elements.projAdd) { if (!(Number(f.elements.projAdd.value) > 0)) m.push('วงเงินที่ขอเพิ่ม'); return m; }
+        const rows = Array.from(f.querySelectorAll('#chRows tr'));
+        if (!rows.length) m.push('รายการที่ขอเพิ่ม');
+        if (rows.some((tr) => !(Number(tr.querySelector('[name="chAmount"]').value) > 0))) m.push('จำนวนเงินที่ขอเพิ่มทุกแถว');
+        if (rows.some((tr) => tr.querySelector('[name="chItem"]').value === 'new' && (!filled(tr.querySelector('[name="chCode"]')) || !filled(tr.querySelector('[name="chName"]'))))) m.push('รหัสและชื่อรายการใหม่');
+        return m;
+      } }]);
+    }
+
+    // ---- โยก / ลดงบ
+    const pick = (v) => { const [bid, iid] = String(v || '').split('|'); const b = budgetById(bid); const it = b && itemById(b, iid); return { b, it }; };
+    const remainOf = (x) => (x.it ? usage(x.b, x.it.id).remaining : 0);
+    const mv = document.getElementById('moveForm');
+    if (mv) guard(mv, [{ btn: 'button[type="submit"]', missing: (f) => {
+      const e = f.elements;
+      const src = pick(e.from.value);
+      const amt = Number(e.amount.value || 0);
+      return [!e.from.value && 'โยกจาก', !e.to.value && 'ไปยัง', e.from.value && e.from.value === e.to.value && 'ต้นทางและปลายทางต้องต่างกัน',
+        !(amt > 0) && 'จำนวนเงิน', amt > 0 && src.it && amt > remainOf(src) + 0.005 && 'ต้นทางคงเหลือไม่พอ (' + money(remainOf(src)) + ')', !filled(e.reason) && 'เหตุผล'];
+    } }]);
+    const cb = document.getElementById('cutBudgetForm');
+    if (cb) guard(cb, [{ btn: 'button[type="submit"]', missing: (f) => {
+      const e = f.elements;
+      const t = pick(e.target.value);
+      const amt = Number(e.amount.value || 0);
+      return [!e.target.value && 'รายการ', !(amt > 0) && 'จำนวนที่ลด', amt > 0 && t.it && amt > remainOf(t) + 0.005 && 'ลดได้ไม่เกินคงเหลือ ' + money(remainOf(t)), !filled(e.reason) && 'เหตุผล'];
+    } }]);
+  }
+
   function notFound() {
     return '<div class="card empty">ไม่พบข้อมูลที่ต้องการ</div>';
   }
@@ -3786,6 +4002,7 @@
     bindAdjust();
     bindLog();
     bindHistory();
+    bindGuards();
     bindDashboard();
     bindMaster();
     bindAdmin();
