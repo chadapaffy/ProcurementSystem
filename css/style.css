@@ -192,7 +192,7 @@ h3 { font-size: var(--fs-base); font-weight: 600; }
 .badge.lg { padding: 2px var(--s-3); font-size: var(--fs-xs); }
 .badge.CAPEX { color: var(--capex); }
 .badge.CBS { color: var(--cbs); }
-.badge.pending { color: var(--warn); }
+.badge.pending, .badge.memo { color: var(--warn); }
 .badge.approved { color: var(--ok); }
 .badge.rejected, .badge.cancelled { color: var(--bad); }
 
@@ -646,8 +646,8 @@ td .files li { padding: var(--s-1) var(--s-2); }
 .memo-hint { font-size: var(--fs-sm); margin: 0 0 var(--s-3); }
 .memo-actions { margin: 0 0 var(--s-4); }
 .memo-meta { margin: 0 0 var(--s-3); }
-#memoSheet { display: none; }
-@media print {
-  body.print-memo > *:not(#memoSheet) { display: none !important; }
-  body.print-memo #memoSheet { display: block; }
-}
+.memo-card { padding: var(--s-5); margin-bottom: var(--s-5); border-color: #f6d4a8; background: #fffbf5; }
+.memo-card .section-title { margin-bottom: var(--s-3); }
+.memo-steps { margin: 0 0 var(--s-4); padding-left: 1.4rem; font-size: var(--fs-sm); line-height: 1.7; color: var(--text-2); }
+.memo-steps li.done { color: var(--ok); }
+.memo-steps li.current { color: var(--heading); font-weight: 600; }
