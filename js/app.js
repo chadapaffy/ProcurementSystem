@@ -28,7 +28,8 @@
     { id: 'req1', name: 'สมชาย ใจดี', title: 'วิศวกร ฝ่ายวิศวกรรม', role: 'business' },
     { id: 'req2', name: 'สุดา รักงาน', title: 'เจ้าหน้าที่โครงการ ฝ่ายโครงการ', role: 'business' },
     { id: 'fin1', name: 'มาลี เงินดี', title: 'บัญชีการเงิน', role: 'controller' },
-    { id: 'pur1', name: 'ปิติ จัดหา', title: 'เจ้าหน้าที่จัดซื้อ', role: 'purchasing' }
+    { id: 'pur1', name: 'ปิติ จัดหา', title: 'เจ้าหน้าที่จัดซื้อ', role: 'purchasing' },
+    { id: 'adm1', name: 'อดิศร ดูแลระบบ', title: 'ผู้ดูแลระบบ (IT)', role: 'admin' }
   ];
   let USERS = DEMO_USERS; // โหมด Supabase: แทนที่ด้วยรายชื่อผู้ใช้จากฐานข้อมูล
   let remoteMe = null; // โหมด Supabase: ผู้ใช้ที่ล็อกอินอยู่ (null = ยังไม่ได้ล็อกอิน)
@@ -37,6 +38,7 @@
     business: 'Business (ผู้ขอใช้งบ)',
     controller: 'ผู้คุมงบ (บัญชีการเงิน)',
     purchasing: 'จัดซื้อ',
+    admin: 'ผู้ดูแลระบบ (Admin)',
     // ชื่อบทบาทเดิม (ยังอยู่ในประวัติของเอกสารเก่า)
     requester: 'ผู้ขอใช้งบ',
     finance: 'ผู้คุมงบ',
@@ -57,13 +59,14 @@
     { key: 'po.record', group: 'จัดซื้อ', label: 'บันทึก PR / PO', hint: 'ตัดงบ PR/PO ตามยอด PO' },
     { key: 'master.manage', group: 'ผู้ดูแลระบบ', label: 'จัดการข้อมูลหลัก', hint: 'บริษัท หน่วยงาน กลุ่มงบ ประเภทสินทรัพย์ หมวดค่าใช้จ่าย GL Code' },
     { key: 'log.view', group: 'ผู้ดูแลระบบ', label: 'ดู Log การทำงาน', hint: '' },
-    { key: 'user.manage', group: 'ผู้ดูแลระบบ', label: 'จัดการผู้ใช้ บทบาท และสิทธิ์', hint: 'หน้า Admin (โหมด Supabase)' }
+    { key: 'user.manage', group: 'ผู้ดูแลระบบ', label: 'จัดการผู้ใช้ บทบาท และสิทธิ์', hint: 'หน้า Admin (โหมดทดลองดูได้อย่างเดียว)' }
   ];
   /** โหมดทดลอง: สิทธิ์ตั้งต้นของแต่ละบทบาท */
   const DEMO_ROLE_PERMS = {
     business: ['budget.create', 'request.create'],
-    controller: ['budget.view_all', 'budget.manage', 'budget.verify', 'budget.adjust', 'request.decide', 'cut.record', 'accounting.record', 'master.manage', 'log.view'],
-    purchasing: ['budget.view_all', 'po.record']
+    controller: ['budget.view_all', 'budget.manage', 'budget.verify', 'budget.adjust', 'request.decide', 'cut.record', 'accounting.record'],
+    purchasing: ['budget.view_all', 'po.record'],
+    admin: ['budget.view_all', 'master.manage', 'log.view', 'user.manage']
   };
 
   const COMPANIES = { PSL: 'บริษัท PSL (ตัวอย่าง)', PCC: 'บริษัท PCC (ตัวอย่าง)' };
@@ -642,13 +645,6 @@
   const CHANGE_STATE_BADGE = { draft: 'draft', review: 'pending', returned: 'rejected', approved: 'approved', cancelled: 'cancelled' };
   const changeById = (id) => (db.changes || []).find((c) => c.id === id);
   const changeTotal = (c) => round2((c.lines || []).reduce((s, l) => s + Number(l.amount || 0), 0));
-  /** จำนวนงานรอผู้คุมงบตรวจสอบ: งบรอเปิดใช้ + คำขอเพิ่มงบ + ใบดำเนินการใช้งบ */
-  function reviewQueueCount() {
-    let n = 0;
-    if (can('budget.verify')) n += db.budgets.filter((b) => b.state === 'review').length + (db.changes || []).filter((c) => c.state === 'review').length;
-    if (can('request.decide')) n += inbox(me()).length;
-    return n;
-  }
   /** เพิ่ม/ลดวงเงินของรายการ (CBS ที่มี VAT ปรับตามสัดส่วนเดิม) */
   function adjustItem(it, delta) {
     const total = itemTotal(it);
@@ -737,11 +733,10 @@
 
   function homeFor(u) {
     const has = (p) => permsOf(u).includes(p);
-    if (has('budget.verify') || has('request.decide')) return '#/approvals';
-    if (has('po.record')) return '#/po';
-    if (has('accounting.record')) return '#/accounting';
+    if (has('user.manage')) return '#/admin';
+    if (has('master.manage') || has('log.view')) return '#/master';
+    if (has('budget.verify') || has('request.decide') || has('po.record') || has('cut.record') || has('accounting.record')) return '#/tasks';
     if (has('request.create') || has('budget.create')) return '#/my-budgets';
-    if (REMOTE && has('user.manage')) return '#/admin';
     return '#/dashboard';
   }
 
@@ -755,18 +750,17 @@
     const links = [];
     // [href, ข้อความ, เส้นทางที่ให้ไฮไลต์เมนูนี้]
     links.push(['#/dashboard', 'ภาพรวม', ['#/dashboard']]);
-    if (can('budget.verify') || can('request.decide')) links.push(['#/approvals', 'รอตรวจสอบ' + count(reviewQueueCount()), ['#/approvals']]);
-    if (can('po.record')) links.push(['#/po', 'รอออก PO' + count(db.requests.filter(needsPO).length), ['#/po']]);
-    if (can('cut.record')) links.push(['#/cuts', 'รอตัดงบ / ปิดยอด' + count(db.requests.filter(needsCut).length), ['#/cuts']]);
-    if (can('accounting.record')) links.push(['#/accounting', 'รอบันทึกบัญชี (CBS)' + count(db.requests.filter(needsAccounting).length), ['#/accounting']]);
+    const tabs = taskTabs(u);
+    if (tabs.length) links.push(['#/tasks', 'งานของฉัน' + count(tabs.reduce((n, t) => n + (t.act ? t.n : 0), 0)), ['#/tasks', '#/approvals', '#/po', '#/cuts', '#/accounting', '#/payments']]);
     if (canViewAll()) links.push(['#/budgets', 'งบประมาณ', ['#/budgets', '#/budget/', '#/change/']]);
     if (can('request.create') || can('budget.create')) links.push(['#/my-budgets', 'งบของฉัน', ['#/my-budgets', '#/budget/', '#/request/new', '#/change/']]);
     if (canViewAll() || can('request.create')) links.push(['#/requests', canViewAll() ? 'รายการดำเนินการใช้งบ' : 'ดำเนินการใช้งบของฉัน', ['#/requests', '#/request/', '#/doc/']]);
     if (can('budget.adjust')) links.push(['#/adjust', 'โยก / ลดงบ', ['#/adjust']]);
+    if (isWorker(u)) links.push(['#/history', 'ประวัติการทำรายการ', ['#/history']]);
     if (can('master.manage')) links.push(['#/master', 'ข้อมูลหลัก', ['#/master']]);
     if (can('log.view')) links.push(['#/log', 'Log การทำงาน', ['#/log']]);
+    if (can('user.manage')) links.push(['#/admin', 'ผู้ใช้และสิทธิ์' + count(REMOTE ? adminCounts.pending : 0), ['#/admin']]);
     links.push(['#/assumptions', 'สิ่งที่รอยืนยัน', ['#/assumptions']]);
-    if (REMOTE && can('user.manage')) links.push(['#/admin', 'ผู้ใช้และสิทธิ์' + count(adminCounts.pending), ['#/admin']]);
     let activeDone = false;
     document.getElementById('nav').innerHTML = links.map(([href, text, prefixes]) => {
       const active = !activeDone && prefixes.some((p) => route.startsWith(p));
@@ -2024,13 +2018,6 @@
   }
 
 
-  function viewAccounting() {
-    if (!can('accounting.record')) return '<div class="alert error">ไม่มีสิทธิ์บันทึกข้อมูลบัญชี</div>';
-    return '<div class="page-head"><h1>รอบันทึกข้อมูลบัญชี</h1></div>' + takeFlash() +
-      '<p class="muted">CBS: เอกสารที่ยังไม่ได้ยืนยัน GL Code และบันทึกจ่ายเงิน (เงื่อนไข CBS ยังเป็นแบบเดิม รอสรุปจากผู้ใช้งาน) · CAPEX ไปที่หน้า "รอตัดงบ / ปิดยอด"</p>' +
-      requestTable(db.requests.filter(needsAccounting), true);
-  }
-
   // ---------------------------------------------------------------- request detail
 
   function linesTable(b, r, withGl) {
@@ -2716,25 +2703,25 @@
     const task = (label, n, href, note) => '<li><a href="' + href + '"><span>' + label + (note ? '<small>' + note + '</small>' : '') + '</span><b class="' + (n ? 'has' : '') + '">' + n + '</b></a></li>';
     const tasks = [];
     if (can('budget.verify')) {
-      tasks.push(task('งบที่รอยืนยันเปิดใช้', db.budgets.filter((b) => b.state === 'review').length, '#/approvals'),
-        task('คำขอเพิ่มงบรอตรวจสอบ', (db.changes || []).filter((c) => c.state === 'review').length, '#/approvals'));
+      tasks.push(task('งบที่รอยืนยันเปิดใช้', db.budgets.filter((b) => b.state === 'review').length, '#/tasks?tab=budgets'),
+        task('คำขอเพิ่มงบรอตรวจสอบ', (db.changes || []).filter((c) => c.state === 'review').length, '#/tasks?tab=changes'));
     }
-    if (can('request.decide')) tasks.push(task('คำขอดำเนินการใช้งบรอตรวจสอบ', inbox(u).length, '#/approvals'));
-    if (can('po.record')) tasks.push(task('รอออก PO', db.requests.filter(needsPO).length, '#/po'));
+    if (can('request.decide')) tasks.push(task('คำขอดำเนินการใช้งบรอตรวจสอบ', inbox(u).length, '#/tasks?tab=requests'));
+    if (can('po.record')) tasks.push(task('รอออก PO', db.requests.filter(needsPO).length, '#/tasks?tab=po'));
     if (can('cut.record')) {
       const cuts = db.requests.filter(needsCut);
-      tasks.push(task('รอตัดงบ / ปิดยอด', cuts.length, '#/cuts', cuts.length ? 'รวม ' + money(cuts.reduce((s2, r) => s2 + Math.max(r.amount - cutTotal(r), 0), 0)) + ' บาท' : ''));
+      tasks.push(task('รอตัดงบ / ปิดยอด', cuts.length, '#/tasks?tab=cuts', cuts.length ? 'รวม ' + money(cuts.reduce((s2, r) => s2 + Math.max(r.amount - cutTotal(r), 0), 0)) + ' บาท' : ''));
     }
-    if (can('accounting.record')) tasks.push(task('CBS รอบันทึกบัญชี / จ่ายเงิน', db.requests.filter(needsAccounting).length, '#/accounting'));
+    if (can('accounting.record')) tasks.push(task('CBS รอบันทึกบัญชี / จ่ายเงิน', db.requests.filter(needsAccounting).length, '#/tasks?tab=cbs'));
     if (can('budget.create')) {
       const mineB = db.budgets.filter((b) => b.ownerId === u.id);
-      tasks.push(task('งบร่าง / ถูกส่งกลับแก้ไข', mineB.filter((b) => b.state === 'draft' || b.state === 'returned').length, '#/my-budgets'),
-        task('งบรอผู้คุมงบยืนยัน', mineB.filter((b) => b.state === 'review').length, '#/my-budgets'));
+      tasks.push(task('งบร่าง', mineB.filter((b) => b.state === 'draft').length, '#/tasks?tab=drafts'),
+        task('งบรอผู้คุมงบยืนยัน', mineB.filter((b) => b.state === 'review').length, '#/tasks?tab=waiting'));
     }
     if (can('request.create')) {
-      tasks.push(task('คำขอของฉันที่รอผู้คุมงบตรวจสอบ', mineReq.filter((r) => r.status === 'pending').length, '#/requests'),
-        task('ส่งกลับแก้ไข', mineReq.filter((r) => r.status === 'rejected').length, '#/requests'),
-        task('ออกใบดำเนินการใช้งบแล้ว รอปิดยอด', mineReq.filter((r) => r.status === 'approved').length, '#/requests'));
+      tasks.push(task('คำขอของฉันที่รอผู้คุมงบตรวจสอบ', mineReq.filter((r) => r.status === 'pending').length, '#/tasks?tab=waiting'),
+        task('ส่งกลับแก้ไข', mineReq.filter((r) => r.status === 'rejected').length + db.budgets.filter((b) => b.ownerId === u.id && b.state === 'returned').length, '#/tasks?tab=fix'),
+        task('ออกใบดำเนินการใช้งบแล้ว รอปิดยอด', mineReq.filter((r) => r.status === 'approved').length, '#/tasks?tab=open'));
     }
     if (REMOTE && can('user.manage')) tasks.push(task('ผู้ใช้ที่รอกำหนดบทบาท', Number(adminCounts.pending || 0), '#/admin'));
     if (!tasks.length) tasks.push('<li><span class="muted">ไม่มีงานที่ต้องทำสำหรับบทบาทนี้</span></li>');
@@ -2814,14 +2801,10 @@
 
     const doa = Object.keys(DOA).map((k) => '<h3 class="side-title">' + esc(DOA[k].short) + '</h3><div class="table-wrap"><table><thead><tr><th>ข้อ</th><th>วงเงิน</th><th>ผู้อนุมัติ</th></tr></thead><tbody>' +
       DOA[k].rows.map((r) => '<tr><td class="nowrap">' + esc(r.code) + '</td><td>' + esc(r.label) + '</td><td>' + esc(r.approver) + '</td></tr>').join('') + '</tbody></table></div>').join('');
-    const users = '<div class="table-wrap"><table><thead><tr><th>ชื่อ</th><th>ตำแหน่ง</th><th>บทบาท</th></tr></thead><tbody>' +
-      USERS.map((x) => '<tr><td>' + esc(x.name) + '</td><td>' + esc(x.title) + '</td><td>' + esc(roleLabel(x)) + '</td></tr>').join('') + '</tbody></table></div>';
-    const usersSection = REMOTE ? '' :
-      '<section class="card form-section"><div class="section-head"><div><h2 class="section-title">ผู้ใช้และบทบาท</h2><div class="muted section-hint">อ่านอย่างเดียว — โหมดทดลองยังไม่มีระบบล็อกอิน ใช้เมนูผู้ใช้มุมขวาบนสลับบทบาทเพื่อทดสอบ</div></div></div>' + users + '</section>';
     return '<div class="page-head"><div><h1>ข้อมูลหลัก</h1><div class="page-sub">ค่าที่ใช้เป็นตัวเลือกในฟอร์มและรายงาน</div></div></div>' + takeFlash() +
       '<div id="formError"></div><div class="form-main">' + sections +
       '<section class="card form-section"><div class="section-head"><div><h2 class="section-title">ตารางอำนาจอนุมัติ (DOA)</h2><div class="muted section-hint">อ่านอย่างเดียว — ใช้ติ๊กระดับผู้อนุมัติบนใบเบิก CAPEX ตามยอดเงิน (หน่วย: ล้านบาท)</div></div></div>' + doa + '</section>' +
-      usersSection + '</div>';
+      '</div>';
   }
 
   function bindMaster() {
@@ -2873,8 +2856,8 @@
   // ---------------------------------------------------------------- Admin: ผู้ใช้ บทบาท สิทธิ์ (โหมด Supabase)
 
   function viewAdmin(params) {
-    if (!REMOTE) return '<div class="alert info">หน้านี้ใช้ในโหมด Supabase (หลังตั้งค่าตาม supabase/SETUP.md) — โหมดทดลองสลับผู้ใช้ตัวอย่างที่เมนูมุมขวาบน</div>';
     if (!can('user.manage')) return '<div class="alert error">ไม่มีสิทธิ์จัดการผู้ใช้และสิทธิ์</div>';
+    if (!REMOTE) return viewAdminDemo();
     const tab = params.get('tab') === 'roles' ? 'roles' : 'users';
     const t = (key, label) => '<a href="#/admin' + (key === 'roles' ? '?tab=roles' : '') + '"' + (tab === key ? ' class="active" aria-current="page"' : '') + '>' + label + '</a>';
     return '<div class="page-head"><div><h1>ผู้ใช้และสิทธิ์</h1><div class="page-sub">จัดการผู้ใช้ บทบาท และสิทธิ์ของแต่ละบทบาท — มีผลทันที ตรวจสอบที่ฝั่งฐานข้อมูล</div></div></div>' + takeFlash() +
@@ -3355,21 +3338,6 @@
         '<td>' + esc(c.reason) + '</td><td class="num">+' + money(changeTotal(c)) + '</td><td>' + badge(CHANGE_STATE_BADGE[c.state], CHANGE_STATE[c.state]) + '</td></tr>'; }).join('') + '</tbody></table></div>';
   }
 
-  function viewApprovals() {
-    let html = '<div class="page-head"><h1>รอตรวจสอบ</h1></div>' + takeFlash();
-    if (can('budget.verify')) {
-      const bs = db.budgets.filter((b) => b.state === 'review');
-      const cs = (db.changes || []).filter((c) => c.state === 'review');
-      html += '<h2>งบรอเปิดใช้งาน <span class="muted count-note">(' + bs.length + ')</span></h2>' + budgetQueueTable(bs) +
-        '<h2>คำขอเพิ่มงบ <span class="muted count-note">(' + cs.length + ')</span></h2>' + changeQueueTable(cs);
-    }
-    if (can('request.decide')) {
-      const rs = inbox(me());
-      html += '<h2>ดำเนินการใช้งบ (CAPEX) รอตรวจสอบ <span class="muted count-note">(' + rs.length + ')</span></h2>' + requestTable(rs, true);
-    }
-    return html;
-  }
-
   function nextCutStep(r) {
     if (r.useType === 'prpo') return 'ยืนยันยอด PO และปิดยอด';
     if (r.useType === 'advance') return r.advance ? 'เคลียร์เงินทดรอง' : 'จ่ายเงินทดรอง';
@@ -3383,17 +3351,158 @@
         '<td>' + esc(b.code) + '<div class="muted">' + esc(reqSummary(r)) + '</div></td><td class="nowrap">' + esc(USE_TYPES[r.useType].short) + '</td><td class="nowrap">' + esc(userName(r.requesterId)) + '</td>' +
         '<td class="num">' + money(r.amount) + '</td><td class="num">' + money(cutTotal(r)) + '</td>' + (withStep ? '<td>' + esc(nextCutStep(r)) + '</td>' : '') + '</tr>'; }).join('') + '</tbody></table></div>';
   }
-  function viewPO() {
-    if (!can('po.record')) return '<div class="alert error">ไม่มีสิทธิ์บันทึก PO</div>';
-    const list = db.requests.filter(needsPO);
-    const done = db.requests.filter((r) => r.type === 'CAPEX' && r.useType === 'prpo' && hasPO(r) && r.status === 'approved');
-    return '<div class="page-head"><div><h1>รอออก PO</h1><div class="page-sub">ใบดำเนินการใช้งบประเภท PR/PO ที่ผู้คุมงบอนุมัติแล้ว — บันทึกเลข PR/PO และยอด PO เพื่อตัดงบ</div></div></div>' + takeFlash() +
-      cutQueueTable(list, false) + '<h2>บันทึก PO แล้ว รอปิดยอด <span class="muted count-note">(' + done.length + ')</span></h2>' + cutQueueTable(done, false);
+  // ---------------------------------------------------------------- งานของฉัน (รวมทุกคิวงานในหน้าเดียว แยกเป็นแท็บ)
+
+  /** ผู้ใช้ที่ทำรายการในระบบ (Business / ผู้คุมงบ / จัดซื้อ) — Admin อย่างเดียวไม่มีงานและประวัติการทำรายการ */
+  const WORK_PERMS = ['budget.create', 'request.create', 'budget.verify', 'budget.adjust', 'budget.manage', 'request.decide', 'cut.record', 'accounting.record', 'po.record'];
+  const isWorker = (u) => permsOf(u).some((p) => WORK_PERMS.includes(p));
+
+  function myBudgetTable(list) {
+    if (!list.length) return '<div class="card empty">ไม่มีรายการ</div>';
+    return '<div class="table-wrap"><table><thead><tr><th>งบ</th><th>สถานะ</th><th class="num">วงเงิน</th><th>อัปเดตล่าสุด</th></tr></thead><tbody>' +
+      list.map((b) => {
+        const last = b.history.slice(-1)[0] || {};
+        return '<tr><td>' + badge(b.type, b.type) + ' <a href="#/budget/' + b.id + '">' + esc(b.code) + '</a><div class="muted">' + esc(b.name) + '</div></td>' +
+          '<td>' + badge(BUDGET_STATE_BADGE[b.state], BUDGET_STATE[b.state]) + (b.state === 'returned' && b.returnReason ? '<div class="muted">' + esc(b.returnReason) + '</div>' : '') + '</td>' +
+          '<td class="num">' + money(budgetTotal(b)) + '</td><td class="nowrap">' + fmtDay(last.at) + '<div class="muted">' + esc(last.action || '') + '</div></td></tr>';
+      }).join('') + '</tbody></table></div>';
   }
-  function viewCuts() {
-    if (!can('cut.record')) return '<div class="alert error">ไม่มีสิทธิ์บันทึกการตัดงบ</div>';
-    return '<div class="page-head"><div><h1>รอตัดงบ / ปิดยอด</h1><div class="page-sub">ใบดำเนินการใช้งบที่ออกแล้วแต่ยังไม่ปิดยอด (ไม่รวม PR/PO ที่รอจัดซื้อออก PO)</div></div></div>' + takeFlash() +
-      cutQueueTable(db.requests.filter(needsCut), true);
+
+  /**
+   * แท็บของหน้า "งานของฉัน" ตามสิทธิ์
+   * act = งานที่ผู้ใช้ต้องลงมือ (นับรวมเป็นตัวเลขที่เมนู) · ไม่ act = รายการติดตามสถานะ
+   */
+  function taskTabs(u) {
+    const has = (p) => permsOf(u).includes(p);
+    const tabs = [];
+    const add = (key, label, act, hint, sections) => tabs.push({ key, label, act, hint, sections, n: sections.reduce((n, x) => n + x.list.length, 0) });
+    const sec = (title, list, table) => ({ title, list, table });
+
+    if (has('budget.verify')) {
+      add('budgets', 'งบรอเปิดใช้', true, 'ตรวจมติที่ประชุมว่าตรงกับวงเงินและรายการ แล้วยืนยันเปิดใช้ หรือส่งกลับให้ Business แก้ไข',
+        [sec('', db.budgets.filter((b) => b.state === 'review'), budgetQueueTable)]);
+      add('changes', 'คำขอเพิ่มงบ', true, 'ตรวจมติแล้วยืนยันเพิ่มงบ หรือส่งกลับ',
+        [sec('', (db.changes || []).filter((c) => c.state === 'review'), changeQueueTable)]);
+    }
+    if (has('request.decide')) {
+      add('requests', 'คำขอดำเนินการใช้งบ', true, 'ตรวจคำขอแล้วอนุมัติออกใบดำเนินการใช้งบ หรือส่งกลับ — ขอเกินงบรายการต้องใส่ Note',
+        [sec('', inbox(u), (l) => requestTable(l, true))]);
+    }
+    if (has('po.record')) {
+      add('po', 'รอออก PO', true, 'ใบดำเนินการใช้งบประเภท PR/PO ที่ผู้คุมงบอนุมัติแล้ว — บันทึกเลข PR/PO และยอด PO เพื่อตัดงบ',
+        [sec('', db.requests.filter(needsPO), (l) => cutQueueTable(l, false))]);
+      add('po-done', 'บันทึก PO แล้ว', false, 'ผู้คุมงบยืนยันยอดและปิดยอดเมื่อรับของ / จ่ายครบ',
+        [sec('', db.requests.filter((r) => r.type === 'CAPEX' && r.useType === 'prpo' && hasPO(r) && r.status === 'approved'), (l) => cutQueueTable(l, false))]);
+    }
+    if (has('cut.record')) {
+      add('cuts', 'รอตัดงบ / ปิดยอด', true, 'ใบดำเนินการใช้งบที่ออกแล้วแต่ยังไม่ปิดยอด (ไม่รวม PR/PO ที่รอจัดซื้อออก PO)',
+        [sec('', db.requests.filter(needsCut), (l) => cutQueueTable(l, true))]);
+    }
+    if (has('accounting.record')) {
+      add('cbs', 'CBS รอบันทึกบัญชี', true, 'CBS: ยืนยัน GL Code และบันทึกจ่ายเงิน (เงื่อนไข CBS ยังเป็นแบบเดิม รอสรุปจากผู้ใช้งาน)',
+        [sec('', db.requests.filter(needsAccounting), (l) => requestTable(l, true))]);
+    }
+    if (has('budget.create') || has('request.create')) {
+      const mineB = db.budgets.filter((b) => b.ownerId === u.id);
+      const mineR = db.requests.filter((r) => r.requesterId === u.id);
+      const mineC = (db.changes || []).filter((c) => c.createdBy === u.id);
+      add('fix', 'ส่งกลับแก้ไข', true, 'ผู้คุมงบส่งกลับพร้อมเหตุผล — แก้ไขแล้วส่งใหม่ หรือยกเลิก', [
+        sec('งบ', mineB.filter((b) => b.state === 'returned'), myBudgetTable),
+        sec('คำขอดำเนินการใช้งบ', mineR.filter((r) => r.status === 'rejected'), (l) => requestTable(l, true)),
+        sec('คำขอเพิ่มงบ', mineC.filter((c) => c.state === 'returned'), changeQueueTable)]);
+      add('drafts', 'ร่าง', false, 'ร่างที่ยังไม่ได้ส่ง — แนบมติที่ประชุมแล้วส่งให้ผู้คุมงบ (ร่างค้างไว้ได้ไม่จำกัดเวลา)', [
+        sec('งบ', mineB.filter((b) => b.state === 'draft'), myBudgetTable),
+        sec('คำขอเพิ่มงบ', mineC.filter((c) => c.state === 'draft'), changeQueueTable)]);
+      add('waiting', 'รอผู้คุมงบ', false, 'ส่งแล้ว รอผู้คุมงบตรวจสอบ', [
+        sec('งบ', mineB.filter((b) => b.state === 'review'), myBudgetTable),
+        sec('คำขอดำเนินการใช้งบ', mineR.filter((r) => r.status === 'pending'), (l) => requestTable(l, true)),
+        sec('คำขอเพิ่มงบ', mineC.filter((c) => c.state === 'review'), changeQueueTable)]);
+      add('open', 'รอปิดยอด', false, 'ออกใบดำเนินการใช้งบแล้ว รอออก PO / จ่ายเงิน / เคลียร์ และปิดยอด',
+        [sec('', mineR.filter((r) => r.status === 'approved'), (l) => requestTable(l, true))]);
+    }
+    return tabs;
+  }
+
+  /** เส้นทางเดิม (#/approvals, #/po ฯลฯ) → แท็บในหน้างานของฉัน */
+  const OLD_TASK_ROUTES = { approvals: 'requests', po: 'po', cuts: 'cuts', payments: 'cuts', accounting: 'cbs' };
+
+  function viewTasks(params, oldRoute) {
+    const tabs = taskTabs(me());
+    if (!tabs.length) return '<div class="alert info">บทบาทนี้ไม่มีงานที่ต้องทำ</div>';
+    let key = params.get('tab') || OLD_TASK_ROUTES[oldRoute];
+    if (oldRoute === 'approvals' && !tabs.some((t) => t.key === 'requests' && t.n)) key = (tabs.find((t) => t.n) || tabs[0]).key;
+    const tab = tabs.find((t) => t.key === key) || tabs.find((t) => t.act && t.n) || tabs.find((t) => t.n) || tabs[0];
+    const nav = '<nav class="tabs task-tabs" aria-label="ประเภทงาน">' + tabs.map((t) => '<a href="#/tasks?tab=' + t.key + '"' + (t === tab ? ' class="active" aria-current="page"' : '') + '>' +
+      esc(t.label) + '<span class="tab-badge' + (t.act && t.n ? ' act' : '') + '">' + t.n + '</span></a>').join('') + '</nav>';
+    const multi = tab.sections.length > 1;
+    const body = tab.sections.map((x) => (multi ? '<h2>' + x.title + ' <span class="muted count-note">(' + x.list.length + ')</span></h2>' : '') + x.table(x.list)).join('');
+    return '<div class="page-head"><div><h1>งานของฉัน</h1><div class="page-sub">' + esc(roleLabel(me())) + '</div></div></div>' + takeFlash() + nav +
+      '<p class="muted tab-hint">' + esc(tab.hint) + '</p>' + body;
+  }
+
+  // ---------------------------------------------------------------- ประวัติการทำรายการ (ผู้ใช้ทั่วไป)
+
+  /** ลิงก์ไปยังเรื่องของรายการใน Log (ref = "งบ CODE" / เลขที่คำขอ / เลขที่เอกสาร / INC-…) */
+  function refLink(ref) {
+    if (!ref) return { href: '', mine: false };
+    const u = me();
+    if (ref.startsWith('งบ ')) {
+      const b = db.budgets.find((x) => x.code === ref.slice(3));
+      return { href: b ? '#/budget/' + b.id : '', owner: b && b.ownerId };
+    }
+    const r = db.requests.find((x) => x.no === ref || x.docNo === ref);
+    if (r) return { href: '#/request/' + r.id, owner: r.requesterId };
+    const c = (db.changes || []).find((x) => x.no === ref);
+    if (c) return { href: '#/change/' + c.id, owner: c.createdBy };
+    const codes = ref.split(' → ').map((code) => db.budgets.find((x) => x.code === code)).filter(Boolean);
+    if (codes.length) return { href: '#/budget/' + codes[0].id, owner: codes.some((b) => b.ownerId === u.id) ? u.id : codes[0].ownerId };
+    return { href: '', owner: null };
+  }
+
+  function viewHistory(params) {
+    const u = me();
+    if (!isWorker(u)) return '<div class="alert error">หน้านี้สำหรับผู้ใช้ที่ทำรายการในระบบ</div>';
+    const scope = params.get('scope') === 'mine' ? 'mine' : 'all';
+    const q = (params.get('q') || '').toLowerCase();
+    const rows = (db.log || []).map((x) => Object.assign({ link: refLink(x.ref) }, x))
+      .filter((x) => x.by === u.id || x.link.owner === u.id);
+    const list = rows.filter((x) => (scope === 'all' || x.by === u.id) && (!q || (x.action + ' ' + x.ref + ' ' + x.detail).toLowerCase().includes(q))).reverse();
+    const t = (key, label, n) => '<a href="#/history' + (key === 'mine' ? '?scope=mine' : '') + '"' + (scope === key ? ' class="active" aria-current="page"' : '') + '>' + label + '<span class="tab-badge">' + n + '</span></a>';
+    return '<div class="page-head"><div><h1>ประวัติการทำรายการ</h1><div class="page-sub">รายการที่คุณทำ และสิ่งที่ผู้อื่นทำกับงบ / เอกสารของคุณ</div></div></div>' +
+      '<nav class="tabs task-tabs" aria-label="ขอบเขต">' + t('all', 'ทั้งหมด', rows.length) + t('mine', 'ที่ฉันทำ', rows.filter((x) => x.by === u.id).length) + '</nav>' +
+      '<form id="historyFilter" class="admin-filters" data-scope="' + scope + '"><label class="input-wrap search">' + ICON_SEARCH +
+      '<input name="q" type="search" placeholder="ค้นหาการกระทำ เลขที่ รายละเอียด" value="' + esc(params.get('q') || '') + '"></label><button class="btn" type="submit">ค้นหา</button></form>' +
+      '<div class="table-wrap"><table><thead><tr><th>เวลา</th><th>ผู้ทำ</th><th>การกระทำ</th><th>เรื่อง</th><th>รายละเอียด</th></tr></thead><tbody>' +
+      (list.length ? list.slice(0, 300).map((x) => '<tr><td class="nowrap">' + fmtDate(x.at) + '</td><td class="nowrap">' + (x.by === u.id ? '<strong>คุณ</strong>' : esc(userName(x.by))) + '</td>' +
+        '<td>' + esc(x.action) + '</td><td class="nowrap">' + (x.link.href ? '<a href="' + x.link.href + '">' + esc(x.ref) + '</a>' : esc(x.ref)) + '</td><td>' + esc(x.detail) + '</td></tr>').join('')
+        : '<tr><td colspan="5" class="muted">ไม่พบรายการ</td></tr>') + '</tbody></table></div>';
+  }
+  function bindHistory() {
+    const f = document.getElementById('historyFilter');
+    if (!f) return;
+    f.addEventListener('submit', (e) => {
+      e.preventDefault();
+      go('#/history?' + (f.dataset.scope === 'mine' ? 'scope=mine&' : '') + 'q=' + encodeURIComponent(f.elements.q.value.trim()));
+    });
+  }
+
+  // ---------------------------------------------------------------- ผู้ใช้และสิทธิ์ (โหมดทดลอง: ดูอย่างเดียว)
+
+  function viewAdminDemo() {
+    const roles = Object.keys(DEMO_ROLE_PERMS);
+    const users = '<div class="table-wrap"><table><thead><tr><th>ชื่อ</th><th>ตำแหน่ง</th><th>บทบาท</th></tr></thead><tbody>' +
+      USERS.map((x) => '<tr><td>' + esc(x.name) + '</td><td>' + esc(x.title) + '</td><td>' + esc(roleLabel(x)) + '</td></tr>').join('') + '</tbody></table></div>';
+    let group = '';
+    const matrix = '<div class="table-wrap"><table class="perm-matrix"><thead><tr><th>สิทธิ์</th>' + roles.map((r) => '<th class="center">' + esc(ROLE_LABEL[r]) + '</th>').join('') + '</tr></thead><tbody>' +
+      PERMISSIONS.map((pm) => {
+        const head = pm.group !== group ? '<tr class="perm-group"><td colspan="' + (roles.length + 1) + '">' + esc(pm.group) + '</td></tr>' : '';
+        group = pm.group;
+        return head + '<tr><td>' + esc(pm.label) + (pm.hint ? '<div class="muted">' + esc(pm.hint) + '</div>' : '') + '</td>' +
+          roles.map((r) => '<td class="center">' + (DEMO_ROLE_PERMS[r].includes(pm.key) ? '<span class="pos" aria-label="มีสิทธิ์">✓</span>' : '<span class="muted" aria-label="ไม่มีสิทธิ์">–</span>') + '</td>').join('') + '</tr>';
+      }).join('') + '</tbody></table></div>';
+    return '<div class="page-head"><div><h1>ผู้ใช้และสิทธิ์</h1><div class="page-sub">โหมดทดลองดูได้อย่างเดียว — ระบบจริง Admin เพิ่มผู้ใช้ กำหนดบทบาท และแก้สิทธิ์ของแต่ละบทบาทได้</div></div></div>' +
+      '<section class="card form-section"><div class="section-head"><h2 class="section-title">ผู้ใช้</h2></div>' + users + '</section>' +
+      '<section class="card form-section"><div class="section-head"><h2 class="section-title">บทบาทและสิทธิ์</h2></div>' + matrix + '</section>';
   }
 
   function viewLog(params) {
@@ -3421,6 +3530,8 @@
   /** สมมติฐานที่ใช้ในต้นแบบรอบนี้ — รอทีมผู้ใช้ยืนยัน */
   function viewAssumptions() {
     const rows = [
+      ['ระบบ', 'Admin ทำอะไรได้', 'ดูแลข้อมูลหลัก ดู Log ทั้งระบบ และจัดการผู้ใช้/สิทธิ์ · ดูงบได้ทั้งหมดแต่ไม่ทำรายการ'],
+      ['ระบบ', 'ผู้ใช้ทั่วไปเห็นประวัติแค่ไหน', 'เห็น "ประวัติการทำรายการ" ที่ตนทำ และที่ผู้อื่นทำกับงบ/เอกสารของตน (ไม่เห็น Log ทั้งระบบ)'],
       ['ตั้งงบ', 'ใครกำหนดรหัสโครงการ/รหัสรายการย่อย', 'Business กรอกเองตอนร่าง'],
       ['ตั้งงบ', 'แบบฟอร์มขออนุมัติงบเข้าที่ประชุม', 'ใช้แบบฟอร์มชั่วคราว (รอแบบฟอร์มจริง)'],
       ['ตั้งงบ', 'หลักฐานที่ต้องแนบ', 'ไฟล์มติที่ประชุมอย่างน้อย 1 ไฟล์ + เลขที่มติ'],
@@ -3495,7 +3606,7 @@
   }
   const previousPage = () => (navStack.length > 1 ? navStack[navStack.length - 2] : null);
 
-  const LIST_PAGES = ['dashboard', 'master', 'admin', 'adjust', 'po', 'cuts', 'log', 'assumptions', 'budgets', 'my-budgets', 'requests', 'approvals', 'accounting', 'payments'];
+  const LIST_PAGES = ['dashboard', 'master', 'admin', 'adjust', 'tasks', 'history', 'po', 'cuts', 'log', 'assumptions', 'budgets', 'my-budgets', 'requests', 'approvals', 'accounting', 'payments'];
   let lastBudgetList = null; // หน้ารายการงบล่าสุด (จำแท็บ/ตัวกรอง)
   let lastRequestParent = null; // หน้าที่เปิดคำขอมาล่าสุด: รายการคำขอ / รอตรวจสอบ / งวดจ่าย / หน้ารายละเอียดงบ
 
@@ -3519,8 +3630,8 @@
       admin: 'ผู้ใช้และสิทธิ์',
       budgets: can('budget.manage') ? 'จัดการงบประมาณ' : 'งบประมาณ', 'my-budgets': 'งบของฉัน',
       requests: canViewAll() ? 'รายการดำเนินการใช้งบ' : 'ดำเนินการใช้งบของฉัน',
-      approvals: 'รอตรวจสอบ', accounting: 'รอบันทึกบัญชี', payments: 'งวดจ่ายค้าง',
-      adjust: 'โยก / ลดงบ', po: 'รอออก PO', cuts: 'รอตัดงบ / ปิดยอด', log: 'Log การทำงาน', assumptions: 'สิ่งที่รอยืนยัน'
+      tasks: 'งานของฉัน', approvals: 'งานของฉัน', accounting: 'งานของฉัน', payments: 'งานของฉัน', po: 'งานของฉัน', cuts: 'งานของฉัน',
+      history: 'ประวัติการทำรายการ', adjust: 'โยก / ลดงบ', log: 'Log การทำงาน', assumptions: 'สิ่งที่รอยืนยัน'
     };
     if (p[0] === 'change') {
       const c = changeById(p[1]);
@@ -3571,13 +3682,11 @@
     else if (parts[0] === 'change' && parts[2] === 'edit') html = viewChangeForm(null, parts[1]);
     else if (parts[0] === 'change') html = viewChangeDetail(parts[1]);
     else if (parts[0] === 'adjust') html = viewAdjust(params);
-    else if (parts[0] === 'po') html = viewPO();
-    else if (parts[0] === 'cuts') html = viewCuts();
+    else if (parts[0] === 'tasks') html = viewTasks(params);
+    else if (OLD_TASK_ROUTES[parts[0]]) html = viewTasks(params, parts[0]);
+    else if (parts[0] === 'history') html = viewHistory(params);
     else if (parts[0] === 'log') html = viewLog(params);
     else if (parts[0] === 'assumptions') html = viewAssumptions();
-    else if (parts[0] === 'approvals') html = viewApprovals();
-    else if (parts[0] === 'accounting') html = viewAccounting();
-    else if (parts[0] === 'payments') html = viewCuts();
     else if (parts[0] === 'doc') html = viewDocument(parts[1]);
     else html = notFound();
 
@@ -3601,6 +3710,7 @@
     bindChangeDetail();
     bindAdjust();
     bindLog();
+    bindHistory();
     bindDashboard();
     bindMaster();
     bindAdmin();

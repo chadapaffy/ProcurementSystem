@@ -629,3 +629,15 @@ td .files li { padding: var(--s-1) var(--s-2); }
   .choice.choice-4 { grid-template-columns: 1fr; }
   .new-item { flex-direction: column; }
 }
+
+/* ---- งานของฉัน: แท็บพร้อมตัวเลข */
+.task-tabs { overflow-x: auto; scrollbar-width: thin; margin-bottom: var(--s-3); }
+.task-tabs a { display: inline-flex; align-items: center; gap: var(--s-2); white-space: nowrap; flex: none; }
+.tab-badge {
+  min-width: 20px; height: 20px; padding: 0 6px; border-radius: 999px; line-height: 20px; text-align: center;
+  background: var(--surface-2); border: 1px solid var(--border); color: var(--muted); font-size: 11px; font-weight: 600;
+}
+.tab-badge.act { background: var(--bad); border-color: var(--bad); color: #fff; }
+.tab-hint { font-size: var(--fs-sm); margin: 0 0 var(--s-4); }
+.perm-matrix td, .perm-matrix th { vertical-align: top; }
+.perm-matrix .perm-group td { background: var(--surface-2); font-weight: 600; color: var(--heading); font-size: var(--fs-sm); }
