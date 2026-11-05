@@ -69,6 +69,8 @@
   };
 
   const COMPANIES = { PSL: 'บริษัท PSL (ตัวอย่าง)', PCC: 'บริษัท PCC (ตัวอย่าง)' };
+  /** บริษัทตัวอย่างที่ต้องแนบ Memo ผู้บริหารเซ็นตอนขอดำเนินการใช้งบ (แก้ได้ที่ข้อมูลหลัก) */
+  const COMPANY_MEMO_DEFAULT = { PCC: true };
   const TYPE_LABEL = { CAPEX: 'งบลงทุน (CAPEX)', CBS: 'งบโครงการ (CBS)' };
   const STATUS_LABEL = {
     pending: 'รอผู้คุมงบตรวจสอบ',
@@ -149,10 +151,13 @@
         else addBy(glCodes, 'code', { code: it.glCode, name: it.glName || '' });
       });
     });
+    companies.forEach((c) => { if (c.memo === undefined) c.memo = !!COMPANY_MEMO_DEFAULT[c.code]; });
     d.master = { companies, departments, groups, assetTypes, glCodes, expenseCategories };
     return d;
   }
   const companyMap = () => Object.fromEntries(db.master.companies.map((c) => [c.code, c.name]));
+  /** บริษัทของงบนี้กำหนดให้แนบ Memo ที่ผู้บริหารเซ็นตอนขอดำเนินการใช้งบหรือไม่ */
+  const memoRequired = (b) => !!(b && (db.master.companies.find((c) => c.code === b.company) || {}).memo);
   const assetTypeList = () => db.master.assetTypes.map((x) => x.name);
 
   function seed() {
@@ -299,6 +304,7 @@
         lines: [line('c8', 'งานรื้อถอนและปรับพื้นชั้น 2', 150000, { category: 'ค่าจ้างเหมา' }), line('c8', 'กระเบื้องและวัสดุปูพื้น', 40000, { category: 'ค่าวัสดุ / อุปกรณ์' })] }),
       mk({ id: 'r5', no: 'REQ-' + year + '-0005', budgetId: 'b5', itemId: 'c7', useType: 'prpo', requesterId: 'req2', createdAt: iso(day(10, 30)),
         status: 'pending', purpose: 'ขยายพื้นที่จัดเก็บสินค้า', requesterReason: 'ราคาเหล็กปรับขึ้นจากตอนตั้งงบ',
+        memo: { no: 'MEMO-PCC-015/' + year, by: 'กรรมการผู้จัดการ PCC', files: [Object.assign(sampleFile('Memo-ชั้นวางสินค้า-ลงนามแล้ว.pdf'), { slot: 'memo', by: 'req2' })] },
         lines: [line('c7', 'ชั้นวางสินค้าแบบ Heavy duty 12 ชุด', 327000)] }),
       mk({ id: 'r6', no: 'REQ-' + year + '-0006', budgetId: 'b3', type: 'CBS', itemId: 'i4', useType: 'direct', requesterId: 'req2', createdAt: iso(day(9, 10)),
         status: 'approved', approvedAt: iso(day(9, 11)), docNo: 'CBS' + yy + '-0001', purpose: 'ซื้อดินผสมสำหรับเพาะกล้า', payee: 'ร้านวัสดุเกษตร',
@@ -1624,6 +1630,8 @@
     const val = (k) => ' value="' + esc(v[k] == null ? '' : v[k]) + '"';
     const field = (label, inner, extra) => '<label class="field"' + (extra || '') + '><span>' + label + '</span>' + inner + '</label>';
     const lastReject = existing ? existing.steps.find((s) => s.status === 'rejected') : null;
+    const needMemo = memoRequired(b);
+    const mv = (existing && existing.memo) || {};
 
     const remaining = usage(b).remaining;
     const step = (n, title, extra) => '<div class="section-head"><h2 class="section-title"><span class="step">' + n + '</span>' + title + '</h2>' + (extra || '') + '</div>';
@@ -1670,7 +1678,8 @@
       '<div class="card form-tip"><h3 class="side-title">คำแนะนำ</h3><p class="muted">' +
       (perLine ? 'ใส่ได้หลายบรรทัด แต่ละบรรทัดเลือกรายการต้นทุนเองได้'
         : isProject ? 'งบรวมโครงการ: แต่ละบรรทัดเลือกหมวดค่าใช้จ่ายและพิมพ์รายละเอียด' : 'ใบดำเนินการใช้งบ 1 ใบ ใช้กับรายการย่อยเดียว ใส่ได้หลายบรรทัด') +
-          ' · ขอเกินงบรายการได้ถ้าไม่เกินงบรวมของโครงการ (ผู้คุมงบต้องใส่ Note) · ถ้าเกินงบโครงการ ผู้คุมงบจะพิจารณาโยกงบให้ หรือให้ขอเพิ่มงบ</p></div>';
+          ' · ขอเกินงบรายการได้ถ้าไม่เกินงบรวมของโครงการ (ผู้คุมงบต้องใส่ Note) · ถ้าเกินงบโครงการ ผู้คุมงบจะพิจารณาโยกงบให้ หรือให้ขอเพิ่มงบ' +
+          (needMemo ? ' · <strong>บริษัทนี้ต้องแนบ Memo ที่ผู้บริหารเซ็นแล้วก่อนส่ง</strong>' : '') + '</p></div>';
 
     return '<div class="page-head"><div><h1>' + (existing ? 'แก้ไขคำขอ ' + esc(existing.no) : 'ขอดำเนินการใช้งบ') + '</h1>' +
       '<div class="page-sub">' + badge(b.type, b.type) + ' ' + esc(b.code + ' ' + b.name) + '</div></div></div>' +
@@ -1679,6 +1688,13 @@
       '<form id="requestForm" class="req-form" data-budget="' + b.id + '" data-request="' + esc(requestId || '') + '" data-remaining="' + remaining + '">' +
       '<div class="detail-layout"><div class="detail-main form-main">' + general + linesCard +
       '<div id="planWrap">' + planFieldset(existing && existing.paymentPlan, 4) + '</div>' +
+      (needMemo ? '<section class="card form-section" id="memoSection">' + step(5, 'Memo ขออนุมัติ — ผู้บริหารเซ็น') +
+        '<p class="muted memo-hint">บริษัท ' + esc(b.company) + ' กำหนดให้แนบ Memo ที่ผู้บริหารเซ็นแล้วทุกครั้ง: กรอกข้อมูลด้านบนให้ครบ → พิมพ์ Memo → ให้ผู้บริหารเซ็น → แนบไฟล์ที่เซ็นแล้ว แล้วจึงส่งให้ผู้คุมงบ</p>' +
+        '<div class="actions memo-actions"><button type="button" class="btn" id="printMemo">พิมพ์ Memo จากข้อมูลในฟอร์ม</button></div>' +
+        '<div class="form-grid">' + field('เลขที่ Memo', '<input name="memoNo" value="' + esc(mv.no || '') + '">') +
+        field('ผู้บริหารที่เซ็น', '<input name="memoBy" placeholder="ชื่อ / ตำแหน่ง" value="' + esc(mv.by || '') + '">') +
+        '<div class="field full"><span>ไฟล์ Memo ที่เซ็นแล้ว (PDF หรือรูปภาพ)</span><div id="memoFiles">' + attachList(mv.files, { del: true, empty: 'ยังไม่ได้แนบ Memo' }) + '</div>' +
+        '<label class="btn small file-btn">+ แนบไฟล์ Memo<input type="file" id="memoFileInput" accept="application/pdf,image/png,image/jpeg" multiple hidden></label></div></div></section>' : '') +
       '</div><aside class="detail-side">' + side + '</aside></div></form>';
   }
 
@@ -1773,6 +1789,30 @@
       document.getElementById('reqFiles').addEventListener('click', (e) => {
         const del = e.target.closest('[data-att-del]');
         if (del) { files = files.filter((x) => x.id !== del.dataset.attDel); showFiles(); }
+      });
+    }
+    let memoFiles = existing && existing.memo ? (existing.memo.files || []).slice() : [];
+    const memoInput = document.getElementById('memoFileInput');
+    const showMemo = () => { document.getElementById('memoFiles').innerHTML = attachList(memoFiles, { del: true, empty: 'ยังไม่ได้แนบ Memo' }); };
+    if (memoInput) {
+      memoInput.addEventListener('change', async (e) => {
+        memoFiles = memoFiles.concat(await readFiles(e.target, 'memo'));
+        e.target.value = '';
+        showMemo();
+      });
+      document.getElementById('memoFiles').addEventListener('click', (e) => {
+        const del = e.target.closest('[data-att-del]');
+        if (del) { memoFiles = memoFiles.filter((x) => x.id !== del.dataset.attDel); showMemo(); }
+      });
+      document.getElementById('printMemo').addEventListener('click', () => {
+        const ls = readLines(form, isCapex);
+        const sum = (k) => round2(ls.reduce((x, l) => x + l[k], 0));
+        printMemo(memoHtml(b, {
+          no: existing ? existing.no : '', date: new Date().toISOString(), requesterId: me().id, useType: useType(),
+          purpose: f.purpose.value.trim(), payee: f.payee.value.trim(), lines: ls,
+          amountBeforeVat: sum('amountBeforeVat'), vat: sum('vat'), amount: sum('amount'),
+          remaining: Number(form.dataset.remaining), memoNo: f.memoNo.value.trim()
+        }));
       });
     }
     const useType = () => (form.querySelector('[name="useType"]:checked') || {}).value;
@@ -1900,6 +1940,11 @@
         if (plan.installments.some((x) => !(x.pct > 0))) errors.push('กรุณาระบุ % ของทุกงวด');
         if (sumPct !== 100) errors.push('เปอร์เซ็นต์รวมของทุกงวดต้องเท่ากับ 100% (ตอนนี้ ' + sumPct + '%)');
       }
+      if (memoInput) {
+        if (!f.memoNo.value.trim()) errors.push('กรุณาระบุเลขที่ Memo');
+        if (!f.memoBy.value.trim()) errors.push('กรุณาระบุผู้บริหารที่เซ็น Memo');
+        if (!memoFiles.length) errors.push('กรุณาแนบไฟล์ Memo ที่ผู้บริหารเซ็นแล้ว');
+      }
       if (errors.length) { showErrors(errors); return; }
 
       const now = new Date().toISOString();
@@ -1921,6 +1966,7 @@
       fields.payments = [];
       fields.cuts = [];
       fields.attachments = files;
+      if (memoInput) fields.memo = { no: f.memoNo.value.trim(), by: f.memoBy.value.trim(), files: memoFiles };
       fields.requesterReason = f.requesterReason ? f.requesterReason.value.trim() : '';
 
       let r;
@@ -2201,6 +2247,7 @@
     const actions = [];
     if (r.docNo && (r.status === 'approved' || r.status === 'closed')) actions.push('<a class="btn primary" href="#/doc/' + r.id + '">เปิดเอกสาร ' + esc(r.docNo) + '</a>');
     if (r.status === 'rejected' && isOwner) actions.push('<a class="btn primary" href="#/request/' + r.id + '/edit">แก้ไขและส่งใหม่</a>');
+    if (r.memo || memoRequired(b)) actions.push('<a class="btn" href="#/request/' + r.id + '/memo">พิมพ์ Memo</a>');
     if ((r.status === 'pending' || r.status === 'rejected') && isOwner) {
       actions.push('<button class="btn bad" id="cancelRequest" data-id="' + r.id + '">ยกเลิกคำขอ</button>');
     }
@@ -2286,6 +2333,12 @@
     if (isCapex) side += historyCard(r.events, 'บันทึกการดำเนินการ');
 
     let main = facts + '<h2>' + (isCapex ? 'รายการที่ขอใช้' : 'รายการที่ขอเบิก') + '</h2>' + linesTable(b, r, r.type === 'CBS');
+    if (r.memo) {
+      main += '<h2>Memo ผู้บริหารเซ็น</h2><section class="card"><p class="memo-meta">เลขที่ <strong>' + esc(r.memo.no) + '</strong> · เซ็นโดย <strong>' + esc(r.memo.by) + '</strong></p>' +
+        attachList(r.memo.files, { empty: 'ยังไม่ได้แนบ Memo' }) + '</section>';
+    } else if (memoRequired(b) && (r.status === 'pending' || r.status === 'rejected')) {
+      main += '<div class="alert warn">บริษัท ' + esc(b.company) + ' ต้องแนบ Memo ที่ผู้บริหารเซ็น — คำขอนี้ยังไม่มี Memo (ส่งก่อนเปิดใช้เงื่อนไขนี้)</div>';
+    }
     if ((r.attachments || []).length) main += '<h2>เอกสารประกอบ</h2><section class="card">' + attachList(r.attachments) + '</section>';
     if (r.status === 'approved' || r.status === 'closed') main += cutPanel(r);
 
@@ -2375,6 +2428,70 @@
 
   // ---------------------------------------------------------------- documents
 
+  /**
+   * Memo ขออนุมัติดำเนินการใช้งบ ให้ผู้บริหารเซ็น (ฟอร์มชั่วคราว รอแบบฟอร์มจริงของบริษัท)
+   * d = { no, date, requesterId, useType, purpose, payee, lines, amountBeforeVat, vat, amount, remaining, memoNo }
+   */
+  function memoHtml(b, d) {
+    const tr = (k, v) => '<tr><th style="width:30%">' + k + '</th><td>' + v + '</td></tr>';
+    const t = USE_TYPES[d.useType] || {};
+    const perLine = b.type === 'CBS' && b.structure !== 'project';
+    const lines = d.lines || [];
+    return '<article class="doc memo-doc"><header><div><h1>' + esc(companyMap()[b.company] || b.company) + '</h1>' +
+      '<div class="doc-sub">บันทึกข้อความ (Memo) — ขออนุมัติดำเนินการใช้งบ</div></div>' +
+      '<div class="docno">เลขที่ Memo <strong>' + esc(d.memoNo || '....................') + '</strong><br>วันที่ ' + fmtDay(d.date) +
+      '<br>คำขอเลขที่ ' + esc(d.no || '(ออกเลขเมื่อส่งคำขอ)') + '</div></header>' +
+      '<div class="section"><table><tbody>' +
+      tr('เรียน', 'ผู้บริหาร') +
+      tr('เรื่อง', 'ขออนุมัติดำเนินการใช้งบ' + (t.label ? ' — ' + esc(t.label) : '')) +
+      tr('งบที่ใช้', esc(TYPE_LABEL[b.type]) + '<br>' + esc(b.code + ' ' + b.name)) +
+      tr('ผู้ขอ', esc(userName(d.requesterId) + ' · ' + b.department)) +
+      tr('วัตถุประสงค์', esc(d.purpose || '-')) +
+      tr(d.useType === 'advance' || d.useType === 'reimburse' ? 'ผู้รับเงิน (พนักงาน)' : 'Supplier (ผู้รับเงิน)', esc(d.payee || '-')) +
+      tr('จำนวนเงินที่ขอ (รวม VAT)', '<strong>' + money(d.amount) + ' บาท</strong>') +
+      tr('งบคงเหลือของโครงการ (ก่อนขอครั้งนี้)', money(d.remaining) + ' บาท') +
+      '</tbody></table></div>' +
+      '<div class="section"><h2>รายการที่ขอใช้</h2><table><thead><tr><th style="width:2rem">#</th>' + (perLine ? '<th>รายการต้นทุน</th>' : '') +
+      '<th>รายละเอียด</th><th class="num">ก่อน VAT</th><th class="num">VAT</th><th class="num">รวม</th></tr></thead><tbody>' +
+      (lines.length ? lines.map((l, i) => {
+        const it = itemById(b, l.itemId) || {};
+        return '<tr><td>' + (i + 1) + '</td>' + (perLine ? '<td>' + esc((it.code || '') + ' ' + (it.name || '')) + '</td>' : '') +
+          '<td>' + esc((l.category ? l.category + ' · ' : '') + (l.description || '')) + '</td><td class="num">' + money(l.amountBeforeVat) + '</td>' +
+          '<td class="num">' + money(l.vat) + '</td><td class="num">' + money(l.amount) + '</td></tr>';
+      }).join('') : '<tr><td colspan="' + (perLine ? 6 : 5) + '" class="muted">ยังไม่ได้ใส่รายการ</td></tr>') +
+      '<tr><th colspan="' + (perLine ? 3 : 2) + '" class="right">รวมทั้งสิ้น</th><td class="num">' + money(d.amountBeforeVat) + '</td><td class="num">' + money(d.vat) +
+      '</td><td class="num"><strong>' + money(d.amount) + '</strong></td></tr></tbody></table></div>' +
+      '<div class="section"><h2>ความเห็น / การอนุมัติของผู้บริหาร</h2><table><tbody>' +
+      tr('ผลการพิจารณา', '☐ อนุมัติ &nbsp; ☐ อนุมัติโดยมีเงื่อนไข &nbsp; ☐ ไม่อนุมัติ') + tr('ความเห็น', '<br><br>') + '</tbody></table></div>' +
+      '<div class="signs"><div><div class="line"></div>ผู้ขอใช้งบ<br>' + esc(userName(d.requesterId)) + '</div>' +
+      '<div><div class="line"></div>ผู้บังคับบัญชา</div><div><div class="line"></div>ผู้บริหารผู้อนุมัติ<br><small>วันที่ ....................</small></div></div>' +
+      '<p class="note">เมื่อผู้บริหารเซ็นแล้ว ให้สแกน / ถ่ายรูป แนบในคำขอดำเนินการใช้งบ พร้อมเลขที่ Memo ก่อนส่งให้ผู้คุมงบตรวจสอบ</p></article>';
+  }
+  /** พิมพ์ Memo อย่างเดียว (ซ่อนส่วนอื่นของหน้า) */
+  function printMemo(html) {
+    let el = document.getElementById('memoSheet');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'memoSheet';
+      document.body.appendChild(el);
+    }
+    el.innerHTML = html;
+    document.body.classList.add('print-memo');
+    const done = () => { document.body.classList.remove('print-memo'); window.removeEventListener('afterprint', done); };
+    window.addEventListener('afterprint', done);
+    window.print();
+  }
+  /** หน้า Memo ของคำขอที่บันทึกแล้ว (#/request/:id/memo) */
+  function viewRequestMemo(id) {
+    const r = requestById(id);
+    if (!r) return notFound();
+    const b = budgetById(r.budgetId);
+    const own = r.status === 'pending' ? r.amount : 0;
+    const d = Object.assign({}, r, { date: r.createdAt, remaining: round2(usage(b).remaining + own), memoNo: (r.memo || {}).no });
+    return '<div class="actions no-print" style="margin:0 0 1rem"><button class="btn primary" onclick="window.print()">พิมพ์ / บันทึกเป็น PDF</button></div>' +
+      '<div class="alert info no-print">แบบ Memo ชั่วคราว — จะปรับตามแบบฟอร์มจริงของบริษัท</div>' + memoHtml(b, d);
+  }
+
   /** ยอด ณ วันที่ออกเอกสาร ของทั้งโครงการ (ids = null) หรือของรายการที่ระบุ: งบ / ใช้ก่อนหน้า / ครั้งนี้ / คงเหลือ */
   function balanceAt(r, b, ids) {
     const approved = ids ? round2(b.items.filter((x) => ids.includes(x.id)).reduce((s, x) => s + itemTotal(x), 0)) : budgetTotal(b);
@@ -2433,6 +2550,7 @@
       tr(r.useType === 'advance' || r.useType === 'reimburse' ? 'ผู้รับเงิน (พนักงาน)' : 'Supplier (ผู้รับเงิน)', esc(r.payee || '-')) +
       tr('PR / PO No.', poText) +
       (r.overItem > 0 ? tr('หมายเหตุ: ใช้เกินงบรายการ', money(r.overItem) + ' บาท (อยู่ในงบรวมของโครงการ)' + (r.requesterReason ? '<br>เหตุผลผู้ขอ: ' + esc(r.requesterReason) : '')) : '') +
+      (r.memo ? tr('Memo ผู้บริหาร', 'เลขที่ ' + esc(r.memo.no) + ' · เซ็นโดย ' + esc(r.memo.by)) : '') +
       (r.approverNote ? tr('Note ผู้คุมงบ', esc(r.approverNote)) : '') +
       (r.status === 'closed' && r.closed ? tr('ปิดยอด', 'ใช้จริง ' + money(r.closed.actual) + ' บาท' + (r.closed.returned > 0 ? ' · คืนเข้างบ ' + money(r.closed.returned) + ' บาท' : '') + (r.closed.over > 0 ? ' · เกินที่ขอ ' + money(r.closed.over) + ' บาท' : '')) : '') +
       (planText(r) ? tr('เงื่อนไขการจ่าย', planDetailHtml(r)) : '') +
@@ -2648,8 +2766,8 @@
 
   /** รายการข้อมูลหลัก: cols[0] เป็นรหัส/ชื่อที่ใช้อ้างอิง — รหัส (lock) แก้ไม่ได้หลังสร้าง, ชื่อที่ใช้อ้างอิง (เช่น หน่วยงาน) เปลี่ยนแล้วระบบแก้ให้ทุกงบ */
   const MASTER_SECTIONS = [
-    { key: 'companies', title: 'บริษัท', hint: 'ใช้กับงบทุกประเภท และเป็นส่วนหน้าของเลขที่ใบเบิก CAPEX (เช่น PSL26-001)', lock: true,
-      cols: [{ k: 'code', label: 'รหัสบริษัท', w: '10rem' }, { k: 'name', label: 'ชื่อบริษัท' }],
+    { key: 'companies', title: 'บริษัท', hint: 'ใช้กับงบทุกประเภท และเป็นส่วนหน้าของเลขที่ใบดำเนินการใช้งบ CAPEX (เช่น PSL26-001) · ติ๊ก "ต้องมี Memo" ถ้าบริษัทนั้นต้องให้ผู้บริหารเซ็น Memo ก่อนส่งขอดำเนินการใช้งบ', lock: true,
+      cols: [{ k: 'code', label: 'รหัสบริษัท', w: '10rem' }, { k: 'name', label: 'ชื่อบริษัท' }, { k: 'memo', label: 'ขอใช้งบต้องมี Memo ผู้บริหารเซ็น', type: 'check', w: '13rem' }],
       inUse: (it) => db.budgets.some((b) => b.company === it.code) },
     { key: 'departments', title: 'หน่วยงาน', hint: 'ตัวเลือกหน่วยงานของงบ และตัวกรองในหน้ารายการงบ', lock: false,
       cols: [{ k: 'name', label: 'ชื่อหน่วยงาน' }],
@@ -2669,9 +2787,10 @@
   ];
 
   function masterRow(sec, it, isNew) {
-    return '<tr data-orig="' + (isNew ? '' : esc(it[sec.cols[0].k])) + '">' + sec.cols.map((c, i) =>
-      '<td' + (c.w ? ' style="width:' + c.w + '"' : '') + '><input data-k="' + c.k + '" value="' + esc(it[c.k] || '') + '" aria-label="' + esc(c.label) + '"' +
-      (sec.lock && i === 0 && !isNew ? ' readonly class="locked"' : '') + '></td>').join('') +
+    return '<tr data-orig="' + (isNew ? '' : esc(it[sec.cols[0].k])) + '">' + sec.cols.map((c, i) => (c.type === 'check'
+      ? '<td class="center"' + (c.w ? ' style="width:' + c.w + '"' : '') + '><input type="checkbox" data-k="' + c.k + '"' + (it[c.k] ? ' checked' : '') + ' aria-label="' + esc(c.label) + '"></td>'
+      : '<td' + (c.w ? ' style="width:' + c.w + '"' : '') + '><input data-k="' + c.k + '" value="' + esc(it[c.k] || '') + '" aria-label="' + esc(c.label) + '"' +
+      (sec.lock && i === 0 && !isNew ? ' readonly class="locked"' : '') + '></td>')).join('') +
       '<td style="width:3rem"><button type="button" class="btn small bad" data-m-remove title="ลบ">×</button></td></tr>';
   }
 
@@ -2701,7 +2820,7 @@
       form.addEventListener('click', (e) => {
         if (e.target.matches('[data-m-add]')) {
           tbody.insertAdjacentHTML('beforeend', form.querySelector('template').innerHTML);
-          tbody.lastElementChild.querySelector('input').focus();
+          tbody.lastElementChild.querySelector('input:not([type="checkbox"])').focus();
         } else if (e.target.matches('[data-m-remove]')) {
           const tr = e.target.closest('tr');
           const orig = tr.dataset.orig;
@@ -2715,7 +2834,10 @@
         const keyCol = sec.cols[0].k;
         const rows = Array.from(tbody.rows).map((tr) => {
           const it = { orig: tr.dataset.orig };
-          sec.cols.forEach((c) => { it[c.k] = tr.querySelector('[data-k="' + c.k + '"]').value.trim(); });
+          sec.cols.forEach((c) => {
+            const el = tr.querySelector('[data-k="' + c.k + '"]');
+            it[c.k] = el.type === 'checkbox' ? el.checked : el.value.trim();
+          });
           return it;
         }).filter((it) => it[keyCol] || it.orig);
         const errors = [];
@@ -3438,6 +3560,8 @@
       ['ใช้งบ', 'คืนส่วนต่างเมื่อไร', 'เมื่อปิดยอด (Advance/สำรองจ่ายปิดอัตโนมัติเมื่อบันทึกใบเสร็จ)'],
       ['ใช้งบ', 'ผู้ขอยกเลิกใบ CAPEX ที่ออกแล้วได้ไหม', 'ไม่ได้ (ยกเลิกได้เฉพาะตอนรอตรวจ/ถูกส่งกลับ)'],
       ['ใช้งบ', 'จ่ายหลายงวด', 'ใช้ได้กับ PR/PO และจ่ายตรง — บันทึกจ่ายหลายครั้งแล้วปิดยอด'],
+      ['ใช้งบ', 'Memo ผู้บริหารเซ็นตอนขอดำเนินการใช้งบ', 'ตั้งเป็นรายบริษัทที่ข้อมูลหลัก (ตัวอย่าง: PCC ต้องใช้, PSL ไม่ต้อง) · ต้องแนบไฟล์ Memo ที่เซ็นแล้ว + เลขที่ + ชื่อผู้บริหาร ก่อนส่ง · ใช้กับทุกประเภทและทุกยอดเงิน (ยังไม่มีเกณฑ์ยอดขั้นต่ำ) · ผู้บริหารเซ็นนอกระบบ'],
+      ['ใช้งบ', 'แบบฟอร์ม Memo', 'ใช้แบบชั่วคราว พิมพ์จากข้อมูลในฟอร์มได้ทันที (รอแบบฟอร์มจริงของบริษัท)'],
       ['ใช้งบ', 'หมวดค่าใช้จ่าย', 'ใช้กับงบรวมโครงการ · แก้รายการหมวดได้ที่ข้อมูลหลัก'],
       ['CBS', 'ขั้นตอนการใช้งบ CBS', 'เหมือน CAPEX ทุกขั้น: ขอดำเนินการใช้งบ (4 ประเภท) → ผู้คุมงบตรวจสอบ → ตัดงบตามประเภท → ปิดยอดคืนส่วนต่าง · ขอเกินงบรายการต้องมี Note'],
       ['CBS', 'การอนุมัติงบ CBS (ตั้งงบ / เพิ่มงบ)', 'ไม่เข้าบอร์ด — ให้ผู้บริหารอนุมัติ: แนบเอกสารอนุมัติ + เลขที่เอกสาร + ชื่อผู้บริหารที่อนุมัติ แล้วผู้คุมงบตรวจสอบและยืนยัน (ต้นแบบนี้ผู้บริหารอนุมัตินอกระบบ แล้วแนบหลักฐาน)'],
@@ -3542,7 +3666,7 @@
     if (parts[0] === 'budget' && (parts[2] === 'edit' || parts[2] === 'form')) return '#/budget/' + parts[1];
     if (parts[0] === 'budget') return budgetList;
     if (parts[0] === 'request' && parts[1] === 'new') return '#/budget/' + parts[2];
-    if (parts[0] === 'request' && parts[2] === 'edit') return '#/request/' + parts[1];
+    if (parts[0] === 'request' && (parts[2] === 'edit' || parts[2] === 'memo')) return '#/request/' + parts[1];
     if (parts[0] === 'request') return lastRequestParent || '#/requests';
     if (parts[0] === 'doc') return '#/request/' + parts[1];
     if (parts[0] === 'adjust') {
@@ -3576,6 +3700,7 @@
     else if (parts[0] === 'budget') html = viewBudgetDetail(parts[1]);
     else if (parts[0] === 'request' && parts[1] === 'new') html = viewRequestForm(parts[2], null, params);
     else if (parts[0] === 'request' && parts[2] === 'edit') html = viewRequestForm(null, parts[1], params);
+    else if (parts[0] === 'request' && parts[2] === 'memo') html = viewRequestMemo(parts[1]);
     else if (parts[0] === 'request') html = viewRequestDetail(parts[1]);
     else if (parts[0] === 'requests') html = viewRequests();
     else if (parts[0] === 'change' && parts[1] === 'new') html = viewChangeForm(parts[2], null);
