@@ -69,8 +69,12 @@
   };
 
   const COMPANIES = { PSL: 'บริษัท PSL (ตัวอย่าง)', PCC: 'บริษัท PCC (ตัวอย่าง)' };
-  /** บริษัทตัวอย่างที่ต้องแนบ Memo ผู้บริหารเซ็นตอนขอดำเนินการใช้งบ (แก้ได้ที่ข้อมูลหลัก) */
-  const COMPANY_MEMO_DEFAULT = { PCC: true };
+  /**
+   * เกณฑ์ Memo ผู้บริหารเซ็นตอนขอดำเนินการใช้งบ (ตั้งรายบริษัทที่ข้อมูลหลัก)
+   * '' = ไม่ต้องใช้ · 'project' = เฉพาะงบที่ไม่มี Item (งบรวมโครงการ) · 'all' = ทุกงบ
+   */
+  const MEMO_MODES = [['', 'ไม่ต้องใช้'], ['project', 'เฉพาะงบที่ไม่มี Item'], ['all', 'ทุกงบ']];
+  const MEMO_DEFAULT = 'project';
   const TYPE_LABEL = { CAPEX: 'งบลงทุน (CAPEX)', CBS: 'งบโครงการ (CBS)' };
   const STATUS_LABEL = {
     pending: 'รอผู้คุมงบตรวจสอบ',
@@ -151,13 +155,16 @@
         else addBy(glCodes, 'code', { code: it.glCode, name: it.glName || '' });
       });
     });
-    companies.forEach((c) => { if (c.memo === undefined) c.memo = !!COMPANY_MEMO_DEFAULT[c.code]; });
+    // ค่าเดิมแบบติ๊ก (true/false) หรือยังไม่ตั้ง → ใช้เกณฑ์ตั้งต้น "เฉพาะงบที่ไม่มี Item"
+    companies.forEach((c) => { if (!MEMO_MODES.some(([v]) => v === c.memo)) c.memo = MEMO_DEFAULT; });
     d.master = { companies, departments, groups, assetTypes, glCodes, expenseCategories };
     return d;
   }
   const companyMap = () => Object.fromEntries(db.master.companies.map((c) => [c.code, c.name]));
-  /** บริษัทของงบนี้กำหนดให้แนบ Memo ที่ผู้บริหารเซ็นตอนขอดำเนินการใช้งบหรือไม่ */
-  const memoRequired = (b) => !!(b && (db.master.companies.find((c) => c.code === b.company) || {}).memo);
+  const memoMode = (b) => (b ? (db.master.companies.find((c) => c.code === b.company) || {}).memo || '' : '');
+  /** งบนี้ต้องแนบ Memo ที่ผู้บริหารเซ็นตอนขอดำเนินการใช้งบหรือไม่ (ตามเกณฑ์ของบริษัท) */
+  const memoRequired = (b) => memoMode(b) === 'all' || (memoMode(b) === 'project' && b.structure === 'project');
+  const memoReason = (b) => (memoMode(b) === 'all' ? 'บริษัท ' + b.company + ' กำหนดให้ทุกงบ' : 'งบรวมโครงการ (ไม่มี Item) ของบริษัท ' + b.company) + ' ต้องแนบ Memo ที่ผู้บริหารเซ็น';
   const assetTypeList = () => db.master.assetTypes.map((x) => x.name);
 
   function seed() {
@@ -301,10 +308,10 @@
         closed: { at: iso(day(8, 12)), by: 'fin1', actual: 19260, returned: 2140, note: 'ซื้อได้ถูกกว่าที่ขอ' } }),
       mk({ id: 'r4', no: 'REQ-' + year + '-0004', budgetId: 'b6', itemId: 'c8', useType: 'direct', requesterId: 'req1', createdAt: iso(day(10, 28)),
         status: 'pending', purpose: 'งานปรับปรุงพื้นที่ชั้น 2', payee: 'หจก. ก่อสร้างตัวอย่าง',
+        memo: { no: 'MEMO-PSL-031/' + year, by: 'กรรมการผู้จัดการ', files: [Object.assign(sampleFile('Memo-ปรับปรุงชั้น2-ลงนามแล้ว.pdf'), { slot: 'memo', by: 'req1' })] },
         lines: [line('c8', 'งานรื้อถอนและปรับพื้นชั้น 2', 150000, { category: 'ค่าจ้างเหมา' }), line('c8', 'กระเบื้องและวัสดุปูพื้น', 40000, { category: 'ค่าวัสดุ / อุปกรณ์' })] }),
       mk({ id: 'r5', no: 'REQ-' + year + '-0005', budgetId: 'b5', itemId: 'c7', useType: 'prpo', requesterId: 'req2', createdAt: iso(day(10, 30)),
         status: 'pending', purpose: 'ขยายพื้นที่จัดเก็บสินค้า', requesterReason: 'ราคาเหล็กปรับขึ้นจากตอนตั้งงบ',
-        memo: { no: 'MEMO-PCC-015/' + year, by: 'กรรมการผู้จัดการ PCC', files: [Object.assign(sampleFile('Memo-ชั้นวางสินค้า-ลงนามแล้ว.pdf'), { slot: 'memo', by: 'req2' })] },
         lines: [line('c7', 'ชั้นวางสินค้าแบบ Heavy duty 12 ชุด', 327000)] }),
       mk({ id: 'r6', no: 'REQ-' + year + '-0006', budgetId: 'b3', type: 'CBS', itemId: 'i4', useType: 'direct', requesterId: 'req2', createdAt: iso(day(9, 10)),
         status: 'approved', approvedAt: iso(day(9, 11)), docNo: 'CBS' + yy + '-0001', purpose: 'ซื้อดินผสมสำหรับเพาะกล้า', payee: 'ร้านวัสดุเกษตร',
@@ -1679,7 +1686,7 @@
       (perLine ? 'ใส่ได้หลายบรรทัด แต่ละบรรทัดเลือกรายการต้นทุนเองได้'
         : isProject ? 'งบรวมโครงการ: แต่ละบรรทัดเลือกหมวดค่าใช้จ่ายและพิมพ์รายละเอียด' : 'ใบดำเนินการใช้งบ 1 ใบ ใช้กับรายการย่อยเดียว ใส่ได้หลายบรรทัด') +
           ' · ขอเกินงบรายการได้ถ้าไม่เกินงบรวมของโครงการ (ผู้คุมงบต้องใส่ Note) · ถ้าเกินงบโครงการ ผู้คุมงบจะพิจารณาโยกงบให้ หรือให้ขอเพิ่มงบ' +
-          (needMemo ? ' · <strong>บริษัทนี้ต้องแนบ Memo ที่ผู้บริหารเซ็นแล้วก่อนส่ง</strong>' : '') + '</p></div>';
+          (needMemo ? ' · <strong>' + esc(memoReason(b)) + 'ก่อนส่ง</strong>' : '') + '</p></div>';
 
     return '<div class="page-head"><div><h1>' + (existing ? 'แก้ไขคำขอ ' + esc(existing.no) : 'ขอดำเนินการใช้งบ') + '</h1>' +
       '<div class="page-sub">' + badge(b.type, b.type) + ' ' + esc(b.code + ' ' + b.name) + '</div></div></div>' +
@@ -1689,7 +1696,7 @@
       '<div class="detail-layout"><div class="detail-main form-main">' + general + linesCard +
       '<div id="planWrap">' + planFieldset(existing && existing.paymentPlan, 4) + '</div>' +
       (needMemo ? '<section class="card form-section" id="memoSection">' + step(5, 'Memo ขออนุมัติ — ผู้บริหารเซ็น') +
-        '<p class="muted memo-hint">บริษัท ' + esc(b.company) + ' กำหนดให้แนบ Memo ที่ผู้บริหารเซ็นแล้วทุกครั้ง: กรอกข้อมูลด้านบนให้ครบ → พิมพ์ Memo → ให้ผู้บริหารเซ็น → แนบไฟล์ที่เซ็นแล้ว แล้วจึงส่งให้ผู้คุมงบ</p>' +
+        '<p class="muted memo-hint">' + esc(memoReason(b)) + ': กรอกข้อมูลด้านบนให้ครบ → พิมพ์ Memo → ให้ผู้บริหารเซ็น → แนบไฟล์ที่เซ็นแล้ว แล้วจึงส่งให้ผู้คุมงบ</p>' +
         '<div class="actions memo-actions"><button type="button" class="btn" id="printMemo">พิมพ์ Memo จากข้อมูลในฟอร์ม</button></div>' +
         '<div class="form-grid">' + field('เลขที่ Memo', '<input name="memoNo" value="' + esc(mv.no || '') + '">') +
         field('ผู้บริหารที่เซ็น', '<input name="memoBy" placeholder="ชื่อ / ตำแหน่ง" value="' + esc(mv.by || '') + '">') +
@@ -2337,7 +2344,7 @@
       main += '<h2>Memo ผู้บริหารเซ็น</h2><section class="card"><p class="memo-meta">เลขที่ <strong>' + esc(r.memo.no) + '</strong> · เซ็นโดย <strong>' + esc(r.memo.by) + '</strong></p>' +
         attachList(r.memo.files, { empty: 'ยังไม่ได้แนบ Memo' }) + '</section>';
     } else if (memoRequired(b) && (r.status === 'pending' || r.status === 'rejected')) {
-      main += '<div class="alert warn">บริษัท ' + esc(b.company) + ' ต้องแนบ Memo ที่ผู้บริหารเซ็น — คำขอนี้ยังไม่มี Memo (ส่งก่อนเปิดใช้เงื่อนไขนี้)</div>';
+      main += '<div class="alert warn">' + esc(memoReason(b)) + ' — คำขอนี้ยังไม่มี Memo (ส่งก่อนเปิดใช้เงื่อนไขนี้)</div>';
     }
     if ((r.attachments || []).length) main += '<h2>เอกสารประกอบ</h2><section class="card">' + attachList(r.attachments) + '</section>';
     if (r.status === 'approved' || r.status === 'closed') main += cutPanel(r);
@@ -2766,8 +2773,8 @@
 
   /** รายการข้อมูลหลัก: cols[0] เป็นรหัส/ชื่อที่ใช้อ้างอิง — รหัส (lock) แก้ไม่ได้หลังสร้าง, ชื่อที่ใช้อ้างอิง (เช่น หน่วยงาน) เปลี่ยนแล้วระบบแก้ให้ทุกงบ */
   const MASTER_SECTIONS = [
-    { key: 'companies', title: 'บริษัท', hint: 'ใช้กับงบทุกประเภท และเป็นส่วนหน้าของเลขที่ใบดำเนินการใช้งบ CAPEX (เช่น PSL26-001) · ติ๊ก "ต้องมี Memo" ถ้าบริษัทนั้นต้องให้ผู้บริหารเซ็น Memo ก่อนส่งขอดำเนินการใช้งบ', lock: true,
-      cols: [{ k: 'code', label: 'รหัสบริษัท', w: '10rem' }, { k: 'name', label: 'ชื่อบริษัท' }, { k: 'memo', label: 'ขอใช้งบต้องมี Memo ผู้บริหารเซ็น', type: 'check', w: '13rem' }],
+    { key: 'companies', title: 'บริษัท', hint: 'ใช้กับงบทุกประเภท และเป็นส่วนหน้าของเลขที่ใบดำเนินการใช้งบ CAPEX (เช่น PSL26-001) · เกณฑ์ Memo = เมื่อไรต้องให้ผู้บริหารเซ็น Memo ก่อนส่งขอดำเนินการใช้งบ (ตั้งต้น: เฉพาะงบที่ไม่มี Item)', lock: true,
+      cols: [{ k: 'code', label: 'รหัสบริษัท', w: '10rem' }, { k: 'name', label: 'ชื่อบริษัท' }, { k: 'memo', label: 'เกณฑ์ Memo ผู้บริหารเซ็น', type: 'select', options: MEMO_MODES, w: '15rem' }],
       inUse: (it) => db.budgets.some((b) => b.company === it.code) },
     { key: 'departments', title: 'หน่วยงาน', hint: 'ตัวเลือกหน่วยงานของงบ และตัวกรองในหน้ารายการงบ', lock: false,
       cols: [{ k: 'name', label: 'ชื่อหน่วยงาน' }],
@@ -2787,8 +2794,9 @@
   ];
 
   function masterRow(sec, it, isNew) {
-    return '<tr data-orig="' + (isNew ? '' : esc(it[sec.cols[0].k])) + '">' + sec.cols.map((c, i) => (c.type === 'check'
-      ? '<td class="center"' + (c.w ? ' style="width:' + c.w + '"' : '') + '><input type="checkbox" data-k="' + c.k + '"' + (it[c.k] ? ' checked' : '') + ' aria-label="' + esc(c.label) + '"></td>'
+    return '<tr data-orig="' + (isNew ? '' : esc(it[sec.cols[0].k])) + '">' + sec.cols.map((c, i) => (c.type === 'select'
+      ? '<td' + (c.w ? ' style="width:' + c.w + '"' : '') + '><div class="select-wrap"><select data-k="' + c.k + '" aria-label="' + esc(c.label) + '">' +
+        c.options.map(([v, t]) => opt(v, t, isNew ? MEMO_DEFAULT : it[c.k] || '')).join('') + '</select></div></td>'
       : '<td' + (c.w ? ' style="width:' + c.w + '"' : '') + '><input data-k="' + c.k + '" value="' + esc(it[c.k] || '') + '" aria-label="' + esc(c.label) + '"' +
       (sec.lock && i === 0 && !isNew ? ' readonly class="locked"' : '') + '></td>')).join('') +
       '<td style="width:3rem"><button type="button" class="btn small bad" data-m-remove title="ลบ">×</button></td></tr>';
@@ -2820,7 +2828,7 @@
       form.addEventListener('click', (e) => {
         if (e.target.matches('[data-m-add]')) {
           tbody.insertAdjacentHTML('beforeend', form.querySelector('template').innerHTML);
-          tbody.lastElementChild.querySelector('input:not([type="checkbox"])').focus();
+          tbody.lastElementChild.querySelector('input').focus();
         } else if (e.target.matches('[data-m-remove]')) {
           const tr = e.target.closest('tr');
           const orig = tr.dataset.orig;
@@ -2836,7 +2844,7 @@
           const it = { orig: tr.dataset.orig };
           sec.cols.forEach((c) => {
             const el = tr.querySelector('[data-k="' + c.k + '"]');
-            it[c.k] = el.type === 'checkbox' ? el.checked : el.value.trim();
+            it[c.k] = el.tagName === 'SELECT' ? el.value : el.value.trim();
           });
           return it;
         }).filter((it) => it[keyCol] || it.orig);
@@ -3560,7 +3568,7 @@
       ['ใช้งบ', 'คืนส่วนต่างเมื่อไร', 'เมื่อปิดยอด (Advance/สำรองจ่ายปิดอัตโนมัติเมื่อบันทึกใบเสร็จ)'],
       ['ใช้งบ', 'ผู้ขอยกเลิกใบ CAPEX ที่ออกแล้วได้ไหม', 'ไม่ได้ (ยกเลิกได้เฉพาะตอนรอตรวจ/ถูกส่งกลับ)'],
       ['ใช้งบ', 'จ่ายหลายงวด', 'ใช้ได้กับ PR/PO และจ่ายตรง — บันทึกจ่ายหลายครั้งแล้วปิดยอด'],
-      ['ใช้งบ', 'Memo ผู้บริหารเซ็นตอนขอดำเนินการใช้งบ', 'ตั้งเป็นรายบริษัทที่ข้อมูลหลัก (ตัวอย่าง: PCC ต้องใช้, PSL ไม่ต้อง) · ต้องแนบไฟล์ Memo ที่เซ็นแล้ว + เลขที่ + ชื่อผู้บริหาร ก่อนส่ง · ใช้กับทุกประเภทและทุกยอดเงิน (ยังไม่มีเกณฑ์ยอดขั้นต่ำ) · ผู้บริหารเซ็นนอกระบบ'],
+      ['ใช้งบ', 'Memo ผู้บริหารเซ็นตอนขอดำเนินการใช้งบ', 'ใช้เฉพาะงบที่ไม่มี Item (งบรวมโครงการ) ทั้ง CAPEX และ CBS · ตั้งเกณฑ์รายบริษัทได้ที่ข้อมูลหลัก (ไม่ต้องใช้ / เฉพาะงบที่ไม่มี Item / ทุกงบ) · ต้องแนบไฟล์ Memo ที่เซ็นแล้ว + เลขที่ + ชื่อผู้บริหาร ก่อนส่ง · ทุกประเภทและทุกยอดเงิน · ผู้บริหารเซ็นนอกระบบ'],
       ['ใช้งบ', 'แบบฟอร์ม Memo', 'ใช้แบบชั่วคราว พิมพ์จากข้อมูลในฟอร์มได้ทันที (รอแบบฟอร์มจริงของบริษัท)'],
       ['ใช้งบ', 'หมวดค่าใช้จ่าย', 'ใช้กับงบรวมโครงการ · แก้รายการหมวดได้ที่ข้อมูลหลัก'],
       ['CBS', 'ขั้นตอนการใช้งบ CBS', 'เหมือน CAPEX ทุกขั้น: ขอดำเนินการใช้งบ (4 ประเภท) → ผู้คุมงบตรวจสอบ → ตัดงบตามประเภท → ปิดยอดคืนส่วนต่าง · ขอเกินงบรายการต้องมี Note'],
