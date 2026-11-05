@@ -651,3 +651,6 @@ td .files li { padding: var(--s-1) var(--s-2); }
 .memo-steps { margin: 0 0 var(--s-4); padding-left: 1.4rem; font-size: var(--fs-sm); line-height: 1.7; color: var(--text-2); }
 .memo-steps li.done { color: var(--ok); }
 .memo-steps li.current { color: var(--heading); font-weight: 600; }
+.memo-btn { border-color: #f6d4a8; color: var(--warn); background: #fffbf5; }
+.memo-btn:hover { background: #fff3e2; }
+.memo-side-note { font-size: var(--fs-xs); line-height: 1.6; margin: var(--s-3) 0 0; }
