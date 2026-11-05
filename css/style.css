@@ -654,3 +654,11 @@ td .files li { padding: var(--s-1) var(--s-2); }
 .memo-btn { border-color: #f6d4a8; color: var(--warn); background: #fffbf5; }
 .memo-btn:hover { background: #fff3e2; }
 .memo-side-note { font-size: var(--fs-xs); line-height: 1.6; margin: var(--s-3) 0 0; }
+
+/* ---- ช่องที่ต้องกรอก (*) และคำอธิบายปุ่มที่ยังกดไม่ได้ */
+.field.req > span:first-child::after,
+.field:has(> input[required], > textarea[required], > .select-wrap > select[required]) > span:first-child::after,
+th.req::after, .section-title.req::after, legend.req::after { content: " *"; color: var(--bad); font-weight: 700; }
+.guard-hint { margin: var(--s-2) 0 0; font-size: var(--fs-xs); line-height: 1.6; color: var(--warn); }
+.guard-hint[hidden] { display: none; }
+.btn:disabled, .btn[disabled] { opacity: .5; cursor: not-allowed; }
