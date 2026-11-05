@@ -752,10 +752,9 @@
     links.push(['#/dashboard', 'ภาพรวม', ['#/dashboard']]);
     const tabs = taskTabs(u);
     if (tabs.length) links.push(['#/tasks', 'งานของฉัน' + count(tabs.reduce((n, t) => n + (t.act ? t.n : 0), 0)), ['#/tasks', '#/approvals', '#/po', '#/cuts', '#/accounting', '#/payments']]);
-    if (canViewAll()) links.push(['#/budgets', 'งบประมาณ', ['#/budgets', '#/budget/', '#/change/']]);
-    if (can('request.create') || can('budget.create')) links.push(['#/my-budgets', 'งบของฉัน', ['#/my-budgets', '#/budget/', '#/request/new', '#/change/']]);
+    if (canViewAll()) links.push(['#/budgets', 'งบประมาณ', ['#/budgets', '#/budget/', '#/change/', '#/adjust']]);
+    if (can('request.create') || can('budget.create')) links.push(['#/my-budgets', 'งบของฉัน', ['#/my-budgets', '#/budget/', '#/request/new', '#/change/', '#/adjust']]);
     if (canViewAll() || can('request.create')) links.push(['#/requests', canViewAll() ? 'รายการดำเนินการใช้งบ' : 'ดำเนินการใช้งบของฉัน', ['#/requests', '#/request/', '#/doc/']]);
-    if (can('budget.adjust')) links.push(['#/adjust', 'โยก / ลดงบ', ['#/adjust']]);
     if (isWorker(u)) links.push(['#/history', 'ประวัติการทำรายการ', ['#/history']]);
     if (can('master.manage')) links.push(['#/master', 'ข้อมูลหลัก', ['#/master']]);
     if (can('log.view')) links.push(['#/log', 'Log การทำงาน', ['#/log']]);
@@ -844,6 +843,7 @@
         (own && (state === 'draft' || state === 'returned') ? '<a class="btn" href="#/budget/' + b.id + '/edit">แก้ไขร่าง</a>' : '') +
         (state === 'review' && can('budget.verify') ? '<a class="btn primary" href="#/budget/' + b.id + '">ตรวจสอบ</a>' : '') +
         (active && own && can('request.create') ? '<a class="btn primary" href="#/request/new/' + b.id + '">ขอดำเนินการใช้งบ</a>' : '') +
+        (active && can('budget.adjust') ? '<a class="btn" href="#/adjust?budget=' + b.id + '">โยก / ลดงบ</a>' : '') +
         '</div></article>';
     }).join('') + '</div>' +
       '<div class="card empty" id="noMatch" hidden>ไม่พบงบที่ตรงกับเงื่อนไขที่เลือก</div>';
@@ -3245,8 +3245,10 @@
     if (!can('budget.adjust')) return '<div class="alert error">ไม่มีสิทธิ์โยก/ลดงบ</div>';
     const to = params.get('to') ? params.get('to') + '|' + (params.get('item') || '') : '';
     const from = params.get('budget') ? params.get('budget') + '|' + ((leaves(budgetById(params.get('budget')) || { items: [] })[0] || {}).id || '') : '';
-    const recent = (db.log || []).filter((x) => /^(โยกงบ|ลดงบ)/.test(x.action)).slice(-10).reverse();
-    return '<div class="page-head"><div><h1>โยก / ลดงบ</h1><div class="page-sub">เครื่องมือของผู้คุมงบ — โยกข้ามรายการหรือข้ามโครงการได้ตามดุลพินิจ ทุกครั้งต้องระบุเหตุผลและเก็บเป็นประวัติการปรับงบ</div></div></div>' + takeFlash() +
+    const ctx = budgetById(params.get('budget') || params.get('to'));
+    const recent = (db.log || []).filter((x) => /^(โยกงบ|ลดงบ)/.test(x.action) && (!ctx || x.ref.split(' → ').includes(ctx.code))).slice(-10).reverse();
+    return '<div class="page-head"><div><h1>โยก / ลดงบ' + (ctx ? ' · ' + esc(ctx.code) : '') + '</h1><div class="page-sub">' + (ctx ? esc(ctx.name) + ' — ' : '') +
+      'โยกข้ามรายการหรือข้ามโครงการได้ตามดุลพินิจของผู้คุมงบ ทุกครั้งต้องระบุเหตุผลและเก็บเป็นประวัติการปรับงบ</div></div></div>' + takeFlash() +
       '<div id="formError"></div><div class="form-main">' +
       '<section class="card form-section"><div class="section-head"><h2 class="section-title"><span class="step">1</span>โยกงบ</h2></div>' +
       '<form id="moveForm" class="form-grid"><label class="field"><span>โยกจาก</span><div class="select-wrap"><select name="from" required><option value="">— เลือก —</option>' + itemSelectOptions(from) + '</select></div></label>' +
@@ -3260,7 +3262,7 @@
       '<label class="field"><span>ลดลง (รวม VAT)</span><input name="amount" type="number" min="0.01" step="0.01" class="right" required></label>' +
       '<label class="field full"><span>เหตุผล</span><input name="reason" required></label>' +
       '<div class="field full"><button class="btn bad" type="submit">ลดงบ</button></div></form></section>' +
-      '<section class="card form-section"><div class="section-head"><h2 class="section-title">การโยก / ลดงบล่าสุด</h2></div>' +
+      '<section class="card form-section"><div class="section-head"><h2 class="section-title">การโยก / ลดงบล่าสุด' + (ctx ? ' ของงบนี้' : '') + '</h2></div>' +
       (recent.length ? '<div class="table-wrap"><table><thead><tr><th>เมื่อ</th><th>รายการ</th><th>รายละเอียด</th><th>โดย</th></tr></thead><tbody>' +
         recent.map((x) => '<tr><td class="nowrap">' + fmtDate(x.at) + '</td><td>' + esc(x.action) + '</td><td>' + esc(x.detail) + '</td><td class="nowrap">' + esc(userName(x.by)) + '</td></tr>').join('') +
         '</tbody></table></div>' : '<p class="muted">ยังไม่มี</p>') + '</section></div>';
@@ -3296,7 +3298,7 @@
       logAction('โยกงบ', src.b.code + ' → ' + dst.b.code, detail);
       save();
       setFlash('success', 'โยกงบ ' + detail);
-      go(location.hash.indexOf('to=') >= 0 ? '#/budget/' + dst.b.id : '#/adjust');
+      go('#/budget/' + (location.hash.indexOf('to=') >= 0 ? dst.b.id : src.b.id));
     });
     const cb = document.getElementById('cutBudgetForm');
     cb.addEventListener('submit', (e) => {
@@ -3318,7 +3320,7 @@
       logAction('ลดงบ', t.b.code, detail);
       save();
       setFlash('success', 'ลดงบ ' + detail);
-      go('#/adjust');
+      go('#/budget/' + t.b.id);
     });
   }
 
@@ -3577,7 +3579,7 @@
   function isFormHash(hash) {
     const p = navPath(hash).slice(2).split('/');
     return (p[0] === 'budget' && (p[1] === 'new' || p[2] === 'edit')) || (p[0] === 'request' && (p[1] === 'new' || p[2] === 'edit')) ||
-      (p[0] === 'change' && (p[1] === 'new' || p[2] === 'edit'));
+      (p[0] === 'change' && (p[1] === 'new' || p[2] === 'edit')) || p[0] === 'adjust';
   }
   /** หน้าที่อ้างถึงข้อมูลที่ถูกลบไปแล้วไม่ใช้เป็นปลายทางย้อนกลับ */
   function navValid(hash) {
@@ -3650,6 +3652,11 @@
     if (parts[0] === 'request' && parts[2] === 'edit') return '#/request/' + parts[1];
     if (parts[0] === 'request') return lastRequestParent || '#/requests';
     if (parts[0] === 'doc') return '#/request/' + parts[1];
+    if (parts[0] === 'adjust') {
+      const q = new URLSearchParams(location.hash.split('?')[1] || '');
+      const bid = q.get('budget') || q.get('to');
+      return bid && budgetById(bid) ? '#/budget/' + bid : budgetList;
+    }
     if (parts[0] === 'change' && parts[1] === 'new') return '#/budget/' + parts[2];
     if (parts[0] === 'change' && parts[2] === 'edit') return '#/change/' + parts[1];
     if (parts[0] === 'change') { const c = changeById(parts[1]); return c ? '#/budget/' + c.budgetId : budgetList; }
