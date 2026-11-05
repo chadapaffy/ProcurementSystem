@@ -16,53 +16,81 @@
 (function () {
   'use strict';
 
-  const DB_KEY = 'procurement.budget.v4';
+  const DB_KEY = 'procurement.v5';
   const VAT_RATE = 0.07;
 
   /** โหมดเชื่อม Supabase (ล็อกอินจริง ข้อมูลกลาง) เมื่อใส่ค่าใน js/config.js — ถ้าไม่ใส่จะเป็นโหมดทดลองในเบราว์เซอร์ */
-  const REMOTE = !!(window.RemoteApi && window.RemoteApi.enabled);
+  // ต้นแบบรอบใหม่ (วงจรงบ + ดำเนินการใช้งบ) ยังไม่ได้เชื่อมฐานข้อมูล Supabase จึงใช้โหมดทดลองเสมอ
+  // (เวอร์ชันที่เชื่อม Supabase ได้แล้วเก็บไว้ที่ /v1/)
+  const REMOTE = false;
 
   const DEMO_USERS = [
-    { id: 'req1', name: 'สมชาย ใจดี', title: 'วิศวกร ฝ่ายวิศวกรรม', role: 'requester' },
-    { id: 'req2', name: 'สุดา รักงาน', title: 'เจ้าหน้าที่โครงการ ฝ่ายโครงการ', role: 'requester' },
-    { id: 'fin1', name: 'มาลี เงินดี', title: 'เจ้าหน้าที่การเงิน', role: 'finance' },
-    { id: 'acc1', name: 'วิไล บัญชีดี', title: 'เจ้าหน้าที่บัญชี', role: 'accounting' }
+    { id: 'req1', name: 'สมชาย ใจดี', title: 'วิศวกร ฝ่ายวิศวกรรม', role: 'business' },
+    { id: 'req2', name: 'สุดา รักงาน', title: 'เจ้าหน้าที่โครงการ ฝ่ายโครงการ', role: 'business' },
+    { id: 'fin1', name: 'มาลี เงินดี', title: 'บัญชีการเงิน', role: 'controller' },
+    { id: 'pur1', name: 'ปิติ จัดหา', title: 'เจ้าหน้าที่จัดซื้อ', role: 'purchasing' }
   ];
   let USERS = DEMO_USERS; // โหมด Supabase: แทนที่ด้วยรายชื่อผู้ใช้จากฐานข้อมูล
   let remoteMe = null; // โหมด Supabase: ผู้ใช้ที่ล็อกอินอยู่ (null = ยังไม่ได้ล็อกอิน)
 
   const ROLE_LABEL = {
+    business: 'Business (ผู้ขอใช้งบ)',
+    controller: 'ผู้คุมงบ (บัญชีการเงิน)',
+    purchasing: 'จัดซื้อ',
+    // ชื่อบทบาทเดิม (ยังอยู่ในประวัติของเอกสารเก่า)
     requester: 'ผู้ขอใช้งบ',
-    finance: 'การเงิน',
-    accounting: 'บัญชี'
+    finance: 'ผู้คุมงบ',
+    accounting: 'ผู้คุมงบ'
   };
 
-  /** สิทธิ์ทั้งหมดของระบบ (ต้องตรงกับ _app_perm_catalog() ใน supabase/schema.sql) */
+  /** สิทธิ์ทั้งหมดของระบบ (ต้นแบบรอบใหม่ — ฐานข้อมูลจะปรับตามเมื่อยืนยันขั้นตอนแล้ว) */
   const PERMISSIONS = [
-    { key: 'budget.view_all', group: 'การมองเห็น', label: 'ดูงบและคำขอของทุกคน', hint: 'ถ้าไม่มี จะเห็นเฉพาะงบที่ตนเป็นเจ้าของ (สิทธิ์อนุมัติ/งวดจ่าย/บัญชี/จัดการงบ เห็นทั้งหมดโดยอัตโนมัติ)' },
-    { key: 'request.create', group: 'ผู้ขอใช้งบ', label: 'ขอเบิกใช้งบ', hint: 'ของงบที่ตนเป็นเจ้าของ และยกเลิกคำขอของตนเอง · บทบาทนี้เลือกเป็นเจ้าของงบได้' },
-    { key: 'request.decide', group: 'การเงิน', label: 'ตรวจสอบ / อนุมัติเอกสาร CAPEX', hint: 'อนุมัติ (ออกใบเบิก) หรือไม่อนุมัติพร้อมเหตุผล' },
-    { key: 'payment.record', group: 'การเงิน', label: 'บันทึกงวดจ่าย (CAPEX)', hint: 'วันวางบิล วันกำหนดจ่าย ยอดงวด' },
-    { key: 'budget.manage', group: 'การเงิน', label: 'ตั้ง / ปรับ / ลบงบ', hint: 'งบ CAPEX, CBS และประวัติการปรับงบ' },
-    { key: 'accounting.record', group: 'บัญชี', label: 'บันทึกข้อมูลบัญชี', hint: 'วันที่จ่ายจริง (ตัดงบ) · Asset/Expenses · GL Code · สถานะจ่าย CBS' },
-    { key: 'master.manage', group: 'ผู้ดูแลระบบ', label: 'จัดการข้อมูลหลัก', hint: 'บริษัท หน่วยงาน กลุ่มงบ ประเภทสินทรัพย์ GL Code' },
-    { key: 'user.manage', group: 'ผู้ดูแลระบบ', label: 'จัดการผู้ใช้ บทบาท และสิทธิ์', hint: 'หน้า Admin นี้' }
+    { key: 'budget.view_all', group: 'การมองเห็น', label: 'ดูงบและเอกสารของทุกคน', hint: 'ถ้าไม่มี จะเห็นเฉพาะงบที่ตนสร้าง/เป็นเจ้าของ' },
+    { key: 'budget.create', group: 'Business', label: 'ขออนุมัติงบใหม่', hint: 'สร้างร่าง แนบมติที่ประชุม ส่งให้ผู้คุมงบเปิดใช้' },
+    { key: 'request.create', group: 'Business', label: 'ขอดำเนินการใช้งบ / ขอเพิ่มงบ', hint: 'เฉพาะงบที่ตนเป็นเจ้าของ' },
+    { key: 'budget.verify', group: 'ผู้คุมงบ', label: 'ยืนยันเปิดใช้งบ / ยืนยันเพิ่มงบ', hint: 'ตรวจมติแล้วยืนยันหรือส่งกลับ' },
+    { key: 'budget.adjust', group: 'ผู้คุมงบ', label: 'โยกงบ / ลดงบ', hint: 'โยกข้ามรายการหรือโครงการได้ ต้องระบุเหตุผล' },
+    { key: 'budget.manage', group: 'ผู้คุมงบ', label: 'นำเข้างบที่อนุมัติแล้ว', hint: 'บันทึกงบเดิมและเปิดใช้ทันที (ช่วงเริ่มระบบ)' },
+    { key: 'request.decide', group: 'ผู้คุมงบ', label: 'ตรวจสอบ / อนุมัติการดำเนินการใช้งบ', hint: 'ขอเกินงบรายการต้องใส่ Note' },
+    { key: 'cut.record', group: 'ผู้คุมงบ', label: 'บันทึกการตัดงบและปิดยอด', hint: 'Advance · สำรองจ่าย · จ่ายตรง Supplier · ปิดยอดคืนส่วนต่าง' },
+    { key: 'accounting.record', group: 'ผู้คุมงบ', label: 'บันทึกข้อมูลบัญชี', hint: 'Asset/Expenses · GL Code · สถานะจ่าย CBS' },
+    { key: 'po.record', group: 'จัดซื้อ', label: 'บันทึก PR / PO', hint: 'ตัดงบ PR/PO ตามยอด PO' },
+    { key: 'master.manage', group: 'ผู้ดูแลระบบ', label: 'จัดการข้อมูลหลัก', hint: 'บริษัท หน่วยงาน กลุ่มงบ ประเภทสินทรัพย์ หมวดค่าใช้จ่าย GL Code' },
+    { key: 'log.view', group: 'ผู้ดูแลระบบ', label: 'ดู Log การทำงาน', hint: '' },
+    { key: 'user.manage', group: 'ผู้ดูแลระบบ', label: 'จัดการผู้ใช้ บทบาท และสิทธิ์', hint: 'หน้า Admin (โหมด Supabase)' }
   ];
-  /** โหมดทดลอง: สิทธิ์ตั้งต้นของแต่ละบทบาท (โหมด Supabase แก้ได้ที่หน้า Admin) */
+  /** โหมดทดลอง: สิทธิ์ตั้งต้นของแต่ละบทบาท */
   const DEMO_ROLE_PERMS = {
-    requester: ['request.create'],
-    finance: ['budget.view_all', 'budget.manage', 'master.manage', 'request.decide', 'payment.record'],
-    accounting: ['budget.view_all', 'accounting.record']
+    business: ['budget.create', 'request.create'],
+    controller: ['budget.view_all', 'budget.manage', 'budget.verify', 'budget.adjust', 'request.decide', 'cut.record', 'accounting.record', 'master.manage', 'log.view'],
+    purchasing: ['budget.view_all', 'po.record']
   };
 
   const COMPANIES = { PSL: 'บริษัท PSL (ตัวอย่าง)', PCC: 'บริษัท PCC (ตัวอย่าง)' };
   const TYPE_LABEL = { CAPEX: 'งบลงทุน (CAPEX)', CBS: 'งบโครงการ (CBS)' };
   const STATUS_LABEL = {
-    pending: 'รอการเงินตรวจสอบ',
+    pending: 'รอผู้คุมงบตรวจสอบ',
     approved: 'ออกเอกสารแล้ว',
-    rejected: 'ไม่อนุมัติ — รอแก้ไข',
+    closed: 'ปิดยอดแล้ว',
+    rejected: 'ส่งกลับแก้ไข',
     cancelled: 'ยกเลิก'
   };
+  /** สถานะของตัวงบ: Business ร่าง → แนบมติส่งตรวจ → ผู้คุมงบยืนยันเปิดใช้ / ส่งกลับ */
+  const BUDGET_STATE = { draft: 'ร่าง', review: 'รอผู้คุมงบตรวจสอบ', returned: 'ส่งกลับแก้ไข', active: 'เปิดใช้งาน', cancelled: 'ยกเลิก' };
+  const BUDGET_STATE_BADGE = { draft: 'draft', review: 'pending', returned: 'rejected', active: 'approved', cancelled: 'cancelled' };
+  /** ประเภทการดำเนินการใช้งบ (CAPEX) และจังหวะที่ตัดงบจริง */
+  const USE_TYPES = {
+    prpo: { label: 'ซื้อโดยเปิด PR / PO', short: 'PR/PO', cut: 'ตัดงบเมื่อจัดซื้อออก PO (ตามยอด PO)', who: 'จัดซื้อ' },
+    advance: { label: 'Advance (เงินทดรอง)', short: 'Advance', cut: 'ตัดงบเมื่อเคลียร์เงินทดรองพร้อมใบเสร็จ', who: 'ผู้คุมงบ' },
+    reimburse: { label: 'พนักงานสำรองจ่าย', short: 'สำรองจ่าย', cut: 'ตัดงบเมื่อจ่ายคืนพนักงานตามใบเสร็จ', who: 'ผู้คุมงบ' },
+    direct: { label: 'จ่ายตรงให้ Supplier', short: 'จ่ายตรง', cut: 'ตัดงบเมื่อจ่ายเงินให้ Supplier', who: 'ผู้คุมงบ', hint: 'ค่างานจ้างเหมา · จ่ายรายวัน · ค่าน้ำมันที่เบิกใช้ · Stock' }
+  };
+  const DEFAULT_CATEGORIES = [
+    { name: 'ค่าแรง', gl: '520101' }, { name: 'ค่าวัสดุ / อุปกรณ์', gl: '510101' }, { name: 'ค่าจ้างเหมา', gl: '520201' },
+    { name: 'ค่าเครื่องจักร / สินทรัพย์', gl: '' }, { name: 'ค่าขนส่ง', gl: '540101' }, { name: 'ค่าเช่า', gl: '530101' }, { name: 'อื่นๆ', gl: '' }
+  ];
+  /** โหมดทดลองเก็บไฟล์แนบในเบราว์เซอร์ จึงจำกัดขนาดไว้เล็ก (ระบบจริงเก็บใน Storage ได้ใหญ่กว่า) */
+  const ATTACH_MAX = 400 * 1024;
   const CBS_STATUS = ['Plan', 'On Progress', 'แล้วเสร็จ'];
   const ASSET_TYPES = ['เครื่องจักร', 'เครื่องมือและอุปกรณ์', 'อาคารและสิ่งปลูกสร้าง', 'ยานพาหนะ', 'อุปกรณ์สำนักงาน', 'ซอฟต์แวร์', 'อื่นๆ'];
 
@@ -109,6 +137,7 @@
     const assetTypes = list('assetTypes').slice();
     ASSET_TYPES.forEach((t) => addBy(assetTypes, 'name', { name: t }));
     const glCodes = list('glCodes').slice();
+    const expenseCategories = list('expenseCategories').length ? list('expenseCategories').slice() : DEFAULT_CATEGORIES.map((c) => Object.assign({}, c));
     (d.budgets || []).forEach((b) => {
       addBy(companies, 'code', { code: b.company, name: '' });
       addBy(departments, 'name', { name: b.department });
@@ -118,22 +147,28 @@
         else addBy(glCodes, 'code', { code: it.glCode, name: it.glName || '' });
       });
     });
-    d.master = { companies, departments, groups, assetTypes, glCodes };
+    d.master = { companies, departments, groups, assetTypes, glCodes, expenseCategories };
     return d;
   }
   const companyMap = () => Object.fromEntries(db.master.companies.map((c) => [c.code, c.name]));
   const assetTypeList = () => db.master.assetTypes.map((x) => x.name);
 
   function seed() {
-    const now = new Date().toISOString();
-    const year = new Date().getFullYear();
+    const now = new Date();
+    const iso = (d) => new Date(d).toISOString();
+    const nowIso = now.toISOString();
+    const year = now.getFullYear();
     const prev = year - 1;
+    const yy = String(year).slice(-2);
+    const day = (m, d) => year + '-' + String(m).padStart(2, '0') + '-' + String(d).padStart(2, '0');
     const item = (id, code, name, assetType, doa, amount) => ({ id, code, name, assetType, doa, amount });
     const cbs = (id, code, name, extra) => Object.assign({ id, code, name, qty: '', unit: '', amount: 0, vat: 0, glCode: '', glName: '' }, extra || {});
+    const sampleFile = (name) => ({ id: 'f-' + name, slot: 'resolution', name, size: 0, sample: true, at: nowIso, by: 'req1' });
     const budgets = [
       {
-        id: 'b1', type: 'CAPEX', company: 'PSL', fiscalYear: year, group: '01', code: 'EN0001',
+        id: 'b1', type: 'CAPEX', company: 'PSL', fiscalYear: year, group: '01', code: 'EN0001', structure: 'items',
         name: 'ปรับปรุงสายการผลิต Phase 1', department: 'ฝ่ายวิศวกรรม', ownerId: 'req1', note: 'งบตัวอย่าง',
+        meeting: { date: day(1, 15), no: 'มติที่ 1/' + year, note: 'ประชุมคณะกรรมการบริหาร' },
         items: [
           item('c1', year + '-01-EN001', 'เครื่องตัดชิ้นงาน', 'เครื่องจักร', '2.4', 500000),
           item('c2', year + '-01-EN002', 'เครื่องมือและอุปกรณ์ห้องปฏิบัติการ', 'เครื่องมือและอุปกรณ์', '2.5', 610000),
@@ -141,14 +176,16 @@
         ]
       },
       {
-        id: 'b2', type: 'CAPEX', company: 'PSL', fiscalYear: year, group: '01', code: 'IT0001',
+        id: 'b2', type: 'CAPEX', company: 'PSL', fiscalYear: year, group: '01', code: 'IT0001', structure: 'items',
         name: 'อุปกรณ์ IT สำนักงาน', department: 'ฝ่ายวิศวกรรม', ownerId: 'req1', note: '',
+        meeting: { date: day(1, 15), no: 'มติที่ 1/' + year, note: '' },
         items: [item('c4', year + '-01-IT001', 'คอมพิวเตอร์และอุปกรณ์ต่อพ่วง', 'อุปกรณ์สำนักงาน', '2.5', 450000)]
       },
       {
-        id: 'b3', type: 'CBS', company: 'PSL', fiscalYear: year, code: 'PJ0001-1', parentCode: 'PJ0001',
+        id: 'b3', type: 'CBS', company: 'PSL', fiscalYear: year, code: 'PJ0001-1', parentCode: 'PJ0001', structure: 'items',
         name: 'ผลิตกล้าไม้ 10,000 กล้า', department: 'ฝ่ายโครงการ', ownerId: 'req2', note: '',
-        status: 'On Progress', startDate: year + '-01-05', endDate: year + '-03-31',
+        meeting: { date: day(1, 3), no: 'มติที่ 12/' + prev, note: '' },
+        status: 'On Progress', startDate: day(1, 5), endDate: day(3, 31),
         production: { site: 'โรงเรือน 1', product: 'กล้าไม้', qty: 10000, unit: 'กล้า' },
         items: [
           cbs('i1', '1', 'ต้นทุนวัตถุดิบ'),
@@ -167,28 +204,127 @@
         ]
       },
       {
-        id: 'b4', type: 'CAPEX', company: 'PSL', fiscalYear: prev, group: '02', code: 'EN0002',
+        id: 'b4', type: 'CAPEX', company: 'PSL', fiscalYear: prev, group: '02', code: 'EN0002', structure: 'items',
         name: 'ระบบไอน้ำ (ยกมาจากปีก่อน)', department: 'ฝ่ายวิศวกรรม', ownerId: 'req1', note: 'งบปีก่อน ยกมาใช้ต่อ',
+        meeting: { date: prev + '-02-10', no: 'มติที่ 2/' + prev, note: '' },
         items: [item('c5', prev + '-02-EN001', 'ชุดหม้อไอน้ำและท่อ', 'เครื่องจักร', '2.4', 800000)]
       },
       {
-        id: 'b5', type: 'CAPEX', company: 'PCC', fiscalYear: year, group: '04', code: 'PD0001',
+        id: 'b5', type: 'CAPEX', company: 'PCC', fiscalYear: year, group: '04', code: 'PD0001', structure: 'items',
         name: 'อุปกรณ์คลังสินค้า', department: 'ฝ่ายผลิต', ownerId: 'req2', note: '',
+        meeting: { date: day(2, 1), no: 'มติที่ 2/' + year, note: '' },
         items: [
           item('c6', year + '-04-PD001', 'รถยกไฟฟ้า', 'ยานพาหนะ', '2.5', 1200000),
           item('c7', year + '-04-PD002', 'ชั้นวางสินค้า', 'อื่นๆ', '2.5', 300000)
         ]
+      },
+      {
+        id: 'b6', type: 'CAPEX', company: 'PSL', fiscalYear: year, group: '01', code: 'BD0001', structure: 'project',
+        name: 'ปรับปรุงอาคารสำนักงาน (งบรวมโครงการ)', department: 'ฝ่ายวิศวกรรม', ownerId: 'req1', note: 'ยังไม่แยกรายการย่อย เพราะรายละเอียดยังไม่ชัดเจน',
+        meeting: { date: day(3, 10), no: 'มติที่ 3/' + year, note: '' },
+        items: [item('c8', 'BD0001', 'งบรวมทั้งโครงการ', 'อาคารและสิ่งปลูกสร้าง', '2.5', 900000)]
+      },
+      {
+        id: 'b7', type: 'CAPEX', company: 'PSL', fiscalYear: year + 1, group: '01', code: 'EN0003', structure: 'project', state: 'draft',
+        name: 'ระบบโซลาร์รูฟท็อป', department: 'ฝ่ายวิศวกรรม', ownerId: 'req1', note: 'เตรียมเข้าที่ประชุมรอบหน้า',
+        items: [item('c10', 'EN0003', 'งบรวมทั้งโครงการ', 'เครื่องจักร', '2.4', 2500000)]
+      },
+      {
+        id: 'b8', type: 'CAPEX', company: 'PCC', fiscalYear: year, group: '04', code: 'PD0002', structure: 'items', state: 'review',
+        name: 'รถยกไฟฟ้าเพิ่มเติม', department: 'ฝ่ายผลิต', ownerId: 'req2', note: '',
+        meeting: { date: day(10, 20), no: 'มติที่ 9/' + year, note: 'อนุมัติเต็มจำนวน' },
+        attachments: [sampleFile('มติที่ประชุม-9-' + year + '.pdf')],
+        items: [item('c9', year + '-04-PD003', 'รถยกไฟฟ้า 2 ตัน', 'ยานพาหนะ', '2.5', 980000)]
       }
     ];
     budgets.forEach((b) => {
-      b.createdAt = now;
-      b.revisions = [{ no: 0, at: now, by: 'fin1', note: 'บันทึกงบที่ได้รับอนุมัติ', total: budgetTotal(b), items: snapshotItems(b) }];
+      b.createdAt = iso(day(1, 2));
+      b.createdBy = b.ownerId;
+      b.state = b.state || 'active';
+      b.history = [{ at: b.createdAt, by: b.ownerId, action: 'สร้างร่างคำขออนุมัติงบ' }];
+      if (b.state !== 'draft') {
+        b.attachments = b.attachments || [sampleFile('มติที่ประชุม-' + b.code + '.pdf')];
+        b.history.push({ at: iso(b.meeting.date), by: b.ownerId, action: 'แนบมติที่ประชุมและส่งให้ผู้คุมงบตรวจสอบ', note: b.meeting.no });
+      }
+      b.attachments = b.attachments || [];
+      if (b.state === 'active') {
+        b.activatedAt = iso(b.meeting.date);
+        b.activatedBy = 'fin1';
+        b.history.push({ at: b.activatedAt, by: 'fin1', action: 'ยืนยันเปิดใช้งาน' });
+        b.revisions = [{ no: 0, at: b.activatedAt, by: 'fin1', note: 'เปิดใช้งานตาม' + b.meeting.no, total: budgetTotal(b), items: snapshotItems(b) }];
+      } else {
+        b.revisions = [];
+      }
     });
-    // ตัวอย่างการปรับงบ: เครื่องตัดชิ้นงาน 400,000 → 500,000
+    // ตัวอย่างการปรับงบหลังเปิดใช้: เครื่องตัดชิ้นงาน 400,000 → 500,000
     budgets[0].revisions[0].items[0].total = 400000;
     budgets[0].revisions[0].total -= 100000;
-    budgets[0].revisions.push({ no: 1, at: now, by: 'fin1', note: 'ปรับเพิ่มงบเครื่องตัดชิ้นงานตามใบเสนอราคาจริง', total: budgetTotal(budgets[0]), items: snapshotItems(budgets[0]) });
-    return ensureMaster({ seq: { req: 0, id: 100, doc: {} }, budgets, requests: [] });
+    budgets[0].revisions.push({ no: 1, at: iso(day(4, 2)), by: 'fin1', note: 'เพิ่มงบเครื่องตัดชิ้นงานตามมติที่ 4/' + year, total: budgetTotal(budgets[0]), items: snapshotItems(budgets[0]) });
+
+    // ---- ตัวอย่างการดำเนินการใช้งบในสถานะต่าง ๆ
+    const line = (itemId, description, before, extra) => Object.assign({ itemId, description, amountBeforeVat: before, vat: round2(before * VAT_RATE), amount: round2(before * (1 + VAT_RATE)) }, extra || {});
+    const mk = (o) => {
+      const amountBeforeVat = round2(o.lines.reduce((s, l) => s + l.amountBeforeVat, 0));
+      const vat = round2(o.lines.reduce((s, l) => s + l.vat, 0));
+      const decided = o.status !== 'pending';
+      const events = [{ at: o.createdAt, by: o.requesterId, action: 'ส่งคำขอดำเนินการใช้งบ', note: '' }];
+      if (decided && o.approvedAt) events.push({ at: o.approvedAt, by: 'fin1', action: 'อนุมัติ ออกใบดำเนินการใช้งบ ' + (o.docNo || ''), note: o.approverNote || '' });
+      if (o.advance) events.push({ at: o.advance.at, by: o.advance.by, action: 'จ่ายเงินทดรอง', note: money(o.advance.amount) + ' บาท' });
+      (o.cuts || []).forEach((c) => events.push({ at: c.at, by: c.by, action: 'บันทึก' + ({ po: 'ใบสั่งซื้อ (PO)', clear: 'เคลียร์เงินทดรอง', reimburse: 'จ่ายคืนพนักงาน', payment: 'จ่ายเงิน Supplier' }[c.kind]), note: money(c.amount) + ' บาท' }));
+      if (o.closed) events.push({ at: o.closed.at, by: o.closed.by, action: 'ปิดยอด', note: 'ใช้จริง ' + money(o.closed.actual) + ' บาท' });
+      return Object.assign({
+        type: 'CAPEX', history: [], payee: 'บริษัทตัวอย่าง จำกัด', poNo: 'N/A', paymentPlan: { mode: 'single', installments: [] }, paymentTerms: 'จ่ายครั้งเดียว',
+        payments: [], cuts: [], attachments: [], events, amountBeforeVat, vat, amount: round2(amountBeforeVat + vat),
+        steps: [Object.assign({ key: 'ctl', label: 'ผู้คุมงบตรวจสอบ', role: 'controller', status: decided ? 'approved' : 'waiting' },
+          decided ? { by: 'fin1', at: o.approvedAt, comment: o.note || '' } : {})]
+      }, o);
+    };
+    const requests = [
+      mk({ id: 'r1', no: 'REQ-' + year + '-0001', budgetId: 'b1', itemId: 'c1', useType: 'prpo', requesterId: 'req1', createdAt: iso(day(9, 1)),
+        status: 'approved', approvedAt: iso(day(9, 3)), docNo: 'PSL' + yy + '-001', purpose: 'ทดแทนเครื่องเดิมที่เสื่อมสภาพ',
+        lines: [line('c1', 'เครื่องตัดชิ้นงาน CNC พร้อมติดตั้ง', 450000)] }),
+      mk({ id: 'r2', no: 'REQ-' + year + '-0002', budgetId: 'b1', itemId: 'c2', useType: 'advance', requesterId: 'req1', createdAt: iso(day(9, 20)),
+        status: 'approved', approvedAt: iso(day(9, 22)), docNo: 'PSL' + yy + '-002', purpose: 'ซื้ออุปกรณ์ห้องแล็บหน้าร้าน', payee: 'สมชาย ใจดี (เงินทดรอง)',
+        advance: { at: iso(day(9, 25)), date: day(9, 25), amount: 32100, by: 'fin1' },
+        lines: [line('c2', 'อุปกรณ์วัดและเครื่องมือห้องแล็บ', 30000)] }),
+      mk({ id: 'r3', no: 'REQ-' + year + '-0003', budgetId: 'b2', itemId: 'c4', useType: 'reimburse', requesterId: 'req1', createdAt: iso(day(8, 5)),
+        status: 'closed', approvedAt: iso(day(8, 6)), docNo: 'PSL' + yy + '-003', purpose: 'ซื้อจอภาพด่วนสำหรับห้องประชุม', payee: 'สมชาย ใจดี (สำรองจ่าย)',
+        lines: [line('c4', 'จอภาพ 27 นิ้ว 4 เครื่อง', 20000)],
+        cuts: [{ id: 'x1', kind: 'reimburse', date: day(8, 12), amount: 19260, ref: 'ใบเสร็จ INV-5521', note: '', by: 'fin1', at: iso(day(8, 12)), attachments: [] }],
+        closed: { at: iso(day(8, 12)), by: 'fin1', actual: 19260, returned: 2140, note: 'ซื้อได้ถูกกว่าที่ขอ' } }),
+      mk({ id: 'r4', no: 'REQ-' + year + '-0004', budgetId: 'b6', itemId: 'c8', useType: 'direct', requesterId: 'req1', createdAt: iso(day(10, 28)),
+        status: 'pending', purpose: 'งานปรับปรุงพื้นที่ชั้น 2', payee: 'หจก. ก่อสร้างตัวอย่าง',
+        lines: [line('c8', 'งานรื้อถอนและปรับพื้นชั้น 2', 150000, { category: 'ค่าจ้างเหมา' }), line('c8', 'กระเบื้องและวัสดุปูพื้น', 40000, { category: 'ค่าวัสดุ / อุปกรณ์' })] }),
+      mk({ id: 'r5', no: 'REQ-' + year + '-0005', budgetId: 'b5', itemId: 'c7', useType: 'prpo', requesterId: 'req2', createdAt: iso(day(10, 30)),
+        status: 'pending', purpose: 'ขยายพื้นที่จัดเก็บสินค้า', requesterReason: 'ราคาเหล็กปรับขึ้นจากตอนตั้งงบ',
+        lines: [line('c7', 'ชั้นวางสินค้าแบบ Heavy duty 12 ชุด', 327000)] }),
+      {
+        id: 'r6', no: 'REQ-' + year + '-0006', budgetId: 'b3', type: 'CBS', requesterId: 'req2', createdAt: iso(day(2, 10)), status: 'approved',
+        approvedAt: iso(day(2, 10)), docNo: 'CBS' + yy + '-0001', steps: [], history: [], events: [], attachments: [], expenseDate: day(2, 10),
+        payee: 'ร้านวัสดุเกษตร', poNo: 'N/A', overBudget: false, overBudgetReason: '', accounting: { paymentStatus: 'รอจ่าย' },
+        lines: [{ itemId: 'i4', description: 'ดินผสม 100 กระสอบ', amountBeforeVat: 5000, vat: 0, amount: 5000, glCode: '510101', glName: 'ค่าวัตถุดิบ' }],
+        amountBeforeVat: 5000, vat: 0, amount: 5000
+      }
+    ];
+    // ตัวอย่างคำขอเพิ่มงบที่รอผู้คุมงบตรวจสอบ
+    const changes = [{
+      id: 'g1', no: 'INC-' + year + '-0001', budgetId: 'b1', state: 'review', reason: 'ขยายระบบลำเลียงเพิ่มอีก 1 สาย',
+      lines: [{ itemId: 'c3', amount: 200000 }], meeting: { date: day(10, 25), no: 'มติที่ 10/' + year, note: '' },
+      attachments: [sampleFile('มติที่ประชุม-10-' + year + '.pdf')], createdBy: 'req1', createdAt: iso(day(10, 22)),
+      history: [{ at: iso(day(10, 22)), by: 'req1', action: 'สร้างคำขอเพิ่มงบ' }, { at: iso(day(10, 26)), by: 'req1', action: 'แนบมติที่ประชุมและส่งให้ผู้คุมงบตรวจสอบ', note: 'มติที่ 10/' + year }]
+    }];
+    const log = [];
+    budgets.forEach((b) => b.history.forEach((h) => log.push({ at: h.at, by: h.by, action: h.action, ref: 'งบ ' + b.code, detail: h.note || '' })));
+    changes.forEach((c) => c.history.forEach((h) => log.push({ at: h.at, by: h.by, action: h.action, ref: c.no, detail: h.note || '' })));
+    requests.forEach((r) => {
+      log.push({ at: r.createdAt, by: r.requesterId, action: 'ส่งขอดำเนินการใช้งบ', ref: r.no, detail: '' });
+      if (r.approvedAt && r.type === 'CAPEX') log.push({ at: r.approvedAt, by: 'fin1', action: 'อนุมัติ ออกใบดำเนินการใช้งบ', ref: r.docNo, detail: '' });
+    });
+    log.sort((a, b) => a.at.localeCompare(b.at));
+    const doc = {};
+    doc['PSL' + yy] = 3;
+    doc['CBS' + yy] = 1;
+    return ensureMaster({ seq: { req: 6, id: 200, doc, chg: 1 }, budgets, requests, changes, log });
   }
 
   function load() {
@@ -202,6 +338,15 @@
   /** แปลงคำขอรูปแบบเดิม (1 ใบ = 1 บรรทัด) เป็นแบบหลายบรรทัด + งวดจ่าย โดยไม่ทำให้ข้อมูลหาย */
   function migrate(d) {
     ensureMaster(d);
+    d.changes = d.changes || [];
+    d.log = d.log || [];
+    (d.budgets || []).forEach((b) => {
+      b.state = b.state || 'active';
+      b.structure = b.structure || 'items';
+      b.history = b.history || [];
+      b.attachments = b.attachments || [];
+      b.revisions = b.revisions || [];
+    });
     (d.requests || []).forEach((r) => {
       if (r.lines) return;
       const acc = r.accounting || {};
@@ -233,7 +378,13 @@
 
   function save() {
     if (REMOTE) { console.error('save() ถูกเรียกในโหมด Supabase — ข้อมูลต้องบันทึกผ่านเซิร์ฟเวอร์'); return; }
-    try { localStorage.setItem(DB_KEY, JSON.stringify(db)); } catch (e) { /* ignore */ }
+    try {
+      localStorage.setItem(DB_KEY, JSON.stringify(db));
+      return true;
+    } catch (e) {
+      alert('พื้นที่เก็บข้อมูลในเบราว์เซอร์เต็ม (โหมดทดลองเก็บไฟล์แนบในเบราว์เซอร์) — ลบไฟล์แนบบางไฟล์ หรือรีเซ็ตข้อมูลตัวอย่างที่เมนูมุมขวาบน');
+      return false;
+    }
   }
 
   function nextId(prefix) {
@@ -331,7 +482,7 @@
   const permsOf = (u) => (u && (u.perms || DEMO_ROLE_PERMS[u.role])) || [];
   const can = (perm) => permsOf(me()).includes(perm);
   /** เห็นงบและคำขอของทุกคน (สิทธิ์ดูทั้งหมด หรือสิทธิ์ที่ต้องทำงานกับเอกสารของคนอื่น) */
-  const canViewAll = () => ['budget.view_all', 'budget.manage', 'request.decide', 'payment.record', 'accounting.record'].some(can);
+  const canViewAll = () => ['budget.view_all', 'budget.manage', 'budget.verify', 'request.decide', 'cut.record', 'po.record', 'accounting.record'].some(can);
   const roleLabel = (u) => (u && (u.roleName || ROLE_LABEL[u.role] || u.role)) || '';
   const canRequestUser = (x) => (x.canRequest !== undefined ? x.canRequest : permsOf(x).includes('request.create'));
   const budgetById = (id) => db.budgets.find((b) => b.id === id);
@@ -375,8 +526,8 @@
   /**
    * ยอดงบของทั้งงบ หรือของรายการ (รวมรายการลูก)
    * approved = งบที่ได้รับ
-   * used = ตัดงบแล้ว (ฝ่ายบัญชีบันทึกจ่ายเงินแล้วเท่านั้น)
-   * reserved = จองไว้ (รอการเงินตรวจสอบ หรือออกเอกสารแล้วแต่บัญชียังไม่ได้จ่าย) — ยังหักออกจากยอดคงเหลือเพื่อกันใช้ซ้ำ
+   * used = ตัดงบแล้ว (CAPEX: ตามจังหวะตัดงบของแต่ละประเภท · CBS: เมื่อบันทึกจ่ายเงินแล้ว)
+   * reserved = จองไว้ (รอผู้คุมงบตรวจสอบ หรือออกเอกสารแล้วแต่ยังไม่ตัดงบ) — ยังหักออกจากยอดคงเหลือเพื่อกันใช้ซ้ำ
    */
   function usage(b, itemId) {
     let ids = null;
@@ -392,8 +543,20 @@
     let used = 0;
     let reserved = 0;
     db.requests.forEach((r) => {
-      if (r.budgetId !== b.id || (r.status !== 'approved' && r.status !== 'pending')) return;
+      if (r.budgetId !== b.id || !['pending', 'approved', 'closed'].includes(r.status)) return;
       const amt = linesAmount(r, ids);
+      if (r.type === 'CAPEX') {
+        // CAPEX: ตัดงบตามรายการตัดงบจริงของแต่ละประเภท · ส่วนที่ยังไม่ตัดยังจองไว้ · ปิดยอดแล้วคืนส่วนต่าง
+        if (ids && !reqItemIds(r).some((x) => ids.includes(x))) return;
+        const cut = cutTotal(r);
+        if (r.status === 'pending') reserved += amt;
+        else {
+          used += cut;
+          if (r.status === 'approved') reserved += Math.max(amt - cut, 0);
+        }
+        return;
+      }
+      if (r.status === 'closed') return;
       const paid = Math.min(amt, paidByAccounting(r, ids));
       used += paid;
       reserved += amt - paid;
@@ -403,10 +566,10 @@
     return { approved, used, reserved, remaining: round2(approved - used - reserved) };
   }
 
-  /** CAPEX ต้องผ่านฝ่ายการเงินตรวจสอบ ส่วน CBS ไม่มีขั้นตรวจสอบ (ออกเอกสารทันที) */
+  /** CAPEX ต้องผ่านผู้คุมงบตรวจสอบ ส่วน CBS ยังใช้ขั้นตอนเดิม (ออกเอกสารทันที) จนกว่าจะยืนยันเงื่อนไข CBS */
   function stepsFor(budget) {
     if (budget.type === 'CBS') return [];
-    return [{ key: 'fin', label: 'ฝ่ายการเงินรับเอกสารและตรวจสอบ', role: 'finance', status: 'waiting' }];
+    return [{ key: 'ctl', label: 'ผู้คุมงบตรวจสอบ', role: 'controller', status: 'waiting' }];
   }
 
   const currentStep = (r) => (r.status === 'pending' ? r.steps.find((s) => s.status === 'waiting') : null);
@@ -420,16 +583,15 @@
   const linesAmount = (r, ids) => round2(r.lines.filter((l) => !ids || ids.includes(l.itemId)).reduce((s, l) => s + l.amount, 0));
   const reqItemIds = (r) => uniq(r.lines.map((l) => l.itemId));
   const paidTotal = (r) => round2((r.payments || []).reduce((s, p) => s + p.amount, 0));
-  const outstanding = (r) => round2(r.amount - paidTotal(r));
   /**
    * ยอดที่ฝ่ายบัญชีจ่ายเงินแล้วจริง (เงื่อนไขการตัดงบ): CAPEX นับเป็นรายงวดที่บัญชีลงวันที่จ่าย, CBS นับทั้งใบเมื่อสถานะ "จ่ายแล้ว"
    * ids = จำกัดเฉพาะบรรทัดของรายการนั้น (CAPEX ใบหนึ่งมีรายการย่อยเดียว)
    */
   function paidByAccounting(r, ids) {
-    if (r.status !== 'approved') return 0;
+    if (r.status !== 'approved' && r.status !== 'closed') return 0;
     const share = linesAmount(r, ids);
     if (!share) return 0;
-    if (r.type === 'CAPEX') return round2((r.payments || []).filter((p) => p.paidAt).reduce((s, p) => s + p.amount, 0));
+    if (r.type === 'CAPEX') return cutTotal(r);
     return r.accounting && r.accounting.paymentStatus === 'จ่ายแล้ว' ? share : 0;
   }
 
@@ -459,11 +621,68 @@
   }
   /** CAPEX: บัญชีต้องลงวันที่จ่ายและแยก Asset/Expense ทุกงวดที่การเงินบันทึก · CBS: บัญชียืนยัน GL และบันทึกจ่ายเงินทั้งใบ (จ่ายแล้วจึงตัดงบ) */
   function needsAccounting(r) {
-    if (r.status !== 'approved') return false;
-    if (r.type === 'CAPEX') return (r.payments || []).some((p) => !p.acctAt || !p.paidAt);
+    if (r.status !== 'approved' || r.type === 'CAPEX') return false;
     return !(r.accounting && r.accounting.paymentStatus === 'จ่ายแล้ว');
   }
-  const needsPayment = (r) => r.type === 'CAPEX' && r.status === 'approved' && outstanding(r) > 0;
+
+  // ---- CAPEX: การตัดงบตามประเภท
+  const cutTotal = (r) => round2((r.cuts || []).reduce((s, c) => s + Number(c.amount || 0), 0));
+  const hasPO = (r) => (r.cuts || []).some((c) => c.kind === 'po');
+  /** จัดซื้อต้องบันทึก PO */
+  const needsPO = (r) => r.type === 'CAPEX' && r.status === 'approved' && r.useType === 'prpo' && !hasPO(r);
+  /** ผู้คุมงบต้องบันทึกการตัดงบหรือปิดยอด */
+  const needsCut = (r) => r.type === 'CAPEX' && r.status === 'approved' && !needsPO(r);
+  /** ข้อความสถานะของเอกสาร (CAPEX ใช้ชื่อ "ใบดำเนินการใช้งบ") */
+  function statusText(r) {
+    if (r.type === 'CAPEX' && r.status === 'approved') return 'ออกใบดำเนินการใช้งบแล้ว';
+    return STATUS_LABEL[r.status] || r.status;
+  }
+  const isActive = (b) => !b.state || b.state === 'active';
+  const CHANGE_STATE = { draft: 'ร่าง', review: 'รอผู้คุมงบตรวจสอบ', returned: 'ส่งกลับแก้ไข', approved: 'เพิ่มงบแล้ว', cancelled: 'ยกเลิก' };
+  const CHANGE_STATE_BADGE = { draft: 'draft', review: 'pending', returned: 'rejected', approved: 'approved', cancelled: 'cancelled' };
+  const changeById = (id) => (db.changes || []).find((c) => c.id === id);
+  const changeTotal = (c) => round2((c.lines || []).reduce((s, l) => s + Number(l.amount || 0), 0));
+  /** จำนวนงานรอผู้คุมงบตรวจสอบ: งบรอเปิดใช้ + คำขอเพิ่มงบ + ใบดำเนินการใช้งบ */
+  function reviewQueueCount() {
+    let n = 0;
+    if (can('budget.verify')) n += db.budgets.filter((b) => b.state === 'review').length + (db.changes || []).filter((c) => c.state === 'review').length;
+    if (can('request.decide')) n += inbox(me()).length;
+    return n;
+  }
+  /** เพิ่ม/ลดวงเงินของรายการ (CBS ที่มี VAT ปรับตามสัดส่วนเดิม) */
+  function adjustItem(it, delta) {
+    const total = itemTotal(it);
+    if (Number(it.vat) > 0 && total > 0) {
+      const ratio = Number(it.amount) / total;
+      const amount = round2(Number(it.amount) + delta * ratio);
+      it.vat = round2(total + delta - amount);
+      it.amount = amount;
+    } else {
+      it.amount = round2(Number(it.amount || 0) + delta);
+    }
+  }
+  function addRevision(b, note) {
+    b.revisions = b.revisions || [];
+    b.revisions.push({ no: b.revisions.length, at: new Date().toISOString(), by: me().id, note, total: budgetTotal(b), items: snapshotItems(b) });
+  }
+  const docTitle = (r) => (r.type === 'CAPEX' ? 'ใบดำเนินการใช้งบ' : 'เอกสารการเบิกขอใช้งบประมาณ');
+
+  // ---- ประวัติและ Log (เพิ่มได้อย่างเดียว)
+  function logAction(action, ref, detail) {
+    db.log = db.log || [];
+    db.log.push({ at: new Date().toISOString(), by: me().id, action, ref: ref || '', detail: detail || '' });
+  }
+  /** บันทึกเหตุการณ์ลงประวัติของเรื่อง (งบ / คำขอเพิ่มงบ / ใบดำเนินการ) และลง Log */
+  function addHistory(obj, action, note, ref) {
+    obj.history = obj.history || [];
+    obj.history.push({ at: new Date().toISOString(), by: me().id, action, note: note || '' });
+    logAction(action, ref, note);
+  }
+  function addEvent(r, action, note) {
+    r.events = r.events || [];
+    r.events.push({ at: new Date().toISOString(), by: me().id, action, note: note || '' });
+    logAction(action, r.docNo || r.no, note);
+  }
 
   function badge(cls, text) {
     return '<span class="badge ' + esc(cls) + '">' + esc(text) + '</span>';
@@ -475,7 +694,7 @@
       '<div class="used" style="width:' + pct(u.used) + '%"></div>' +
       '<div class="reserved" style="width:' + pct(u.reserved) + '%"></div></div>' +
       '<div class="legend"><span><i class="l-used"></i>ตัดงบแล้ว</span>' +
-      '<span><i class="l-reserved"></i>จองไว้ (ยังไม่จ่าย)</span>' +
+      '<span><i class="l-reserved"></i>จองไว้ (ยังไม่ตัดงบ)</span>' +
       '<span><i class="l-left"></i>คงเหลือ</span></div>';
   }
 
@@ -483,7 +702,7 @@
     return '<dl class="kv">' +
       '<dt>งบที่ได้รับอนุมัติ</dt><dd>' + money(u.approved) + '</dd>' +
       '<dt>ตัดงบแล้ว (บัญชีจ่ายแล้ว)</dt><dd>' + money(u.used) + '</dd>' +
-      '<dt>จองไว้ (ยังไม่จ่าย)</dt><dd>' + money(u.reserved) + '</dd>' +
+      '<dt>จองไว้ (ยังไม่ตัดงบ)</dt><dd>' + money(u.reserved) + '</dd>' +
       '<dt>คงเหลือ</dt><dd class="big">' + moneyCell(u.remaining) + '</dd></dl>';
   }
 
@@ -518,9 +737,10 @@
 
   function homeFor(u) {
     const has = (p) => permsOf(u).includes(p);
-    if (has('budget.manage') || has('request.decide')) return '#/budgets';
+    if (has('budget.verify') || has('request.decide')) return '#/approvals';
+    if (has('po.record')) return '#/po';
     if (has('accounting.record')) return '#/accounting';
-    if (has('request.create')) return '#/my-budgets';
+    if (has('request.create') || has('budget.create')) return '#/my-budgets';
     if (REMOTE && has('user.manage')) return '#/admin';
     return '#/dashboard';
   }
@@ -535,14 +755,17 @@
     const links = [];
     // [href, ข้อความ, เส้นทางที่ให้ไฮไลต์เมนูนี้]
     links.push(['#/dashboard', 'ภาพรวม', ['#/dashboard']]);
-    if (can('budget.manage')) links.push(['#/budgets', 'จัดการงบประมาณ', ['#/budgets', '#/budget/']]);
-    else if (canViewAll()) links.push(['#/budgets', 'งบประมาณ', ['#/budgets', '#/budget/']]);
-    if (can('request.create')) links.push(['#/my-budgets', 'งบของฉัน', ['#/my-budgets', '#/budget/', '#/request/new']]);
-    if (can('request.decide')) links.push(['#/approvals', 'รอตรวจสอบ' + count(inbox(u).length), ['#/approvals']]);
-    if (can('payment.record')) links.push(['#/payments', 'งวดจ่ายค้าง' + count(db.requests.filter(needsPayment).length), ['#/payments']]);
-    if (can('accounting.record')) links.push(['#/accounting', 'รอบันทึกบัญชี' + count(db.requests.filter(needsAccounting).length), ['#/accounting']]);
-    if (canViewAll() || can('request.create')) links.push(['#/requests', canViewAll() ? 'คำขอใช้งบทั้งหมด' : 'คำขอของฉัน', ['#/requests', '#/request/', '#/doc/']]);
+    if (can('budget.verify') || can('request.decide')) links.push(['#/approvals', 'รอตรวจสอบ' + count(reviewQueueCount()), ['#/approvals']]);
+    if (can('po.record')) links.push(['#/po', 'รอออก PO' + count(db.requests.filter(needsPO).length), ['#/po']]);
+    if (can('cut.record')) links.push(['#/cuts', 'รอตัดงบ / ปิดยอด' + count(db.requests.filter(needsCut).length), ['#/cuts']]);
+    if (can('accounting.record')) links.push(['#/accounting', 'รอบันทึกบัญชี (CBS)' + count(db.requests.filter(needsAccounting).length), ['#/accounting']]);
+    if (canViewAll()) links.push(['#/budgets', 'งบประมาณ', ['#/budgets', '#/budget/', '#/change/']]);
+    if (can('request.create') || can('budget.create')) links.push(['#/my-budgets', 'งบของฉัน', ['#/my-budgets', '#/budget/', '#/request/new', '#/change/']]);
+    if (canViewAll() || can('request.create')) links.push(['#/requests', canViewAll() ? 'รายการดำเนินการใช้งบ' : 'ดำเนินการใช้งบของฉัน', ['#/requests', '#/request/', '#/doc/']]);
+    if (can('budget.adjust')) links.push(['#/adjust', 'โยก / ลดงบ', ['#/adjust']]);
     if (can('master.manage')) links.push(['#/master', 'ข้อมูลหลัก', ['#/master']]);
+    if (can('log.view')) links.push(['#/log', 'Log การทำงาน', ['#/log']]);
+    links.push(['#/assumptions', 'สิ่งที่รอยืนยัน', ['#/assumptions']]);
     if (REMOTE && can('user.manage')) links.push(['#/admin', 'ผู้ใช้และสิทธิ์' + count(adminCounts.pending), ['#/admin']]);
     let activeDone = false;
     document.getElementById('nav').innerHTML = links.map(([href, text, prefixes]) => {
@@ -555,7 +778,7 @@
   // ---------------------------------------------------------------- budget list
 
   // ตัวกรองหน้ารายการงบ จำค่าไว้ตอนสลับแท็บ
-  const budgetFilter = { q: '', dept: '', year: '' };
+  const budgetFilter = { q: '', dept: '', year: '', state: '' };
 
   const ICON_SEARCH = '<svg class="lead" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path d="M20 20l-3.5-3.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
   const ICON_CAL = '<svg class="trail" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><rect x="3.5" y="5" width="17" height="15" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M3.5 10h17M8 3v4M16 3v4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>';
@@ -579,7 +802,8 @@
       label + '<span class="tab-count">(' + count(t) + ')</span></a>';
     const depts = uniq(all.map((b) => b.department)).sort();
     const years = uniq(all.map((b) => String(b.fiscalYear))).sort().reverse();
-    const title = mine ? 'งบของฉัน' : can('budget.manage') ? 'จัดการงบประมาณ' : 'งบประมาณ';
+    const title = mine ? 'งบของฉัน' : 'งบประมาณ';
+    const states = Object.keys(BUDGET_STATE).filter((s) => all.some((b) => (b.state || 'active') === s));
 
     let html = '<div class="page-head"><h1>' + title + '</h1>' +
       '<span class="pill">' + esc(u.title) + '</span></div>' + takeFlash() +
@@ -591,31 +815,41 @@
       depts.map((d) => opt(d, 'หน่วยงาน: ' + d, budgetFilter.dept)).join('') + '</select></label>' +
       '<label class="input-wrap"><select id="fYear" aria-label="ปีงบประมาณ">' + opt('', 'ปี: ทั้งหมด', budgetFilter.year) +
       years.map((y) => opt(y, 'ปี: ' + y, budgetFilter.year)).join('') + '</select>' + ICON_CAL + '</label>' +
-      (can('budget.manage')
-        ? '<a class="btn primary tall" href="#/budget/new"><span aria-hidden="true">+</span> เพิ่มงบที่อนุมัติ</a>'
-        : '<span></span>') +
+      '<label class="input-wrap select-wrap"><select id="fState" aria-label="สถานะงบ">' + opt('', 'สถานะ: ทั้งหมด', budgetFilter.state) +
+      states.map((s) => opt(s, 'สถานะ: ' + BUDGET_STATE[s], budgetFilter.state)).join('') + '</select></label>' +
+      (can('budget.create') && mine
+        ? '<a class="btn primary tall" href="#/budget/new"><span aria-hidden="true">+</span> ขออนุมัติงบใหม่</a>'
+        : can('budget.manage') && !mine
+          ? '<a class="btn tall" href="#/budget/new"><span aria-hidden="true">+</span> นำเข้างบที่อนุมัติแล้ว</a>'
+          : '<span></span>') +
       '</div>';
 
     if (!list.length) {
       return html + '<div class="card empty">' +
-        (mine ? 'ยังไม่มี' + (TYPE_LABEL[type] || 'งบ') + 'ที่การเงินบันทึกไว้ให้คุณ' : 'ยังไม่มี' + (TYPE_LABEL[type] || 'งบประมาณ')) + '</div>';
+        (mine ? 'ยังไม่มี' + (TYPE_LABEL[type] || 'งบ') + 'ของคุณ — กด "ขออนุมัติงบใหม่" เพื่อเริ่ม' : 'ยังไม่มี' + (TYPE_LABEL[type] || 'งบประมาณ')) + '</div>';
     }
 
     html += '<div class="grid" id="budgetGrid">' + list.map((b) => {
       const us = usage(b);
       const search = [b.name, b.code, b.parentCode, b.department, b.company, userName(b.ownerId)]
         .concat(b.items.map((i) => i.code + ' ' + i.name)).join(' ').toLowerCase();
-      const sub = b.type === 'CAPEX' ? b.items.length + ' รายการย่อย' : leaves(b).length + ' รายการต้นทุน';
-      return '<article class="card budget-card" data-search="' + esc(search) + '" data-dept="' + esc(b.department) +
-        '" data-year="' + esc(b.fiscalYear) + '">' +
+      const sub = b.structure === 'project' ? 'งบรวมโครงการ' : b.type === 'CAPEX' ? b.items.length + ' รายการย่อย' : leaves(b).length + ' รายการต้นทุน';
+      const state = b.state || 'active';
+      const active = state === 'active';
+      const own = b.ownerId === u.id;
+      return '<article class="card budget-card' + (active ? '' : ' not-active') + '" data-search="' + esc(search) + '" data-dept="' + esc(b.department) +
+        '" data-year="' + esc(b.fiscalYear) + '" data-state="' + state + '">' +
         '<div class="card-head"><div><h3>' + esc(b.name) + '</h3><div class="code">' + esc(b.code) + ' · ' + sub + '</div></div>' +
-        badge(b.type + ' lg', b.type) + '</div>' +
-        '<div class="card-body"><p class="card-sub">' + budgetSubline(b, mine) + '</p>' + usageKv(us) + '</div>' +
-        '<div class="usage-strip">' + usageBar(us) + '</div>' +
+        '<div class="card-badges">' + badge(b.type + ' lg', b.type) + (active ? '' : badge(BUDGET_STATE_BADGE[state], BUDGET_STATE[state])) + '</div></div>' +
+        '<div class="card-body"><p class="card-sub">' + budgetSubline(b, mine) + '</p>' +
+        (active ? usageKv(us) : '<dl class="kv"><dt>วงเงินที่ขออนุมัติ</dt><dd class="big">' + money(budgetTotal(b)) + '</dd>' +
+          (b.meeting && b.meeting.no ? '<dt>มติที่ประชุม</dt><dd>' + esc(b.meeting.no) + '</dd>' : '') + '</dl>') + '</div>' +
+        (active ? '<div class="usage-strip">' + usageBar(us) + '</div>' : '') +
         '<div class="card-foot">' +
         '<a class="btn" href="#/budget/' + b.id + '">รายละเอียด</a>' +
-        (can('budget.manage') ? '<a class="btn" href="#/budget/' + b.id + '/edit">แก้ไข</a>' : '') +
-        (mine && b.ownerId === u.id ? '<a class="btn primary" href="#/request/new/' + b.id + '">ขอเบิกใช้งบ</a>' : '') +
+        (own && (state === 'draft' || state === 'returned') ? '<a class="btn" href="#/budget/' + b.id + '/edit">แก้ไขร่าง</a>' : '') +
+        (state === 'review' && can('budget.verify') ? '<a class="btn primary" href="#/budget/' + b.id + '">ตรวจสอบ</a>' : '') +
+        (active && own && can('request.create') ? '<a class="btn primary" href="#/request/new/' + b.id + '">ขอดำเนินการใช้งบ</a>' : '') +
         '</div></article>';
     }).join('') + '</div>' +
       '<div class="card empty" id="noMatch" hidden>ไม่พบงบที่ตรงกับเงื่อนไขที่เลือก</div>';
@@ -628,17 +862,20 @@
     if (!q) return;
     const dept = document.getElementById('fDept');
     const year = document.getElementById('fYear');
+    const st = document.getElementById('fState');
     const apply = () => {
       budgetFilter.q = q.value;
       budgetFilter.dept = dept.value;
       budgetFilter.year = year.value;
+      budgetFilter.state = st.value;
       if (!grid) return;
       const term = q.value.trim().toLowerCase();
       let shown = 0;
       grid.querySelectorAll('.budget-card').forEach((card) => {
         const ok = (!term || card.dataset.search.includes(term)) &&
           (!dept.value || card.dataset.dept === dept.value) &&
-          (!year.value || card.dataset.year === year.value);
+          (!year.value || card.dataset.year === year.value) &&
+          (!st.value || card.dataset.state === st.value);
         card.hidden = !ok;
         if (ok) shown += 1;
       });
@@ -647,6 +884,7 @@
     q.addEventListener('input', apply);
     dept.addEventListener('change', apply);
     year.addEventListener('change', apply);
+    st.addEventListener('change', apply);
     apply();
   }
 
@@ -686,31 +924,50 @@
     { code: '4', name: 'รายการส่วนเพิ่มอื่นๆ' }, { code: '4.1', name: '' }
   ];
 
-  function viewBudgetForm(id) {
+  /** ใครสร้าง/แก้ฟอร์มงบได้: Business = ร่างของตน (ร่าง/ส่งกลับ) · ผู้คุมงบ = นำเข้างบที่อนุมัติแล้ว (เปิดใช้ทันที) */
+  function budgetFormMode(b) {
     const u = me();
-    if (!can('budget.manage')) return '<div class="alert error">ไม่มีสิทธิ์บันทึก/แก้ไขงบ</div>';
+    if (b) return (b.state === 'draft' || b.state === 'returned') && b.ownerId === u.id ? 'draft' : null;
+    if (can('budget.create')) return 'draft';
+    if (can('budget.manage')) return 'import';
+    return null;
+  }
+
+  function viewBudgetForm(id) {
     const b = id ? budgetById(id) : null;
     if (id && !b) return notFound();
-    const hasRequests = b && db.requests.some((r) => r.budgetId === b.id);
+    const mode = budgetFormMode(b);
+    if (!mode) {
+      return '<div class="alert error">' + (b ? 'แก้ไขได้เฉพาะร่างหรืองบที่ถูกส่งกลับ ของผู้สร้างเท่านั้น — งบที่เปิดใช้แล้วปรับได้ผ่าน "ขอเพิ่มงบ" หรือผู้คุมงบโยก/ลดงบ'
+        : 'ไม่มีสิทธิ์สร้างงบ') + '</div>';
+    }
+    const u = me();
     const year = new Date().getFullYear();
     const v = b || {
-      type: 'CAPEX', company: 'PSL', fiscalYear: year, group: '01', code: '', parentCode: '', name: '', department: '',
-      ownerId: 'req1', note: '', status: 'Plan', startDate: '', endDate: '', production: {}, items: []
+      type: 'CAPEX', structure: 'items', company: (db.master.companies[0] || {}).code || '', fiscalYear: year + 1, group: '', code: '', parentCode: '', name: '',
+      department: '', ownerId: mode === 'import' ? '' : u.id, note: '', status: 'Plan', startDate: '', endDate: '', production: {}, items: []
     };
+    const structure = v.structure || 'items';
+    const projItem = structure === 'project' && v.items[0] ? v.items[0] : {};
     const prod = v.production || {};
-    const used = usedItemIds();
     const requesters = USERS.filter(canRequestUser);
-    const capexItems = v.type === 'CAPEX' && v.items.length ? v.items : [{ code: '', name: '', amount: '' }];
-    const cbsItems = v.type === 'CBS' && v.items.length ? sortedItems(v) : CBS_TEMPLATE;
+    const capexItems = v.type === 'CAPEX' && structure === 'items' && v.items.length ? v.items : [{ code: '', name: '', amount: '' }];
+    const cbsItems = v.type === 'CBS' && structure === 'items' && v.items.length ? sortedItems(v) : CBS_TEMPLATE;
     const field = (label, inner, extra) => '<label class="field"' + (extra || '') + '><span>' + label + '</span>' + inner + '</label>';
     const select = (name, inner, attrs) => '<div class="select-wrap"><select name="' + name + '"' + (attrs || '') + '>' + inner + '</select></div>';
+    const radio = (value, title, sub) => '<label class="choice-opt"><input type="radio" name="structure" value="' + value + '"' + (structure === value ? ' checked' : '') + '>' +
+      '<span><strong>' + title + '</strong><small>' + sub + '</small></span></label>';
+    const title = b ? 'แก้ไขร่างคำขออนุมัติงบ ' + esc(b.code) : mode === 'import' ? 'นำเข้างบที่อนุมัติแล้ว' : 'ขออนุมัติงบใหม่';
+    const intro = mode === 'import'
+      ? 'สำหรับบันทึกงบที่ผ่านการอนุมัติมาก่อนเริ่มใช้ระบบ — งบจะเปิดใช้งานทันทีเมื่อบันทึก'
+      : 'บันทึกเป็นร่างก่อน → พิมพ์แบบฟอร์มเข้าที่ประชุม → เมื่อที่ประชุมอนุมัติ แนบมติแล้วส่งให้ผู้คุมงบยืนยันเปิดใช้ (ถ้าที่ประชุมอนุมัติไม่เต็มจำนวน ให้แก้ตัวเลขในร่างก่อนส่ง)';
 
-    return '<div class="page-head"><h1>' + (b ? 'แก้ไขงบ ' + esc(b.code) : 'บันทึกงบที่ได้รับอนุมัติ') + '</h1></div>' +
+    return '<div class="page-head"><div><h1>' + title + '</h1><div class="page-sub">' + intro + '</div></div></div>' +
       '<div id="formError"></div>' +
-      '<form id="budgetForm" class="card" data-id="' + esc(id || '') + '">' +
+      '<form id="budgetForm" class="card" data-id="' + esc(id || '') + '" data-mode="' + mode + '">' +
       '<datalist id="glList">' + db.master.glCodes.map((g) => '<option value="' + esc(g.code) + '">' + esc(g.name) + '</option>').join('') + '</datalist>' +
       '<div class="row">' +
-      field('ประเภทงบ', select('type', ['CAPEX', 'CBS'].map((t) => opt(t, TYPE_LABEL[t], v.type)).join(''), hasRequests ? ' disabled' : '')) +
+      field('ประเภทงบ', select('type', ['CAPEX', 'CBS'].map((t) => opt(t, TYPE_LABEL[t], v.type)).join(''))) +
       field('บริษัท', select('company', optList(db.master.companies, 'code', (c) => c.code + (c.name ? ' — ' + c.name : ''), v.company))) +
       field('ปีงบประมาณ', '<input name="fiscalYear" type="number" required value="' + esc(v.fiscalYear) + '">') +
       field('กลุ่มงบประมาณ', select('group', '<option value="">— เลือก —</option>' +
@@ -724,7 +981,9 @@
       '</div>' +
       '<div class="row">' +
       field('หน่วยงาน', select('department', '<option value="">— เลือก —</option>' + optList(db.master.departments, 'name', (d) => d.name, v.department), ' required')) +
-      field('ผู้ขอใช้งบ (เจ้าของงบ)', select('ownerId', requesters.map((x) => opt(x.id, x.name + (x.title ? ' — ' + x.title : ''), v.ownerId)).join(''))) +
+      (mode === 'import'
+        ? field('Business เจ้าของงบ', select('ownerId', '<option value="">— เลือก —</option>' + requesters.map((x) => opt(x.id, x.name + (x.title ? ' — ' + x.title : ''), v.ownerId)).join(''), ' required'))
+        : '<input type="hidden" name="ownerId" value="' + esc(v.ownerId) + '"><div class="field"><span>Business เจ้าของงบ</span><div class="out left">' + esc(userName(v.ownerId)) + '</div></div>') +
       field('สถานะโครงการ', select('status', CBS_STATUS.map((s) => opt(s, s, v.status)).join('')), ' data-for="CBS"') +
       '</div>' +
       '<div class="row" data-for="CBS">' +
@@ -737,29 +996,39 @@
       field('จำนวนผลผลิต', '<input name="prodQty" type="number" min="0" step="any" value="' + esc(prod.qty || '') + '">') +
       field('หน่วยผลผลิต', '<input name="prodUnit" value="' + esc(prod.unit || '') + '" placeholder="เช่น กล้า">') +
       '</div>' +
+      (mode === 'import'
+        ? '<div class="row">' + field('วันที่อนุมัติ / ประชุม', '<input name="meetingDate" type="date">') +
+          field('เลขที่มติ / เอกสารอนุมัติ', '<input name="meetingNo" required placeholder="เช่น มติที่ 1/2569">') + '</div>'
+        : '') +
 
-      '<fieldset data-for="CAPEX"><legend>รายการย่อย (Item No.)</legend>' +
+      '<fieldset><legend>โครงสร้างงบ</legend><div class="choice">' +
+      radio('items', 'แยกรายการย่อย', 'คุมวงเงินรายรายการ เหมาะกับงบที่รู้รายละเอียดแล้ว') +
+      radio('project', 'งบรวมทั้งโครงการ', 'ยังไม่แยกรายการ — ตอนใช้งบเลือกหมวดค่าใช้จ่ายแทน คุมวงเงินที่ระดับโครงการ') + '</div>' +
+      '<div class="row" data-structure="project">' +
+      field('วงเงินรวมทั้งโครงการ (รวม VAT)', '<input name="projAmount" type="number" min="0" step="0.01" class="right" value="' + esc(projItem.amount || '') + '">') +
+      field('หมวด DOA', select('projDoa', opt('2.4', '2.4 สินทรัพย์ลงทุน', projItem.doa) + opt('2.5', '2.5 ดำเนินงานทั่วไป', projItem.doa || '2.5')), ' data-for="CAPEX"') +
+      field('ประเภทสินทรัพย์หลัก', select('projAsset', optList(db.master.assetTypes, 'name', (t) => t.name, projItem.assetType || assetTypeList()[0])), ' data-for="CAPEX"') +
+      '</div></fieldset>' +
+
+      '<fieldset data-for="CAPEX" data-structure="items"><legend>รายการย่อย (Item No.)</legend>' +
       '<div class="table-wrap"><table class="edit-table"><thead><tr><th style="width:13rem">รหัสรายการย่อย</th><th>ชื่อรายการ</th>' +
       '<th style="width:11rem">ประเภทสินทรัพย์</th><th style="width:11rem">หมวด DOA</th><th class="num" style="width:10rem">วงเงิน (รวม VAT)</th><th style="width:3rem"></th></tr></thead>' +
-      '<tbody id="capexRows">' + capexItems.map((it) => capexRow(it, used.has(it.id))).join('') + '</tbody></table></div>' +
+      '<tbody id="capexRows">' + capexItems.map((it) => capexRow(it, false)).join('') + '</tbody></table></div>' +
       '<div class="actions table-actions"><button type="button" class="btn small" data-add-row="capex">+ เพิ่มรายการย่อย</button>' +
       '<span class="muted">รวม <strong data-total="capex">0.00</strong> บาท</span></div></fieldset>' +
 
-      '<fieldset data-for="CBS"><legend>Cost Breakdown Structure (CBS)</legend>' +
+      '<fieldset data-for="CBS" data-structure="items"><legend>Cost Breakdown Structure (CBS)</legend>' +
       '<p class="muted small-note">ใช้รหัสแบบ 1 → 1.1 → 1.1.1 รายการที่มีรายการลูกจะรวมยอดจากรายการลูกให้อัตโนมัติ และเบิกได้เฉพาะรายการล่างสุด</p>' +
       '<div class="table-wrap"><table class="edit-table"><thead><tr><th style="width:5.5rem">รหัส</th><th>รายการ</th><th style="width:6rem">จำนวน</th>' +
       '<th style="width:5.5rem">หน่วย</th><th class="num" style="width:9rem">ก่อน VAT</th><th style="width:4rem">VAT 7%</th>' +
       '<th style="width:7rem">GL Code</th><th style="width:10rem">GL Name</th><th style="width:3rem"></th></tr></thead>' +
-      '<tbody id="cbsRows">' + cbsItems.map((it) => cbsRow(it, used.has(it.id))).join('') + '</tbody></table></div>' +
+      '<tbody id="cbsRows">' + cbsItems.map((it) => cbsRow(it, false)).join('') + '</tbody></table></div>' +
       '<div class="actions table-actions"><button type="button" class="btn small" data-add-row="cbs">+ เพิ่มรายการ</button>' +
       '<span class="muted">รวม (รวม VAT) <strong data-total="cbs">0.00</strong> บาท</span></div></fieldset>' +
 
-      field('หมายเหตุ / เลขที่เอกสารอนุมัติงบ', '<textarea name="note">' + esc(v.note) + '</textarea>') +
-      (b ? field('เหตุผลการปรับงบ (จำเป็นเมื่อเปลี่ยนวงเงินหรือรายการ — จะบันทึกเป็นประวัติการปรับงบ)',
-        '<textarea name="revisionNote" placeholder="เช่น ปรับเพิ่มตามใบเสนอราคาจริง / Revise CBS ครั้งที่ ' + ((b.revisions || []).length) + '"></textarea>') : '') +
-      '<div class="actions"><button class="btn primary" type="submit">บันทึก</button>' +
-      '<a class="btn" data-back href="' + (b ? '#/budget/' + b.id : '#/budgets') + '">ยกเลิก</a>' +
-      (b && !hasRequests ? '<button type="button" class="btn bad" id="deleteBudget">ลบงบนี้</button>' : '') +
+      field('หมายเหตุ / ความจำเป็นของโครงการ', '<textarea name="note">' + esc(v.note) + '</textarea>') +
+      '<div class="actions"><button class="btn primary" type="submit">' + (mode === 'import' ? 'บันทึกและเปิดใช้งาน' : 'บันทึกร่าง') + '</button>' +
+      '<a class="btn" data-back href="' + (b ? '#/budget/' + b.id : '#/my-budgets') + '">ยกเลิก</a>' +
       '</div></form>';
   }
 
@@ -801,13 +1070,18 @@
       });
       form.querySelector('[data-total="cbs"]').textContent = money(cbs);
     };
+    const curStructure = () => form.querySelector('[name="structure"]:checked').value;
     const sync = () => {
       const t = curType();
-      form.querySelectorAll('[data-for]').forEach((el) => { el.hidden = el.dataset.for !== t; });
+      const st = curStructure();
+      form.querySelectorAll('[data-for], [data-structure]').forEach((el) => {
+        el.hidden = (el.dataset.for && el.dataset.for !== t) || (el.dataset.structure && el.dataset.structure !== st);
+      });
       form.querySelector('[data-code-label]').textContent = t === 'CBS' ? 'Job No.' : 'รหัสโครงการ (Project No.)';
       recalc();
     };
     typeSel.addEventListener('change', sync);
+    form.querySelectorAll('[name="structure"]').forEach((el) => el.addEventListener('change', sync));
     form.addEventListener('input', recalc);
     form.addEventListener('change', (e) => {
       // เลือก GL Code จากข้อมูลหลักแล้วเติมชื่อ GL ให้ ถ้ายังไม่ได้กรอก
@@ -843,32 +1117,20 @@
     });
     sync();
 
-    const del = document.getElementById('deleteBudget');
-    if (del) {
-      del.addEventListener('click', async () => {
-        if (!confirm('ยืนยันการลบงบนี้?')) return;
-        if (REMOTE) {
-          if (!(await runAndReload(() => window.RemoteApi.deleteBudget(form.dataset.id)))) return;
-        } else {
-          db.budgets = db.budgets.filter((b) => b.id !== form.dataset.id);
-          save();
-        }
-        setFlash('success', 'ลบงบเรียบร้อยแล้ว');
-        go('#/budgets');
-      });
-    }
-
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
       const f = form.elements;
       const id = form.dataset.id;
       const existing = id ? budgetById(id) : null;
-      const type = existing && f.type.disabled ? existing.type : curType();
+      const mode = form.dataset.mode;
+      const type = curType();
+      const structure = curStructure();
       const errors = [];
       const code = f.code.value.trim();
-      if (db.budgets.some((b) => b.code === code && b.id !== id)) errors.push('รหัส "' + code + '" มีอยู่แล้ว');
+      if (db.budgets.some((b) => b.code === code && b.id !== id && b.state !== 'cancelled')) errors.push('รหัส "' + code + '" มีอยู่แล้ว');
+      if (mode === 'import' && !f.ownerId.value) errors.push('กรุณาเลือก Business เจ้าของงบ');
 
-      const rows = Array.from(form.querySelectorAll('#' + (type === 'CBS' ? 'cbs' : 'capex') + 'Rows tr'));
+      const rows = structure === 'project' ? [] : Array.from(form.querySelectorAll('#' + (type === 'CBS' ? 'cbs' : 'capex') + 'Rows tr'));
       const val = (tr, n) => tr.querySelector('[name="' + n + '"]');
       const items = rows.map((tr) => {
         const it = {
@@ -889,6 +1151,12 @@
         }
         return it;
       }).filter((it) => it.code || it.name || it.amount);
+      if (structure === 'project') {
+        // งบรวมโครงการ = รายการเดียวที่เป็นตัวโครงการ
+        const old = existing && existing.structure === 'project' ? existing.items[0] : null;
+        items.push(Object.assign({ id: old ? old.id : '', code: code || '-', name: 'งบรวมทั้งโครงการ', amount: round2(f.projAmount.value), vat: 0,
+          qty: '', unit: '', glCode: '', glName: '' }, type === 'CAPEX' ? { assetType: f.projAsset.value, doa: f.projDoa.value } : {}));
+      }
 
       if (!items.length) errors.push('ต้องมีรายการอย่างน้อย 1 รายการ');
       if (items.some((it) => !it.code || !it.name)) errors.push('กรุณากรอกรหัสและชื่อรายการให้ครบทุกแถว');
@@ -900,40 +1168,17 @@
       if (type === 'CAPEX' && items.some((it) => !(it.amount > 0))) errors.push('วงเงินของแต่ละรายการย่อยต้องมากกว่า 0');
       if (!(budgetTotal(draft) > 0)) errors.push('วงเงินรวมต้องมากกว่า 0');
 
-      if (existing) {
-        const used = usedItemIds();
-        existing.items.filter((it) => used.has(it.id)).forEach((old) => {
-          const now = items.find((it) => it.id === old.id);
-          if (!now) { errors.push('รายการ ' + old.code + ' มีการเบิกใช้แล้ว ลบไม่ได้'); return; }
-          if (!isLeaf(draft, now)) errors.push('รายการ ' + now.code + ' มีการเบิกใช้แล้ว เพิ่มรายการลูกใต้รายการนี้ไม่ได้');
-          if (type === 'CAPEX') {
-            const us = usage(existing, old.id);
-            if (itemTotal(now) < us.used + us.reserved) {
-              errors.push('รายการ ' + now.code + ' ต้องมีวงเงินไม่น้อยกว่ายอดที่ใช้/จองแล้ว (' + money(us.used + us.reserved) + ' บาท)');
-            }
-          }
-        });
-      }
-
       items.forEach((it) => { if (!it.id) it.id = nextId('i'); });
       const snapshot = snapshotItems(draft);
-      const revisionNote = f.revisionNote ? f.revisionNote.value.trim() : '';
-      let changed = false;
-      if (existing) {
-        const last = existing.revisions[existing.revisions.length - 1];
-        changed = JSON.stringify(last.items.map((x) => [x.code, x.total])) !== JSON.stringify(snapshot.map((x) => [x.code, x.total]));
-        if (changed && !revisionNote) errors.push('มีการเปลี่ยนวงเงินหรือรายการ กรุณาระบุเหตุผลการปรับงบ');
-      }
-
       if (errors.length) { showErrors(errors); return; }
 
       const data = {
-        type, code, items,
+        type, code, items, structure,
         company: f.company.value,
         fiscalYear: Number(f.fiscalYear.value),
         name: f.name.value.trim(),
         department: f.department.value.trim(),
-        ownerId: f.ownerId.value,
+        ownerId: f.ownerId.value || (existing ? existing.ownerId : me().id),
         note: f.note.value.trim()
       };
       if (type === 'CAPEX') {
@@ -950,48 +1195,115 @@
       const at = new Date().toISOString();
       let target;
       if (existing) {
-        target = REMOTE ? JSON.parse(JSON.stringify(existing)) : existing;
+        target = existing;
         Object.assign(target, data, { updatedAt: at, updatedBy: me().id });
-        if (changed) {
-          target.revisions.push({ no: target.revisions.length, at, by: me().id, note: revisionNote, total: budgetTotal(target), items: snapshot });
+        addHistory(target, 'แก้ไขร่าง', '', 'งบ ' + code);
+      } else {
+        target = Object.assign({ id: nextId('b'), createdAt: at, createdBy: me().id, attachments: [], history: [], revisions: [] }, data);
+        if (mode === 'import') {
+          Object.assign(target, { state: 'active', activatedAt: at, activatedBy: me().id, meeting: { date: f.meetingDate.value, no: f.meetingNo.value.trim(), note: '' } });
+          target.revisions = [{ no: 0, at, by: me().id, note: 'นำเข้างบที่อนุมัติแล้ว (' + target.meeting.no + ')', total: budgetTotal(target), items: snapshot }];
+          addHistory(target, 'นำเข้างบที่อนุมัติแล้ว และเปิดใช้งาน', target.meeting.no, 'งบ ' + code);
+        } else {
+          target.state = 'draft';
+          addHistory(target, 'สร้างร่างคำขออนุมัติงบ', '', 'งบ ' + code);
         }
-      } else {
-        target = Object.assign({ id: nextId('b'), createdAt: at, createdBy: me().id }, data);
-        target.revisions = [{ no: 0, at, by: me().id, note: 'บันทึกงบที่ได้รับอนุมัติ', total: budgetTotal(target), items: snapshot }];
-        if (!REMOTE) db.budgets.push(target);
+        db.budgets.push(target);
       }
-      if (REMOTE) {
-        if (!(await runAndReload(() => window.RemoteApi.saveBudget(target, existing ? existing.version : null)))) return;
-      } else {
-        save();
-      }
-      setFlash('success', 'บันทึกงบ ' + code + ' เรียบร้อยแล้ว' + (changed ? ' (บันทึกเป็นการปรับงบครั้งที่ ' + (target.revisions.length - 1) + ')' : ''));
-      go(existing ? '#/budget/' + existing.id : '#/budgets');
+      save();
+      setFlash('success', mode === 'import' ? 'นำเข้างบ ' + code + ' และเปิดใช้งานแล้ว'
+        : 'บันทึกร่าง ' + code + ' แล้ว — พิมพ์แบบฟอร์มเข้าที่ประชุมได้จากหน้ารายละเอียด เมื่อได้มติแล้วแนบมติและส่งให้ผู้คุมงบ');
+      go('#/budget/' + target.id);
     });
   }
 
   // ---------------------------------------------------------------- budget detail
 
+  // ---- ไฟล์แนบ (โหมดทดลองเก็บในเบราว์เซอร์ เป็น data URL)
+  const fmtSize = (n) => (n >= 1024 * 1024 ? (n / 1024 / 1024).toFixed(1) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB');
+  /** รายการไฟล์แนบ: opts.del = ใส่ปุ่มลบ (data-att-del) */
+  function attachList(list, opts) {
+    const files = list || [];
+    if (!files.length) return '<p class="muted small-note">' + ((opts && opts.empty) || 'ยังไม่มีไฟล์แนบ') + '</p>';
+    return '<ul class="files">' + files.map((f) => '<li><span class="file-ico" aria-hidden="true">PDF</span><div>' +
+      (f.data ? '<a href="' + f.data + '" download="' + esc(f.name) + '" target="_blank" rel="noopener">' + esc(f.name) + '</a>' : '<span>' + esc(f.name) + '</span>') +
+      '<small>' + (f.sample ? 'ไฟล์ตัวอย่าง (ไม่มีเนื้อหา)' : fmtSize(f.size)) + ' · ' + esc(userName(f.by)) + ' · ' + fmtDate(f.at) + '</small></div>' +
+      (opts && opts.del ? '<button type="button" class="btn small bad" data-att-del="' + esc(f.id) + '" title="ลบไฟล์">×</button>' : '') + '</li>').join('') + '</ul>';
+  }
+  /** อ่านไฟล์จาก input — รับ PDF/รูปภาพ ไม่เกิน ATTACH_MAX (โหมดทดลอง) */
+  function readFiles(input, slot) {
+    const files = Array.from(input.files || []);
+    const bad = files.filter((f) => !/pdf|png|jpe?g/i.test(f.type || f.name));
+    const big = files.filter((f) => f.size > ATTACH_MAX);
+    if (bad.length) { alert('รับเฉพาะไฟล์ PDF หรือรูปภาพ (PNG/JPG)'); return Promise.resolve([]); }
+    if (big.length) { alert('โหมดทดลองเก็บไฟล์ในเบราว์เซอร์ได้ไม่เกิน ' + fmtSize(ATTACH_MAX) + ' ต่อไฟล์ (ระบบจริงรับไฟล์ใหญ่กว่านี้ได้)\n' + big.map((f) => f.name + ' = ' + fmtSize(f.size)).join('\n')); return Promise.resolve([]); }
+    return Promise.all(files.map((f) => new Promise((resolve) => {
+      const rd = new FileReader();
+      rd.onload = () => resolve({ id: nextId('f'), slot, name: f.name, size: f.size, type: f.type, data: rd.result, at: new Date().toISOString(), by: me().id });
+      rd.readAsDataURL(f);
+    })));
+  }
+
+  const budgetStateBadge = (b) => badge(BUDGET_STATE_BADGE[b.state || 'active'], BUDGET_STATE[b.state || 'active']);
+  const tlItem = (cls, title, sub, note) => '<li class="' + cls + '"><span class="tl-dot"></span><div><strong>' + title + '</strong>' +
+    (sub ? '<div class="muted">' + sub + '</div>' : '') + (note ? '<div class="tl-note">' + esc(note) + '</div>' : '') + '</div></li>';
+  /** ประวัติการดำเนินการ (ใหม่สุดอยู่บน) */
+  function historyCard(list, title) {
+    const items = (list || []).slice().reverse();
+    return '<div class="card"><h3 class="side-title">' + (title || 'ประวัติการดำเนินการ') + '</h3>' +
+      (items.length ? '<ol class="timeline">' + items.map((h) => tlItem('done', esc(h.action), esc(userName(h.by)) + ' · ' + fmtDate(h.at), h.note)).join('') + '</ol>'
+        : '<p class="muted">ยังไม่มีประวัติ</p>') + '</div>';
+  }
+  /** แถบขั้นตอนของวงจรงบ */
+  function budgetStepper(b) {
+    const st = b.state || 'active';
+    const steps = [['draft', 'ร่างคำขอ'], ['meeting', 'เข้าที่ประชุม / แนบมติ'], ['review', 'ผู้คุมงบตรวจสอบ'], ['active', 'เปิดใช้งาน']];
+    const idx = { draft: 0, returned: 0, review: 2, active: 3, cancelled: -1 }[st];
+    return '<ol class="stepper">' + steps.map(([k, label], i) => '<li class="' + (i < idx ? 'done' : i === idx ? 'current' : '') + '"><span>' + (i + 1) + '</span>' + label + '</li>').join('') + '</ol>';
+  }
+
   function viewBudgetDetail(id) {
     const b = budgetById(id);
     if (!b) return notFound();
     const u = me();
+    const state = b.state || 'active';
+    const active = state === 'active';
+    const own = b.ownerId === u.id;
+    const editable = own && (state === 'draft' || state === 'returned');
     const us = usage(b);
     const reqs = db.requests.filter((r) => r.budgetId === b.id);
-    const canRequest = can('request.create') && b.ownerId === u.id;
+    const chgs = (db.changes || []).filter((c) => c.budgetId === b.id);
+    const canRequest = active && can('request.create') && own;
     const isCapex = b.type === 'CAPEX';
+    const isProject = b.structure === 'project';
     const prod = b.production || {};
     const first = (b.revisions && b.revisions[0]) ? b.revisions[0].items : [];
 
     // ---- หัวหน้า + ปุ่มคำสั่ง
     const actions = [];
-    if (canRequest) actions.push('<a class="btn primary" href="#/request/new/' + b.id + '">ขอเบิกใช้งบ</a>');
-    if (can('budget.manage')) actions.push('<a class="btn" href="#/budget/' + b.id + '/edit">แก้ไข / ' + (isCapex ? 'ปรับงบ' : 'Revise CBS') + '</a>');
+    if (canRequest) {
+      actions.push('<a class="btn primary" href="#/request/new/' + b.id + '">ขอดำเนินการใช้งบ</a>');
+      actions.push('<a class="btn" href="#/change/new/' + b.id + '">ขอเพิ่มงบ</a>');
+    }
+    if (editable) actions.push('<a class="btn" href="#/budget/' + b.id + '/edit">แก้ไขร่าง</a>');
+    if (own || canViewAll()) actions.push('<a class="btn" href="#/budget/' + b.id + '/form">พิมพ์แบบฟอร์มขออนุมัติ</a>');
+    if (active && can('budget.adjust')) actions.push('<a class="btn" href="#/adjust?budget=' + b.id + '">โยก / ลดงบ</a>');
+    if (editable) actions.push('<button type="button" class="btn bad" id="cancelBudget">ยกเลิกคำขอ</button>');
     let html = '<div class="page-head detail-head"><div>' +
       '<div class="eyebrow">' + (isCapex ? 'งบลงทุน' : 'งบโครงการ') + ' · ' + badge(b.type, b.type) + ' ' + esc(b.code) +
-      (b.parentCode ? ' <span class="muted">(โครงการหลัก ' + esc(b.parentCode) + ')</span>' : '') + '</div>' +
+      (b.parentCode ? ' <span class="muted">(โครงการหลัก ' + esc(b.parentCode) + ')</span>' : '') + ' · ' + budgetStateBadge(b) + '</div>' +
       '<h1>' + esc(b.name) + (isCapex ? '' : ' ' + badge(b.status === 'แล้วเสร็จ' ? 'approved' : 'pending', b.status)) + '</h1></div>' +
       (actions.length ? '<div class="head-actions">' + actions.join('') + '</div>' : '') + '</div>' + takeFlash();
+
+    if (!active) {
+      const msg = {
+        draft: own ? 'ร่างนี้ยังไม่ได้ส่ง — พิมพ์แบบฟอร์มเข้าที่ประชุม เมื่อที่ประชุมอนุมัติแล้ว แนบมติและส่งให้ผู้คุมงบด้านล่าง (ร่างค้างไว้ได้ไม่จำกัดเวลา)' : 'ร่างของ Business ยังไม่ได้ส่งตรวจ',
+        returned: 'ผู้คุมงบส่งกลับให้แก้ไข: ' + (b.returnReason || ''),
+        review: 'แนบมติแล้ว รอผู้คุมงบตรวจสอบและยืนยันเปิดใช้งาน',
+        cancelled: 'คำขออนุมัติงบนี้ถูกยกเลิกแล้ว'
+      }[state];
+      html += '<div class="card stepper-card">' + budgetStepper(b) + '<p class="' + (state === 'returned' ? 'neg' : 'muted') + '">' + esc(msg) + '</p></div>';
+    }
 
     // ---- ข้อมูลหลักแบบตาราง
     const fact = (label, value, wide) => (value || value === 0
@@ -1001,34 +1313,53 @@
       fact('ปีงบประมาณ', esc(b.fiscalYear)) +
       (isCapex ? fact('กลุ่มงบประมาณ', esc(b.group)) : fact('ระยะเวลา', b.startDate ? fmtDay(b.startDate) + '<small>ถึง ' + fmtDay(b.endDate) + '</small>' : '')) +
       fact('หน่วยงาน', esc(b.department)) +
-      fact('ผู้ขอใช้งบ', esc(userName(b.ownerId))) +
-      (isCapex ? fact('รายการย่อย', b.items.length + ' รายการ')
-        : fact('สถานที่ / แปลง', esc(prod.site)) +
-          fact('ผลผลิต', prod.product ? esc(prod.product) + (prod.qty ? '<small>' + Number(prod.qty).toLocaleString('th-TH') + ' ' + esc(prod.unit || '') + '</small>' : '') : '') +
-          fact('รายการต้นทุน', leaves(b).length + ' รายการ')) +
+      fact('Business เจ้าของงบ', esc(userName(b.ownerId))) +
+      fact('โครงสร้างงบ', isProject ? 'งบรวมทั้งโครงการ' : (isCapex ? b.items.length + ' รายการย่อย' : leaves(b).length + ' รายการต้นทุน')) +
+      (isCapex ? '' : fact('สถานที่ / แปลง', esc(prod.site)) +
+        fact('ผลผลิต', prod.product ? esc(prod.product) + (prod.qty ? '<small>' + Number(prod.qty).toLocaleString('th-TH') + ' ' + esc(prod.unit || '') + '</small>' : '') : '')) +
+      fact('มติที่ประชุม', b.meeting && b.meeting.no ? esc(b.meeting.no) + (b.meeting.date ? '<small>' + fmtDay(b.meeting.date) + '</small>' : '') : '') +
       fact('หมายเหตุ', esc(b.note), true) +
       '</div></section>';
 
-    // ---- ตารางรายการ (ลดคอลัมน์ให้พอดีกับพื้นที่)
-    const reqBtn = (i) => (canRequest ? '<td><a class="btn small" href="#/request/new/' + b.id + '?item=' + i.id + '">ขอเบิก</a></td>' : '');
+    // ---- ตารางรายการ
+    const reqBtn = (i) => (canRequest ? '<td><a class="btn small" href="#/request/new/' + b.id + '?item=' + i.id + '">ขอใช้</a></td>' : '');
     let items;
-    if (isCapex) {
+    if (isProject) {
+      const it = b.items[0] || {};
+      const cats = {};
+      reqs.filter((r) => ['pending', 'approved', 'closed'].includes(r.status)).forEach((r) => r.lines.forEach((l) => {
+        const k = l.category || 'ไม่ระบุหมวด';
+        cats[k] = round2((cats[k] || 0) + l.amount);
+      }));
+      items = '<h2>งบรวมทั้งโครงการ</h2><div class="table-wrap"><table><thead><tr><th>รายการ</th><th class="num">งบ</th>' +
+        (active ? '<th class="num">ตัดงบแล้ว</th><th class="num">จองไว้</th><th class="num">คงเหลือ</th>' : '') + '</tr></thead><tbody>' +
+        '<tr><td>' + esc(it.name || 'งบรวมทั้งโครงการ') + (isCapex ? '<div class="muted">' + esc(it.assetType || '') + ' · DOA ' + esc(it.doa || '') + '</div>' : '') + '</td>' +
+        '<td class="num">' + money(budgetTotal(b)) + '</td>' +
+        (active ? '<td class="num">' + money(us.used) + '</td><td class="num">' + money(us.reserved) + '</td><td class="num"><strong>' + moneyCell(us.remaining) + '</strong></td>' : '') +
+        '</tr></tbody></table></div>' +
+        (active ? '<h2>สรุปการใช้งบตามหมวดค่าใช้จ่าย</h2>' + (Object.keys(cats).length
+          ? '<div class="table-wrap"><table><thead><tr><th>หมวดค่าใช้จ่าย</th><th class="num">ยอดที่ขอใช้ (ไม่รวมที่ยกเลิก/ส่งกลับ)</th></tr></thead><tbody>' +
+            Object.keys(cats).sort((x, y) => cats[y] - cats[x]).map((k) => '<tr><td>' + esc(k) + '</td><td class="num">' + money(cats[k]) + '</td></tr>').join('') + '</tbody></table></div>'
+          : '<p class="muted">ยังไม่มีการดำเนินการใช้งบ</p>') : '');
+    } else if (isCapex) {
       items = '<h2>รายการย่อย (Item No.)</h2><div class="table-wrap"><table><thead><tr>' +
-        '<th>รหัสรายการย่อย</th><th>รายการ</th><th class="num">งบ</th><th class="num">ตัดงบแล้ว</th><th class="num">จองไว้</th><th class="num">คงเหลือ</th>' +
+        '<th>รหัสรายการย่อย</th><th>รายการ</th><th class="num">งบ</th>' + (active ? '<th class="num">ตัดงบแล้ว</th><th class="num">จองไว้</th><th class="num">คงเหลือ</th>' : '') +
         (canRequest ? '<th></th>' : '') + '</tr></thead><tbody>' +
         b.items.map((i) => {
           const iu = usage(b, i.id);
           const orig = first.find((x) => x.code === i.code);
-          const origNote = !orig ? '<div class="muted">เพิ่มภายหลัง</div>'
+          const origNote = !active ? '' : !orig ? '<div class="muted">เพิ่มภายหลัง</div>'
             : orig.total !== iu.approved ? '<div class="muted">เดิม ' + money(orig.total) + '</div>' : '';
           return '<tr><td class="nowrap">' + esc(i.code) + '</td><td>' + esc(i.name) +
             '<div class="muted">' + esc(i.assetType) + ' · DOA ' + esc(i.doa) + '</div></td>' +
-            '<td class="num">' + money(iu.approved) + origNote + '</td><td class="num">' + money(iu.used) + '</td><td class="num">' + money(iu.reserved) +
-            '</td><td class="num"><strong>' + moneyCell(iu.remaining) + '</strong></td>' + reqBtn(i) + '</tr>';
+            '<td class="num">' + money(itemTotal(i)) + origNote + '</td>' +
+            (active ? '<td class="num">' + money(iu.used) + '</td><td class="num">' + money(iu.reserved) +
+              '</td><td class="num nowrap"><strong>' + moneyCell(iu.remaining) + '</strong>' + (iu.remaining < 0 ? ' <span class="badge rejected">เกินงบรายการ</span>' : '') + '</td>' : '') +
+            reqBtn(i) + '</tr>';
         }).join('') + '</tbody></table></div>';
     } else {
       items = '<h2>Cost Breakdown Structure</h2><div class="table-wrap"><table><thead><tr>' +
-        '<th>รหัส</th><th>รายการ</th><th>GL</th><th class="num">งบ (รวม VAT)</th><th class="num">ตัดงบแล้ว</th><th class="num">จองไว้</th><th class="num">คงเหลือ</th>' +
+        '<th>รหัส</th><th>รายการ</th><th>GL</th><th class="num">งบ (รวม VAT)</th>' + (active ? '<th class="num">ตัดงบแล้ว</th><th class="num">จองไว้</th><th class="num">คงเหลือ</th>' : '') +
         (canRequest ? '<th></th>' : '') + '</tr></thead><tbody>' +
         sortedItems(b).map((i) => {
           const iu = usage(b, i.id);
@@ -1037,46 +1368,192 @@
           return '<tr class="' + (leaf ? '' : 'parent-row') + '"><td class="nowrap">' + esc(i.code) + '</td>' +
             '<td style="padding-left:' + (0.75 + depth(i) * 1.1) + 'rem">' + esc(i.name) + qty + '</td>' +
             '<td>' + (leaf && i.glCode ? esc(i.glCode) + '<div class="muted">' + esc(i.glName) + '</div>' : '') + '</td>' +
-            '<td class="num">' + money(iu.approved) + '</td><td class="num">' + money(iu.used) + '</td><td class="num">' + money(iu.reserved) + '</td>' +
-            '<td class="num nowrap">' + moneyCell(iu.remaining) + (iu.remaining < 0 ? ' <span class="badge rejected">เกินงบ</span>' : '') + '</td>' +
+            '<td class="num">' + money(iu.approved) + '</td>' +
+            (active ? '<td class="num">' + money(iu.used) + '</td><td class="num">' + money(iu.reserved) + '</td>' +
+              '<td class="num nowrap">' + moneyCell(iu.remaining) + (iu.remaining < 0 ? ' <span class="badge rejected">เกินงบ</span>' : '') + '</td>' : '') +
             (canRequest ? (leaf ? reqBtn(i) : '<td></td>') : '') + '</tr>';
         }).join('') + '</tbody></table></div>';
     }
-    const main = facts + items + '<h2>ประวัติการขอเบิกใช้งบ <span class="muted count-note">(' + reqs.length + ')</span></h2>' + requestTable(reqs, false);
 
-    // ---- คอลัมน์ขวา: ยอดคงเหลือ + ภาพรวมคำขอ + ประวัติการปรับงบ
-    let side = '<div class="card total-card"><span class="muted">งบคงเหลือ</span>' +
-      '<div class="total-amount' + (us.remaining < 0 ? ' neg' : '') + '">' + money(us.remaining) + ' <small>บาท</small></div>' +
-      '<div style="margin:.75rem 0 .9rem">' + usageBar(us) + '</div>' +
-      '<dl class="kv compact"><dt>งบที่ได้รับอนุมัติ</dt><dd>' + money(us.approved) + '</dd>' +
-      '<dt>ตัดงบแล้ว (บัญชีจ่ายแล้ว)</dt><dd>' + money(us.used) + '</dd>' +
-      '<dt>จองไว้ (ยังไม่จ่าย)</dt><dd>' + money(us.reserved) + '</dd></dl></div>';
+    // ---- หลักฐานการอนุมัติ (มติที่ประชุม)
+    let evidence = '<h2>มติที่ประชุม / หลักฐานการอนุมัติ</h2><section class="card evidence-card">';
+    if (editable) {
+      evidence += '<form id="submitBudget" data-id="' + b.id + '"><div class="form-grid">' +
+        '<label class="field"><span>วันที่ประชุม</span><input name="meetingDate" type="date" value="' + esc((b.meeting && b.meeting.date) || '') + '"></label>' +
+        '<label class="field"><span>เลขที่มติ</span><input name="meetingNo" placeholder="เช่น มติที่ 10/' + (new Date().getFullYear()) + '" value="' + esc((b.meeting && b.meeting.no) || '') + '"></label>' +
+        '<label class="field full"><span>หมายเหตุจากที่ประชุม (ถ้ามี)</span><input name="meetingNote" placeholder="เช่น อนุมัติเต็มจำนวน / อนุมัติบางส่วน" value="' + esc((b.meeting && b.meeting.note) || '') + '"></label></div>' +
+        '<div class="field"><span>ไฟล์มติที่ประชุม (PDF หรือรูปภาพ)</span>' + attachList(b.attachments, { del: true, empty: 'ยังไม่ได้แนบมติ' }) +
+        '<label class="btn small file-btn">+ แนบไฟล์<input type="file" id="budgetFiles" accept="application/pdf,image/png,image/jpeg" multiple hidden></label></div>' +
+        '<div class="actions"><button class="btn primary" type="submit">ส่งให้ผู้คุมงบตรวจสอบ</button><button class="btn" type="button" id="saveMeeting">บันทึกข้อมูลมติไว้ก่อน</button></div></form>';
+    } else {
+      evidence += (b.meeting && b.meeting.no
+        ? '<p>' + esc(b.meeting.no) + (b.meeting.date ? ' · ประชุมวันที่ ' + fmtDay(b.meeting.date) : '') + (b.meeting.note ? ' · ' + esc(b.meeting.note) : '') + '</p>'
+        : '<p class="muted">ยังไม่มีข้อมูลมติ</p>') + attachList(b.attachments, { empty: 'ยังไม่ได้แนบมติ' });
+    }
+    evidence += '</section>';
 
-    const count = (st) => reqs.filter((r) => r.status === st).length;
-    const overItems = isCapex ? [] : leaves(b).filter((i) => usage(b, i.id).remaining < 0);
-    const stat = (label, n, cls) => '<div class="stat' + (cls ? ' ' + cls : '') + '"><strong>' + n + '</strong><span>' + label + '</span></div>';
-    side += '<div class="card"><h3 class="side-title">ภาพรวมการขอเบิก</h3><div class="stats">' +
-      stat('ออกเอกสารแล้ว', count('approved')) +
-      (isCapex ? stat('รอการเงินตรวจสอบ', count('pending'), count('pending') ? 'warn' : '') : '') +
-      stat('ไม่อนุมัติ / ยกเลิก', count('rejected') + count('cancelled')) +
-      (isCapex
-        ? stat('ค้างบันทึกงวดจ่าย', money(reqs.filter(needsPayment).reduce((s, r) => s + outstanding(r), 0)))
-        : stat('รายการที่เกินงบ', overItems.length, overItems.length ? 'bad' : '')) +
-      '</div></div>';
+    const chgList = chgs.length
+      ? '<h2>คำขอเพิ่มงบ <span class="muted count-note">(' + chgs.length + ')</span></h2><div class="table-wrap"><table><thead><tr><th>เลขที่</th><th>เหตุผล</th><th class="num">ขอเพิ่ม</th><th>สถานะ</th></tr></thead><tbody>' +
+        chgs.map((c) => '<tr><td class="nowrap"><a href="#/change/' + c.id + '">' + esc(c.no) + '</a><div class="muted">' + fmtDay(c.createdAt) + '</div></td><td>' + esc(c.reason) + '</td>' +
+          '<td class="num">' + money(changeTotal(c)) + '</td><td>' + badge(CHANGE_STATE_BADGE[c.state], CHANGE_STATE[c.state]) + '</td></tr>').join('') + '</tbody></table></div>'
+      : '';
+    const main = (active ? '' : evidence) + facts + items + (active ? evidence : '') + chgList +
+      (active ? '<h2>ประวัติการดำเนินการใช้งบ <span class="muted count-note">(' + reqs.length + ')</span></h2>' + requestTable(reqs, false) : '');
 
-    const tl = (cls, title, sub, note) => '<li class="' + cls + '"><span class="tl-dot"></span><div><strong>' + title + '</strong>' +
-      (sub ? '<div class="muted">' + sub + '</div>' : '') + (note ? '<div class="tl-note">' + esc(note) + '</div>' : '') + '</div></li>';
-    side += '<div class="card"><h3 class="side-title">ประวัติการปรับงบ' + (isCapex ? '' : ' (Revise CBS)') + '</h3><ol class="timeline">' +
-      b.revisions.slice().reverse().map((rv, idx, arr) => {
-        const prevRv = arr[idx + 1];
-        const diff = prevRv ? round2(rv.total - prevRv.total) : 0;
-        return tl(rv.no === 0 ? 'done' : 'approved',
-          (rv.no === 0 ? 'อนุมัติครั้งแรก' : 'ปรับครั้งที่ ' + rv.no) + ' · ' + money(rv.total) +
-            (diff ? ' <span class="' + (diff > 0 ? 'pos' : 'neg') + '">(' + (diff > 0 ? '+' : '') + money(diff) + ')</span>' : ''),
-          esc(userName(rv.by)) + ' · ' + fmtDate(rv.at), rv.note);
-      }).join('') + '</ol></div>';
+    // ---- คอลัมน์ขวา
+    let side = '';
+    if (active) {
+      side += '<div class="card total-card"><span class="muted">งบคงเหลือ</span>' +
+        '<div class="total-amount' + (us.remaining < 0 ? ' neg' : '') + '">' + money(us.remaining) + ' <small>บาท</small></div>' +
+        '<div style="margin:.75rem 0 .9rem">' + usageBar(us) + '</div>' +
+        '<dl class="kv compact"><dt>งบที่ได้รับอนุมัติ</dt><dd>' + money(us.approved) + '</dd>' +
+        '<dt>ตัดงบแล้ว</dt><dd>' + money(us.used) + '</dd>' +
+        '<dt>จองไว้ (ยังไม่ตัดงบ)</dt><dd>' + money(us.reserved) + '</dd></dl></div>';
+      const count = (st) => reqs.filter((r) => r.status === st).length;
+      const stat = (label, n, cls) => '<div class="stat' + (cls ? ' ' + cls : '') + '"><strong>' + n + '</strong><span>' + label + '</span></div>';
+      side += '<div class="card"><h3 class="side-title">ภาพรวมการดำเนินการใช้งบ</h3><div class="stats">' +
+        stat('รอผู้คุมงบตรวจสอบ', count('pending'), count('pending') ? 'warn' : '') +
+        stat('ออกเอกสารแล้ว (ยังไม่ปิดยอด)', count('approved')) +
+        stat('ปิดยอดแล้ว', count('closed')) +
+        stat('ส่งกลับ / ยกเลิก', count('rejected') + count('cancelled')) + '</div></div>';
+    } else {
+      side += '<div class="card total-card"><span class="muted">วงเงินที่ขออนุมัติ</span>' +
+        '<div class="total-amount">' + money(budgetTotal(b)) + ' <small>บาท</small></div>' +
+        '<p class="muted small-note" style="margin:var(--s-2) 0 0">สถานะ: ' + esc(BUDGET_STATE[state]) + '</p></div>';
+    }
+    if (state === 'review' && can('budget.verify')) {
+      side += '<div class="card decision"><h3 class="side-title">ตรวจสอบมติและเปิดใช้งาน</h3>' +
+        '<p class="muted small-note" style="margin:0 0 var(--s-3)">ตรวจว่ามติตรงกับวงเงินและรายการในคำขอ ผู้คุมงบแก้ตัวงบไม่ได้ ถ้าไม่ตรงให้ส่งกลับ</p>' +
+        '<form id="verifyBudget" data-id="' + b.id + '"><label class="field"><span>หมายเหตุ (จำเป็นเมื่อส่งกลับ)</span><textarea name="comment" rows="3"></textarea></label>' +
+        '<div class="actions"><button class="btn primary" type="submit" data-verify="active">ยืนยันเปิดใช้งาน</button>' +
+        '<button class="btn bad" type="submit" data-verify="returned">ส่งกลับให้แก้ไข</button></div></form></div>';
+    }
+    if (active && b.revisions.length) {
+      side += '<div class="card"><h3 class="side-title">ประวัติการปรับงบ' + (isCapex ? '' : ' (Revise CBS)') + '</h3><ol class="timeline">' +
+        b.revisions.slice().reverse().map((rv, idx, arr) => {
+          const prevRv = arr[idx + 1];
+          const diff = prevRv ? round2(rv.total - prevRv.total) : 0;
+          return tlItem(rv.no === 0 ? 'done' : 'approved',
+            (rv.no === 0 ? 'เปิดใช้งาน' : 'ปรับครั้งที่ ' + rv.no) + ' · ' + money(rv.total) +
+              (diff ? ' <span class="' + (diff > 0 ? 'pos' : 'neg') + '">(' + (diff > 0 ? '+' : '') + money(diff) + ')</span>' : ''),
+            esc(userName(rv.by)) + ' · ' + fmtDate(rv.at), rv.note);
+        }).join('') + '</ol></div>';
+    }
+    side += historyCard(b.history);
 
     return html + '<div class="detail-layout"><div class="detail-main">' + main + '</div><aside class="detail-side">' + side + '</aside></div>';
+  }
+
+  function bindBudgetDetail() {
+    const sub = document.getElementById('submitBudget');
+    const cancel = document.getElementById('cancelBudget');
+    const verify = document.getElementById('verifyBudget');
+    if (cancel) {
+      cancel.addEventListener('click', () => {
+        const b = budgetById(location.hash.split('/')[2]);
+        if (!b || !confirm('ยกเลิกคำขออนุมัติงบ ' + b.code + ' ?')) return;
+        b.state = 'cancelled';
+        addHistory(b, 'ยกเลิกคำขออนุมัติงบ', '', 'งบ ' + b.code);
+        save();
+        setFlash('info', 'ยกเลิกคำขออนุมัติงบ ' + b.code + ' แล้ว');
+        go('#/budget/' + b.id);
+      });
+    }
+    if (sub) {
+      const b = budgetById(sub.dataset.id);
+      const keepMeeting = () => {
+        b.meeting = { date: sub.elements.meetingDate.value, no: sub.elements.meetingNo.value.trim(), note: sub.elements.meetingNote.value.trim() };
+      };
+      sub.querySelector('#budgetFiles').addEventListener('change', async (e) => {
+        const files = await readFiles(e.target, 'resolution');
+        if (!files.length) return;
+        keepMeeting();
+        b.attachments = (b.attachments || []).concat(files);
+        addHistory(b, 'แนบไฟล์มติ', files.map((f) => f.name).join(', '), 'งบ ' + b.code);
+        if (!save()) return;
+        go('#/budget/' + b.id);
+      });
+      sub.addEventListener('click', (e) => {
+        const del = e.target.closest('[data-att-del]');
+        if (!del) return;
+        const f = b.attachments.find((x) => x.id === del.dataset.attDel);
+        if (!f || !confirm('ลบไฟล์ ' + f.name + ' ?')) return;
+        keepMeeting();
+        b.attachments = b.attachments.filter((x) => x !== f);
+        addHistory(b, 'ลบไฟล์มติ', f.name, 'งบ ' + b.code);
+        save();
+        go('#/budget/' + b.id);
+      });
+      sub.querySelector('#saveMeeting').addEventListener('click', () => {
+        keepMeeting();
+        addHistory(b, 'บันทึกข้อมูลมติ', b.meeting.no, 'งบ ' + b.code);
+        save();
+        setFlash('success', 'บันทึกข้อมูลมติไว้แล้ว (ยังไม่ได้ส่งตรวจ)');
+        go('#/budget/' + b.id);
+      });
+      sub.addEventListener('submit', (e) => {
+        e.preventDefault();
+        keepMeeting();
+        const errors = [];
+        if (!b.meeting.no) errors.push('กรุณาระบุเลขที่มติ');
+        if (!b.attachments.length) errors.push('กรุณาแนบไฟล์มติที่ประชุม');
+        if (errors.length) { alert(errors.join('\n')); return; }
+        b.state = 'review';
+        b.submittedAt = new Date().toISOString();
+        addHistory(b, 'แนบมติที่ประชุมและส่งให้ผู้คุมงบตรวจสอบ', b.meeting.no, 'งบ ' + b.code);
+        save();
+        setFlash('success', 'ส่งงบ ' + b.code + ' ให้ผู้คุมงบตรวจสอบแล้ว');
+        go('#/budget/' + b.id);
+      });
+    }
+    if (verify) {
+      let decision = 'active';
+      verify.querySelectorAll('[data-verify]').forEach((btn) => btn.addEventListener('click', () => { decision = btn.dataset.verify; }));
+      verify.addEventListener('submit', (e) => {
+        e.preventDefault();
+        const b = budgetById(verify.dataset.id);
+        const comment = verify.elements.comment.value.trim();
+        if (decision === 'returned' && !comment) { alert('กรุณาระบุเหตุผลที่ส่งกลับ'); return; }
+        const at = new Date().toISOString();
+        if (decision === 'active') {
+          Object.assign(b, { state: 'active', activatedAt: at, activatedBy: me().id, returnReason: '' });
+          b.revisions = [{ no: 0, at, by: me().id, note: 'เปิดใช้งานตาม' + ((b.meeting && b.meeting.no) || 'มติที่ประชุม') + (comment ? ' — ' + comment : ''), total: budgetTotal(b), items: snapshotItems(b) }];
+          addHistory(b, 'ยืนยันเปิดใช้งาน', comment, 'งบ ' + b.code);
+          setFlash('success', 'เปิดใช้งานงบ ' + b.code + ' แล้ว — Business ขอดำเนินการใช้งบได้');
+        } else {
+          Object.assign(b, { state: 'returned', returnReason: comment });
+          addHistory(b, 'ส่งกลับให้แก้ไข', comment, 'งบ ' + b.code);
+          setFlash('info', 'ส่งงบ ' + b.code + ' กลับให้ Business แก้ไขแล้ว');
+        }
+        save();
+        go('#/budget/' + b.id);
+      });
+    }
+  }
+
+  /** แบบฟอร์มขออนุมัติงบสำหรับเข้าที่ประชุม (ฟอร์มชั่วคราว รอแบบฟอร์มจริงจากทีมผู้ใช้) */
+  function viewBudgetRequestForm(id) {
+    const b = budgetById(id);
+    if (!b) return notFound();
+    const isCapex = b.type === 'CAPEX';
+    const tr = (k, v) => '<tr><th style="width:30%">' + k + '</th><td>' + v + '</td></tr>';
+    const rows = b.structure === 'project'
+      ? '<tr><td>1</td><td>งบรวมทั้งโครงการ (ยังไม่แยกรายการย่อย)</td><td class="num">' + money(budgetTotal(b)) + '</td></tr>'
+      : leaves(b).map((i, n) => '<tr><td>' + (n + 1) + '</td><td>' + esc(i.code + ' ' + i.name) + (isCapex ? '<br><small>' + esc(i.assetType) + ' · DOA ' + esc(i.doa) + '</small>' : '') +
+        '</td><td class="num">' + money(itemTotal(i)) + '</td></tr>').join('');
+    return '<div class="actions no-print" style="margin:0 0 1rem"><button class="btn primary" onclick="window.print()">พิมพ์ / บันทึกเป็น PDF</button></div>' +
+      '<div class="alert info no-print">แบบฟอร์มชั่วคราว — จะปรับตามแบบฟอร์มจริงที่ทีมผู้ใช้ส่งมา</div>' +
+      '<article class="doc"><header><div><h1>' + esc(companyMap()[b.company] || b.company) + '</h1><div class="doc-sub">แบบขออนุมัติงบประมาณ ' +
+      (isCapex ? '(งบลงทุน CAPEX)' : '(งบโครงการ CBS)') + '</div></div><div class="docno">ปีงบประมาณ <strong>' + esc(b.fiscalYear) + '</strong><br>พิมพ์วันที่ ' + fmtDay(new Date().toISOString()) + '</div></header>' +
+      '<div class="section"><table><tbody>' + tr(isCapex ? 'รหัสโครงการ' : 'Job No.', esc(b.code)) + tr('ชื่อโครงการ', esc(b.name)) + tr('หน่วยงาน', esc(b.department)) +
+      tr('ผู้ขออนุมัติ (Business)', esc(userName(b.ownerId))) + (isCapex && b.group ? tr('กลุ่มงบประมาณ', esc(b.group)) : '') + tr('ความจำเป็น / หมายเหตุ', esc(b.note || '-')) + '</tbody></table></div>' +
+      '<div class="section"><h2>รายการที่ขออนุมัติ</h2><table><thead><tr><th style="width:2rem">#</th><th>รายการ</th><th class="num">วงเงิน (รวม VAT)</th></tr></thead><tbody>' + rows +
+      '<tr><th colspan="2" class="right">รวมทั้งสิ้น</th><td class="num"><strong>' + money(budgetTotal(b)) + '</strong></td></tr></tbody></table></div>' +
+      '<div class="section"><h2>ผลการพิจารณาของที่ประชุม</h2><table><tbody>' +
+      tr('มติ', '☐ อนุมัติเต็มจำนวน &nbsp; ☐ อนุมัติบางส่วน จำนวน ........................ บาท &nbsp; ☐ ไม่อนุมัติ') +
+      tr('ครั้งที่ / วันที่ประชุม', '.......................................') + tr('หมายเหตุ', '<br><br>') + '</tbody></table></div>' +
+      '<div class="signs"><div><div class="line"></div>ผู้ขออนุมัติ<br>' + esc(userName(b.ownerId)) + '</div><div><div class="line"></div>ผู้บังคับบัญชา</div><div><div class="line"></div>ประธานที่ประชุม</div></div>' +
+      '</article>';
   }
 
   // ---------------------------------------------------------------- request form
@@ -1086,16 +1563,18 @@
     return sortedItems(b).filter((i) => isLeaf(b, i)).map((i) => {
       const own = existing && existing.status === 'pending' ? linesAmount(existing, [i.id]) : 0;
       const remaining = round2(usage(b, i.id).remaining + own);
-      return '<option value="' + i.id + '" data-remaining="' + remaining + '"' + (i.id === selected ? ' selected' : '') +
-        (isCapex && remaining <= 0 ? ' disabled' : '') + '>' +
+      return '<option value="' + i.id + '" data-remaining="' + remaining + '"' + (i.id === selected ? ' selected' : '') + '>' +
         esc(i.code + ' ' + i.name) + ' — คงเหลือ ' + money(remaining) + ' บาท</option>';
     }).join('');
   }
 
   function lineRow(b, line, isCapex, existing) {
     const vat = line.vat === undefined ? isCapex : Number(line.vat) > 0;
+    const withCat = isCapex && b.structure === 'project';
     return '<tr class="line-row">' +
       '<td class="line-no"></td>' +
+      (withCat ? '<td><div class="select-wrap"><select name="lnCat" aria-label="หมวดค่าใช้จ่าย"><option value="">— เลือกหมวด —</option>' +
+        optList(db.master.expenseCategories, 'name', (c) => c.name, line.category || '') + '</select></div></td>' : '') +
       (isCapex ? '' : '<td><div class="select-wrap"><select name="lnItem" aria-label="รายการต้นทุน"><option value="">— เลือก —</option>' +
         itemOptions(b, existing, line.itemId, false) + '</select></div></td>') +
       '<td><input name="lnDesc" value="' + esc(line.description || '') + '" aria-label="รายการ" placeholder="' +
@@ -1112,10 +1591,12 @@
     const b = budgetById(existing ? existing.budgetId : budgetId);
     if (!b) return notFound();
     const u = me();
-    if (b.ownerId !== u.id) return '<div class="alert error">คุณไม่ใช่ผู้ขอใช้งบของงบนี้</div>';
-    if (existing && existing.status !== 'rejected') return '<div class="alert error">แก้ไขได้เฉพาะคำขอที่ไม่ได้รับอนุมัติเท่านั้น</div>';
+    if (b.ownerId !== u.id || !can('request.create')) return '<div class="alert error">ขอดำเนินการใช้งบได้เฉพาะ Business ผู้สร้างงบนี้</div>';
+    if (!isActive(b)) return '<div class="alert error">งบนี้ยังไม่เปิดใช้งาน (สถานะ: ' + esc(BUDGET_STATE[b.state]) + ') — ต้องให้ผู้คุมงบยืนยันเปิดใช้ก่อน</div>';
+    if (existing && existing.status !== 'rejected') return '<div class="alert error">แก้ไขได้เฉพาะคำขอที่ถูกส่งกลับเท่านั้น</div>';
     const isCapex = b.type === 'CAPEX';
-    const v = existing || { itemId: params.get('item') || '', expenseDate: today() };
+    const isProject = b.structure === 'project';
+    const v = existing || { itemId: params.get('item') || (isProject ? b.items[0].id : ''), expenseDate: today(), useType: 'prpo' };
     const lines = existing ? existing.lines : [{ itemId: isCapex ? '' : params.get('item') || '' }];
     const val = (k) => ' value="' + esc(v[k] == null ? '' : v[k]) + '"';
     const noPo = existing ? existing.poNo === 'N/A' : true;
@@ -1128,53 +1609,65 @@
       '<label class="check chip"><input type="checkbox" name="noPo"' + (noPo ? ' checked' : '') + '> ' + (isCapex ? 'ไม่มี PO (N/A)' : 'ไม่ออก PO') + '</label>' +
       '<input name="poNo" placeholder="ระบุเลขที่ PO" aria-label="เลขที่ PO"' + (noPo ? ' value="" disabled' : val('poNo')) + '></div></div>';
 
-    const general = '<section class="card form-section">' + step(1, 'ข้อมูลการเบิก') + '<div class="form-grid">' +
+    const typeCard = (k) => '<label class="choice-opt"><input type="radio" name="useType" value="' + k + '"' + (v.useType === k ? ' checked' : '') + '>' +
+      '<span><strong>' + USE_TYPES[k].label + '</strong><small>' + USE_TYPES[k].cut + (USE_TYPES[k].hint ? ' · ' + USE_TYPES[k].hint : '') + '</small></span></label>';
+    const projOwn = existing && existing.status === 'pending' ? existing.amount : 0;
+    const general = (isCapex ? '<section class="card form-section">' + step(1, 'ประเภทการดำเนินการใช้งบ') +
+        '<div class="choice choice-4">' + Object.keys(USE_TYPES).map(typeCard).join('') + '</div></section>' : '') +
+      '<section class="card form-section">' + step(isCapex ? 2 : 1, isCapex ? 'ข้อมูลการดำเนินการ' : 'ข้อมูลการเบิก') + '<div class="form-grid">' +
       (isCapex
-        ? '<div class="full">' + field('รหัสรายการย่อย (Item No.)', '<div class="select-wrap"><select name="itemId" required><option value="">— เลือกรายการย่อย —</option>' +
-            itemOptions(b, existing, v.itemId, true) + '</select></div>') + '<div id="itemHint" class="item-hint"></div></div>' +
-          '<div class="full">' + field('วัตถุประสงค์ในการเบิกใช้', '<textarea name="purpose" rows="3" required placeholder="เช่น จัดซื้อเครื่องชั่งสำหรับห้องปฏิบัติการ">' + esc(v.purpose || '') + '</textarea>') + '</div>' +
-          field('ชื่อ Supplier (ผู้รับเงิน)', '<input name="payee" required' + val('payee') + '>') + poField
+        ? '<div class="full">' + (isProject
+            ? '<input type="hidden" name="itemId" value="' + esc(b.items[0].id) + '" data-remaining="' + round2(usage(b).remaining + projOwn) + '">' +
+              '<div class="field"><span>งบที่ใช้</span><div class="out left">งบรวมทั้งโครงการ ' + esc(b.code) + ' — คงเหลือ ' + money(round2(usage(b).remaining + projOwn)) + ' บาท</div></div>'
+            : field('รหัสรายการย่อย (Item No.)', '<div class="select-wrap"><select name="itemId" required><option value="">— เลือกรายการย่อย —</option>' +
+                itemOptions(b, existing, v.itemId, true) + '</select></div>') + '<div id="itemHint" class="item-hint"></div>') + '</div>' +
+          '<div class="full">' + field('วัตถุประสงค์ในการใช้งบ', '<textarea name="purpose" rows="3" required placeholder="เช่น จัดซื้อเครื่องชั่งสำหรับห้องปฏิบัติการ">' + esc(v.purpose || '') + '</textarea>') + '</div>' +
+          field('<span id="payeeLabel">Supplier / ผู้รับเงิน</span>', '<input name="payee" required' + val('payee') + '>') +
+          '<div class="field"><span>เอกสารประกอบ (ใบเสนอราคา ฯลฯ — ไม่บังคับ)</span><div id="reqFiles">' + attachList(v.attachments, { del: true, empty: 'ยังไม่มีไฟล์' }) + '</div>' +
+          '<label class="btn small file-btn">+ แนบไฟล์<input type="file" id="reqFileInput" accept="application/pdf,image/png,image/jpeg" multiple hidden></label></div>'
         : field('วันที่เบิก', '<input name="expenseDate" type="date" required' + val('expenseDate') + '>') +
           field('ชื่อเจ้าหนี้ / ผู้รับเงิน', '<input name="payee" required' + val('payee') + '>') +
           '<div class="full">' + poField + '</div>') +
       '</div></section>';
 
     const linesCard = '<section class="card form-section">' +
-      step(2, 'รายการที่ขอเบิก', '<button type="button" class="btn" id="addLine">+ เพิ่มบรรทัด</button>') +
+      step(isCapex ? 3 : 2, isCapex ? 'รายการที่ขอใช้' : 'รายการที่ขอเบิก', '<button type="button" class="btn" id="addLine">+ เพิ่มบรรทัด</button>') +
       '<div class="table-wrap"><table class="edit-table lines-table"><thead><tr><th style="width:2.5rem">#</th>' +
-      (isCapex ? '' : '<th style="width:30%">รายการต้นทุน (CBS)</th>') +
-      '<th>' + (isCapex ? 'รายการที่ซื้อ / จ่าย' : 'รายละเอียด (ถ้ามีจำนวน โปรดระบุ)') + '</th>' +
+      (isCapex ? (isProject ? '<th style="width:24%">หมวดค่าใช้จ่าย</th>' : '') : '<th style="width:30%">รายการต้นทุน (CBS)</th>') +
+      '<th>' + (isCapex ? 'รายละเอียดสิ่งที่ซื้อ / จ่าย' : 'รายละเอียด (ถ้ามีจำนวน โปรดระบุ)') + '</th>' +
       '<th class="num" style="width:9.5rem">ก่อน VAT</th><th class="center" style="width:4.5rem">VAT 7%</th><th class="num" style="width:9rem">รวม</th><th style="width:3rem"></th></tr></thead>' +
       '<tbody id="lineRows">' + lines.map((l) => lineRow(b, l, isCapex, existing)).join('') + '</tbody>' +
-      '<tfoot><tr><td colspan="' + (isCapex ? 2 : 3) + '" class="right muted">รวมทั้งหมด</td>' +
+      '<tfoot><tr><td colspan="' + (isCapex && !isProject ? 2 : 3) + '" class="right muted">รวมทั้งหมด</td>' +
       '<td class="num" id="sumBefore">0.00</td><td class="num" id="sumVat">0.00</td><td class="num"><strong id="sumTotal">0.00</strong></td><td></td></tr></tfoot>' +
       '</table></div>' +
       '<template id="lineTpl">' + lineRow(b, {}, isCapex, existing) + '</template>' +
       '<div id="overBudget" hidden>' +
-      (isCapex ? '<div class="alert error" id="overText"></div>'
+      (isCapex ? '<div class="alert warn" id="overText"></div>' +
+          field('เหตุผลที่ต้องใช้เกินงบ (ถ้ามี — ผู้คุมงบใช้ประกอบการพิจารณา)', '<textarea name="requesterReason" rows="2">' + esc(v.requesterReason || '') + '</textarea>')
         : '<div class="alert warn" id="overText"></div>' +
           field('เหตุผลที่ใช้เกินงบ (จำเป็น)', '<textarea name="overBudgetReason" rows="3">' + esc(v.overBudgetReason || '') + '</textarea>')) +
       '</div></section>';
 
-    const side = '<div class="card total-card"><span class="muted">ขอเบิกครั้งนี้ (รวม VAT)</span>' +
+    const side = '<div class="card total-card"><span class="muted">' + (isCapex ? 'ขอใช้ครั้งนี้' : 'ขอเบิกครั้งนี้') + ' (รวม VAT)</span>' +
       '<div class="total-amount"><span id="sideTotal">0.00</span> <small>บาท</small></div>' +
       '<dl class="kv compact"><dt>งบคงเหลือทั้งโครงการ</dt><dd>' + moneyCell(remaining) + '</dd>' +
-      '<dt>คงเหลือหลังขอเบิก</dt><dd id="sideAfter">' + moneyCell(remaining) + '</dd></dl>' +
+      '<dt>' + (isCapex ? 'คงเหลือหลังขอใช้' : 'คงเหลือหลังขอเบิก') + '</dt><dd id="sideAfter">' + moneyCell(remaining) + '</dd></dl>' +
       '<div class="actions side-actions"><button class="btn primary tall" type="submit">' +
-      (isCapex ? (existing ? 'ส่งเอกสารให้ฝ่ายการเงินอีกครั้ง' : 'ส่งเอกสารให้ฝ่ายการเงิน') : 'จัดทำเอกสาร') + '</button>' +
+      (isCapex ? (existing ? 'ส่งให้ผู้คุมงบตรวจสอบอีกครั้ง' : 'ส่งให้ผู้คุมงบตรวจสอบ') : 'จัดทำเอกสาร') + '</button>' +
       '<a class="btn" data-back href="' + (existing ? '#/request/' + existing.id : '#/budget/' + b.id) + '">ยกเลิก</a></div></div>' +
       '<div class="card form-tip"><h3 class="side-title">คำแนะนำ</h3><p class="muted">' +
       (isCapex
-        ? 'ใบเบิก 1 ใบ ใช้กับรายการย่อยเดียว ใส่ได้หลายบรรทัด ถ้าจ่ายเป็นงวดให้ขอเบิกยอดเต็มครั้งเดียว แล้วกำหนดเงื่อนไขการจ่ายไว้ในใบเบิก'
+        ? (isProject ? 'งบรวมโครงการ: แต่ละบรรทัดเลือกหมวดค่าใช้จ่ายและพิมพ์รายละเอียด' : 'ใบดำเนินการใช้งบ 1 ใบ ใช้กับรายการย่อยเดียว ใส่ได้หลายบรรทัด') +
+          ' · ขอเกินงบรายการได้ถ้าไม่เกินงบรวมของโครงการ (ผู้คุมงบต้องใส่ Note) · ถ้าเกินงบโครงการ ผู้คุมงบจะพิจารณาโยกงบให้ หรือให้ขอเพิ่มงบ'
         : 'ใส่ได้หลายบรรทัด แต่ละบรรทัดเลือกรายการต้นทุนเองได้ งบโครงการไม่ต้องผ่านฝ่ายการเงิน ได้เอกสารทันทีเมื่อบันทึก ใช้เกินงบได้แต่ต้องระบุเหตุผล') + '</p></div>';
 
-    return '<div class="page-head"><div><h1>' + (existing ? 'แก้ไขคำขอ ' + esc(existing.no) : 'จัดทำเอกสารขอเบิกใช้งบ') + '</h1>' +
+    return '<div class="page-head"><div><h1>' + (existing ? 'แก้ไขคำขอ ' + esc(existing.no) : isCapex ? 'ขอดำเนินการใช้งบ' : 'จัดทำเอกสารขอเบิกใช้งบ') + '</h1>' +
       '<div class="page-sub">' + badge(b.type, b.type) + ' ' + esc(b.code + ' ' + b.name) + '</div></div></div>' +
-      (lastReject ? '<div class="alert error">เหตุผลที่ไม่อนุมัติ: ' + esc(lastReject.comment) + '</div>' : '') +
+      (lastReject ? '<div class="alert error">เหตุผลที่ส่งกลับ: ' + esc(lastReject.comment) + '</div>' : '') +
       '<div id="formError"></div>' +
       '<form id="requestForm" class="req-form" data-budget="' + b.id + '" data-request="' + esc(requestId || '') + '" data-remaining="' + remaining + '">' +
       '<div class="detail-layout"><div class="detail-main form-main">' + general + linesCard +
-      (isCapex ? planFieldset(existing && existing.paymentPlan) : '') +
+      (isCapex ? '<div id="planWrap">' + planFieldset(existing && existing.paymentPlan, 4) + '</div>' : '') +
       '</div><aside class="detail-side">' + side + '</aside></div></form>';
   }
 
@@ -1187,12 +1680,12 @@
   }
 
   /** เงื่อนไขการจ่าย (CAPEX): จ่ายครั้งเดียว หรือแบ่งเป็นงวดตาม % */
-  function planFieldset(plan) {
+  function planFieldset(plan, stepNo) {
     const mode = plan && plan.mode === 'installments' ? 'installments' : 'single';
     const rows = mode === 'installments' ? plan.installments : [{}, {}];
     const opt2 = (value, title, sub) => '<label class="choice-opt"><input type="radio" name="payMode" value="' + value + '"' +
       (mode === value ? ' checked' : '') + '><span><strong>' + title + '</strong><small>' + sub + '</small></span></label>';
-    return '<section class="card form-section"><div class="section-head"><h2 class="section-title"><span class="step">3</span>เงื่อนไขการจ่าย</h2></div><div class="choice">' +
+    return '<section class="card form-section"><div class="section-head"><h2 class="section-title"><span class="step">' + (stepNo || 3) + '</span>เงื่อนไขการจ่าย</h2></div><div class="choice">' +
       opt2('single', 'จ่ายครั้งเดียว', 'จ่ายเต็มจำนวนในงวดเดียว') +
       opt2('installments', 'แบ่งจ่ายเป็นงวด', 'กำหนด % ของแต่ละงวด รวมต้องได้ 100%') + '</div>' +
       '<div id="planBox"' + (mode === 'installments' ? '' : ' hidden') + '>' +
@@ -1227,6 +1720,7 @@
       return {
         tr,
         itemId: isCapex ? form.elements.itemId.value : tr.querySelector('[name="lnItem"]').value,
+        category: tr.querySelector('[name="lnCat"]') ? tr.querySelector('[name="lnCat"]').value : undefined,
         description: tr.querySelector('[name="lnDesc"]').value.trim(),
         amountBeforeVat: before, vat, amount: round2(before + vat)
       };
@@ -1237,6 +1731,7 @@
   function overItems(form, b, lines, isCapex) {
     const remainingOf = (id) => {
       const sel = isCapex ? form.elements.itemId : form.querySelector('[name="lnItem"]');
+      if (sel && sel.type === 'hidden') return Number(sel.dataset.remaining);
       const o = sel && Array.from(sel.options).find((x) => x.value === id);
       return o ? Number(o.dataset.remaining) : 0;
     };
@@ -1254,6 +1749,31 @@
     const isCapex = b.type === 'CAPEX';
     const existing = form.dataset.request ? requestById(form.dataset.request) : null;
     const tbody = document.getElementById('lineRows');
+    let files = existing ? (existing.attachments || []).slice() : [];
+    const fileInput = document.getElementById('reqFileInput');
+    const showFiles = () => { document.getElementById('reqFiles').innerHTML = attachList(files, { del: true, empty: 'ยังไม่มีไฟล์' }); };
+    if (fileInput) {
+      fileInput.addEventListener('change', async (e) => {
+        files = files.concat(await readFiles(e.target, 'request'));
+        e.target.value = '';
+        showFiles();
+      });
+      document.getElementById('reqFiles').addEventListener('click', (e) => {
+        const del = e.target.closest('[data-att-del]');
+        if (del) { files = files.filter((x) => x.id !== del.dataset.attDel); showFiles(); }
+      });
+    }
+    const useType = () => (form.querySelector('[name="useType"]:checked') || {}).value;
+    const syncType = () => {
+      if (!isCapex) return;
+      const t = useType();
+      const payee = { prpo: 'Supplier ที่จะสั่งซื้อ (ถ้าทราบ)', advance: 'ผู้รับเงินทดรอง', reimburse: 'พนักงานผู้สำรองจ่าย', direct: 'Supplier ผู้รับเงิน' }[t];
+      document.getElementById('payeeLabel').textContent = payee || 'Supplier / ผู้รับเงิน';
+      f.payee.required = t !== 'prpo';
+      document.getElementById('planWrap').hidden = !(t === 'prpo' || t === 'direct');
+    };
+    form.querySelectorAll('[name="useType"]').forEach((el) => el.addEventListener('change', syncType));
+    syncType();
 
     const update = () => {
       let sb = 0;
@@ -1273,20 +1793,31 @@
       const after = round2(Number(form.dataset.remaining) - (sb + sv));
       const afterEl = document.getElementById('sideAfter');
       afterEl.innerHTML = moneyCell(after);
-      f.poNo.disabled = f.noPo.checked;
-      if (f.noPo.checked) f.poNo.value = '';
-      if (isCapex) {
+      if (f.poNo) {
+        f.poNo.disabled = f.noPo.checked;
+        if (f.noPo.checked) f.poNo.value = '';
+      }
+      if (isCapex && f.itemId.tagName === 'SELECT') {
         const it = itemById(b, f.itemId.value);
         const o = f.itemId.selectedOptions[0];
         document.getElementById('itemHint').textContent = it
-          ? 'ประเภทสินทรัพย์: ' + it.assetType + ' · หมวด DOA ' + it.doa + ' · คงเหลือ ' + money(o.dataset.remaining) + ' บาท' : '';
+          ? 'ประเภทสินทรัพย์: ' + it.assetType + ' · หมวด DOA ' + it.doa + ' · คงเหลือของรายการ ' + money(o.dataset.remaining) + ' บาท' : '';
       }
       const over = overItems(form, b, readLines(form, isCapex), isCapex);
-      document.getElementById('overBudget').hidden = !over.length;
-      document.getElementById('overText').innerHTML = over.map((x) => esc(
+      const total = round2(sb + sv);
+      const overProject = isCapex ? round2(total - Number(form.dataset.remaining)) : 0;
+      const notes = [];
+      if (isCapex) {
+        if (over.length && b.structure !== 'project') {
+          notes.push('เกินงบรายการ ' + esc(over[0].item.code) + ' อยู่ <strong>' + money(over[0].amount - over[0].remaining) + '</strong> บาท' +
+            (overProject > 0 ? '' : ' — ยังไม่เกินงบรวมของโครงการ ขอได้ แต่ผู้คุมงบต้องใส่ Note เมื่ออนุมัติ'));
+        }
+        if (overProject > 0) notes.push('เกินงบคงเหลือของโครงการ <strong>' + money(overProject) + '</strong> บาท — ผู้คุมงบจะพิจารณาโยกงบมาให้ หรือส่งกลับให้ขอเพิ่มงบ');
+      }
+      document.getElementById('overBudget').hidden = isCapex ? !notes.length : !over.length;
+      document.getElementById('overText').innerHTML = isCapex ? notes.join('<br>') : over.map((x) => esc(
         (x.item ? x.item.code + ' ' + x.item.name : '') + ': ขอเบิก ' + money(x.amount) + ' เกินคงเหลือ ' + money(x.remaining) +
-        ' อยู่ ' + money(x.amount - x.remaining) + ' บาท')).join('<br>') +
-        (isCapex ? '<br>ต้องขอให้การเงินปรับงบก่อน' : '<br>บันทึกได้ แต่ต้องระบุเหตุผล');
+        ' อยู่ ' + money(x.amount - x.remaining) + ' บาท')).join('<br>') + '<br>บันทึกได้ แต่ต้องระบุเหตุผล';
     };
     const planRows = document.getElementById('planRows');
     const updatePlan = () => {
@@ -1348,16 +1879,19 @@
       e.preventDefault();
       const lines = readLines(form, isCapex);
       const errors = [];
+      if (isCapex && !useType()) errors.push('กรุณาเลือกประเภทการดำเนินการใช้งบ');
       if (isCapex && !f.itemId.value) errors.push('กรุณาเลือกรายการย่อย');
+      if (isCapex && f.payee.required && !f.payee.value.trim()) errors.push('กรุณาระบุผู้รับเงิน');
       if (!lines.length) errors.push('กรุณาใส่รายการที่ขอเบิกอย่างน้อย 1 บรรทัด');
       lines.forEach((l, i) => {
         const no = 'บรรทัดที่ ' + (Array.from(tbody.rows).indexOf(l.tr) + 1) + ': ';
         if (!isCapex && !l.itemId) errors.push(no + 'กรุณาเลือกรายการต้นทุน');
+        if (l.category === '') errors.push(no + 'กรุณาเลือกหมวดค่าใช้จ่าย');
         if (!l.description) errors.push(no + 'กรุณาระบุรายการ');
         if (!(l.amountBeforeVat > 0)) errors.push(no + 'จำนวนเงินต้องมากกว่า 0');
       });
-      if (!f.noPo.checked && !f.poNo.value.trim()) errors.push('กรุณาระบุเลขที่ PO หรือเลือก "' + (isCapex ? 'ไม่มี PO' : 'ไม่ออก PO') + '"');
-      const plan = readPlan(form);
+      if (f.noPo && !f.noPo.checked && !f.poNo.value.trim()) errors.push('กรุณาระบุเลขที่ PO หรือเลือก "ไม่ออก PO"');
+      const plan = isCapex && (useType() === 'prpo' || useType() === 'direct') ? readPlan(form) : (isCapex ? { mode: 'single', installments: [] } : null);
       if (plan && plan.mode === 'installments') {
         const sumPct = round2(plan.installments.reduce((s, x) => s + x.pct, 0));
         if (plan.installments.length < 2) errors.push('แบ่งจ่ายเป็นงวดต้องมีอย่างน้อย 2 งวด');
@@ -1365,26 +1899,30 @@
         if (sumPct !== 100) errors.push('เปอร์เซ็นต์รวมของทุกงวดต้องเท่ากับ 100% (ตอนนี้ ' + sumPct + '%)');
       }
       const over = overItems(form, b, lines, isCapex);
-      if (over.length && isCapex) errors.push('จำนวนเงินรวมเกินงบคงเหลือของรายการย่อยนี้ (คงเหลือ ' + money(over[0].remaining) + ' บาท)');
       if (over.length && !isCapex && !f.overBudgetReason.value.trim()) errors.push('กรุณาระบุเหตุผลที่ใช้เกินงบ');
       if (errors.length) { showErrors(errors); return; }
 
       const now = new Date().toISOString();
-      const clean = lines.map((l) => ({ itemId: l.itemId, description: l.description, amountBeforeVat: l.amountBeforeVat, vat: l.vat, amount: l.amount }));
+      const clean = lines.map((l) => Object.assign({ itemId: l.itemId, description: l.description, amountBeforeVat: l.amountBeforeVat, vat: l.vat, amount: l.amount },
+        l.category !== undefined ? { category: l.category } : {}));
       const fields = {
         itemId: isCapex ? f.itemId.value : null,
         lines: clean,
         payee: f.payee.value.trim(),
-        poNo: f.noPo.checked ? 'N/A' : f.poNo.value.trim(),
+        poNo: f.noPo ? (f.noPo.checked ? 'N/A' : f.poNo.value.trim()) : 'N/A',
         amountBeforeVat: round2(clean.reduce((s, l) => s + l.amountBeforeVat, 0)),
         vat: round2(clean.reduce((s, l) => s + l.vat, 0)),
         amount: round2(clean.reduce((s, l) => s + l.amount, 0))
       };
       if (isCapex) {
         fields.purpose = f.purpose.value.trim();
+        fields.useType = useType();
         fields.paymentPlan = plan;
         fields.paymentTerms = planText({ paymentPlan: plan });
         fields.payments = [];
+        fields.cuts = [];
+        fields.attachments = files;
+        fields.requesterReason = f.requesterReason ? f.requesterReason.value.trim() : '';
       } else {
         fields.expenseDate = f.expenseDate.value;
         fields.overBudget = over.length > 0;
@@ -1415,16 +1953,17 @@
       } else {
         r = Object.assign({
           id: nextId('r'), no: nextReqNo(), budgetId: b.id, type: b.type,
-          requesterId: me().id, createdAt: now, status: 'pending', steps: stepsFor(b), history: []
+          requesterId: me().id, createdAt: now, status: 'pending', steps: stepsFor(b), history: [], events: []
         }, fields);
         db.requests.push(r);
       }
+      addEvent(r, existing ? 'แก้ไขและส่งใหม่' : (isCapex ? 'ส่งขอดำเนินการใช้งบ (' + USE_TYPES[r.useType].short + ')' : 'จัดทำเอกสาร'), '');
 
       if (!r.steps.length) {
         issueDocument(r, b, now);
         setFlash('success', 'จัดทำเอกสารเรียบร้อย เลขที่ ' + r.docNo + (r.overBudget ? ' (ใช้เกินงบ — บันทึกเหตุผลแล้ว)' : ''));
       } else {
-        setFlash('success', (existing ? 'ส่งคำขอ ' + r.no + ' อีกครั้ง' : 'ส่งคำขอ ' + r.no) + ' เรียบร้อยแล้ว รอฝ่ายการเงินตรวจสอบ');
+        setFlash('success', (existing ? 'ส่งคำขอ ' + r.no + ' อีกครั้ง' : 'ส่งคำขอ ' + r.no) + ' เรียบร้อยแล้ว รอผู้คุมงบตรวจสอบ');
       }
       save();
       go('#/request/' + r.id);
@@ -1456,23 +1995,23 @@
   }
 
   function requestTable(list, showBudget) {
-    if (!list.length) return '<div class="card empty">ยังไม่มีคำขอเบิกใช้งบ</div>';
+    if (!list.length) return '<div class="card empty">ยังไม่มีคำขอดำเนินการใช้งบ</div>';
     list = list.slice().sort((a, b) => b.createdAt.localeCompare(a.createdAt));
     return '<div class="table-wrap"><table><thead><tr><th>เลขที่คำขอ</th>' +
       (showBudget ? '<th>งบ</th>' : '') +
-      '<th>รายการ</th><th>รายการเบิก</th><th>ผู้ขอ</th><th class="num">จำนวนเงิน</th><th>สถานะ</th><th>เอกสาร</th></tr></thead><tbody>' +
+      '<th>รายการ</th><th>รายละเอียด</th><th>ผู้ขอ</th><th class="num">จำนวนเงิน</th><th>สถานะ</th><th>เอกสาร</th></tr></thead><tbody>' +
       list.map((r) => {
         const b = budgetById(r.budgetId);
         const step = currentStep(r);
         return '<tr><td class="nowrap"><a href="#/request/' + r.id + '">' + esc(r.no) + '</a><div class="muted">' + fmtDate(r.createdAt) + '</div></td>' +
-          (showBudget ? '<td>' + badge(r.type, r.type) + ' ' + esc(b ? b.code : '-') + '</td>' : '') +
+          (showBudget ? '<td>' + badge(r.type, r.type) + ' ' + esc(b ? b.code : '-') + (r.useType && USE_TYPES[r.useType] ? '<div class="muted">' + esc(USE_TYPES[r.useType].short) + '</div>' : '') + '</td>' : '') +
           '<td>' + itemCodesCell(b, r) + '</td>' +
           '<td>' + esc(reqSummary(r)) + (r.overBudget ? ' <span class="badge rejected">เกินงบ</span>' : '') + '</td>' +
           '<td class="nowrap">' + esc(userName(r.requesterId)) + '</td>' +
           '<td class="num">' + money(r.amount) +
-          (r.type === 'CAPEX' && r.status === 'approved' ? '<div class="muted">บันทึกจ่าย ' + money(paidTotal(r)) + '</div>' : '') + '</td>' +
-          '<td>' + badge(r.status, STATUS_LABEL[r.status]) +
-          (step ? '<div class="muted">รอ: ' + esc(stepAssigneeText(step)) + '</div>' : '') + '</td>' +
+          (r.type === 'CAPEX' && (r.status === 'approved' || r.status === 'closed') ? '<div class="muted">ตัดงบ ' + money(cutTotal(r)) + '</div>' : '') + '</td>' +
+          '<td>' + badge(r.status, statusText(r)) + (needsPO(r) ? '<div class="muted">รอจัดซื้อออก PO</div>' : '') +
+          (step && r.type !== 'CAPEX' ? '<div class="muted">รอ: ' + esc(stepAssigneeText(step)) + '</div>' : '') + '</td>' +
           '<td class="nowrap">' + (!r.docNo ? '-' : r.status === 'cancelled' ? '<s>' + esc(r.docNo) + '</s> <span class="muted">(ยกเลิก)</span>'
             : '<a href="#/doc/' + r.id + '">' + esc(r.docNo) + '</a>') + '</td></tr>';
       }).join('') + '</tbody></table></div>';
@@ -1481,52 +2020,189 @@
   function viewRequests() {
     const u = me();
     const list = canViewAll() ? db.requests : db.requests.filter((r) => r.requesterId === u.id);
-    return '<div class="page-head"><h1>' + (canViewAll() ? 'คำขอใช้งบทั้งหมด' : 'คำขอของฉัน') + '</h1></div>' + takeFlash() + requestTable(list, true);
+    return '<div class="page-head"><h1>' + (canViewAll() ? 'รายการดำเนินการใช้งบ' : 'ดำเนินการใช้งบของฉัน') + '</h1></div>' + takeFlash() + requestTable(list, true);
   }
 
-  function viewApprovals() {
-    return '<div class="page-head"><h1>เอกสาร CAPEX รอตรวจสอบ</h1></div>' + takeFlash() + requestTable(inbox(me()), true);
-  }
 
   function viewAccounting() {
     if (!can('accounting.record')) return '<div class="alert error">ไม่มีสิทธิ์บันทึกข้อมูลบัญชี</div>';
     return '<div class="page-head"><h1>รอบันทึกข้อมูลบัญชี</h1></div>' + takeFlash() +
-      '<p class="muted">บัญชีลงวันที่จ่ายจริงแล้วงบจึงจะถูกตัดเป็น "ใช้แล้ว" · CAPEX: งวดจ่ายที่การเงินบันทึกแล้วแต่บัญชียังไม่ได้ลงวันที่จ่าย / แยก Asset-Expenses · CBS: เอกสารที่ยังไม่ได้ยืนยัน GL Code และบันทึกจ่ายเงิน</p>' +
+      '<p class="muted">CBS: เอกสารที่ยังไม่ได้ยืนยัน GL Code และบันทึกจ่ายเงิน (เงื่อนไข CBS ยังเป็นแบบเดิม รอสรุปจากผู้ใช้งาน) · CAPEX ไปที่หน้า "รอตัดงบ / ปิดยอด"</p>' +
       requestTable(db.requests.filter(needsAccounting), true);
-  }
-
-  function viewPayments() {
-    if (!can('payment.record')) return '<div class="alert error">ไม่มีสิทธิ์บันทึกงวดจ่าย</div>';
-    const list = db.requests.filter(needsPayment).sort((a, b) => a.approvedAt.localeCompare(b.approvedAt));
-    let html = '<div class="page-head"><h1>งวดจ่ายค้าง (CAPEX)</h1></div>' + takeFlash() +
-      '<p class="muted">ใบเบิกที่อนุมัติแล้ว แต่ยังบันทึกงวดจ่ายไม่ครบยอด — เปิดใบเบิกเพื่อบันทึกงวดเมื่อได้รับบิล</p>';
-    if (!list.length) return html + '<div class="card empty">ไม่มีงวดจ่ายค้าง</div>';
-    return html + '<div class="table-wrap"><table><thead><tr><th>ใบเบิก</th><th>งบ / รายการย่อย</th><th>Supplier</th><th>เงื่อนไขการจ่าย</th>' +
-      '<th class="num">ยอดเบิก</th><th class="num">บันทึกจ่ายแล้ว</th><th class="num">ค้างจ่าย</th></tr></thead><tbody>' +
-      list.map((r) => {
-        const b = budgetById(r.budgetId);
-        return '<tr><td class="nowrap"><a href="#/request/' + r.id + '">' + esc(r.docNo) + '</a><div class="muted">' + fmtDay(r.approvedAt) + '</div></td>' +
-          '<td>' + esc(b.code) + '<div class="muted">' + itemCodesCell(b, r) + '</div></td><td>' + esc(r.payee) + '</td><td>' + esc(planText(r) || '-') + '</td>' +
-          '<td class="num">' + money(r.amount) + '</td><td class="num">' + money(paidTotal(r)) + '</td><td class="num"><strong>' + money(outstanding(r)) + '</strong></td></tr>';
-      }).join('') + '</tbody></table></div>';
   }
 
   // ---------------------------------------------------------------- request detail
 
   function linesTable(b, r, withGl) {
     const isCapex = r.type === 'CAPEX';
+    const withCat = r.lines.some((l) => l.category !== undefined);
     return '<div class="table-wrap"><table><thead><tr><th style="width:2.5rem">#</th>' +
-      (isCapex ? '' : '<th>รายการต้นทุน</th>') + (withGl ? '<th>GL</th>' : '') +
+      (isCapex ? (withCat ? '<th>หมวดค่าใช้จ่าย</th>' : '') : '<th>รายการต้นทุน</th>') + (withGl ? '<th>GL</th>' : '') +
       '<th>' + (isCapex ? 'รายการที่ซื้อ / จ่าย' : 'รายละเอียด') + '</th><th class="num">ก่อน VAT</th><th class="num">VAT 7%</th><th class="num">รวม</th></tr></thead><tbody>' +
       r.lines.map((l, i) => {
         const it = itemById(b, l.itemId) || {};
         return '<tr><td>' + (i + 1) + '</td>' +
-          (isCapex ? '' : '<td>' + esc(it.code) + '<div class="muted">' + esc(it.name) + '</div></td>') +
+          (isCapex ? (withCat ? '<td>' + esc(l.category || '-') + '</td>' : '') : '<td>' + esc(it.code) + '<div class="muted">' + esc(it.name) + '</div></td>') +
           (withGl ? '<td>' + esc(l.glCode || '-') + '<div class="muted">' + esc(l.glName || '') + '</div></td>' : '') +
           '<td>' + esc(l.description) + '</td><td class="num">' + money(l.amountBeforeVat) + '</td><td class="num">' + money(l.vat) +
           '</td><td class="num">' + money(l.amount) + '</td></tr>';
-      }).join('') + '</tbody><tfoot><tr><td colspan="' + (2 + (isCapex ? 0 : 1) + (withGl ? 1 : 0)) + '" class="right"><strong>รวม</strong></td>' +
+      }).join('') + '</tbody><tfoot><tr><td colspan="' + (2 + (isCapex ? (withCat ? 1 : 0) : 1) + (withGl ? 1 : 0)) + '" class="right"><strong>รวม</strong></td>' +
       '<td class="num">' + money(r.amountBeforeVat) + '</td><td class="num">' + money(r.vat) + '</td><td class="num"><strong>' + money(r.amount) + '</strong></td></tr></tfoot></table></div>';
+  }
+
+  /** CAPEX: ยอดที่เกินงบรายการย่อย / เกินงบคงเหลือของโครงการ (คำขอที่รออยู่ไม่นับตัวเองซ้ำ) */
+  function capexOver(r) {
+    const b = budgetById(r.budgetId);
+    const own = r.status === 'pending' ? r.amount : 0;
+    const projRem = round2(usage(b).remaining + own);
+    const itemRem = b.structure === 'project' ? projRem : round2(usage(b, r.itemId).remaining + own);
+    return { itemRem, projRem, item: Math.max(0, round2(r.amount - itemRem)), project: Math.max(0, round2(r.amount - projRem)) };
+  }
+
+  const CUT_KIND = { po: 'ใบสั่งซื้อ (PO)', clear: 'เคลียร์เงินทดรอง', reimburse: 'จ่ายคืนพนักงาน', payment: 'จ่ายเงิน Supplier' };
+  const CUT_FOR_TYPE = { prpo: 'po', advance: 'clear', reimburse: 'reimburse', direct: 'payment' };
+  /** ประเภทที่บันทึกครั้งเดียวแล้วปิดยอดทันที (ยอดจริงชัดเจนจากใบเสร็จ) */
+  const CUT_CLOSES = { clear: true, reimburse: true };
+  const cutPerm = (r) => (r.useType === 'prpo' ? 'po.record' : 'cut.record');
+
+  /** การตัดงบของใบดำเนินการใช้งบ CAPEX ตามประเภท */
+  function cutPanel(r) {
+    const t = r.useType || 'direct';
+    const kind = CUT_FOR_TYPE[t];
+    const closed = r.status === 'closed';
+    const cut = cutTotal(r);
+    const canCut = !closed && can(cutPerm(r)) && (t !== 'advance' || r.advance);
+    let html = '<h2>การตัดงบ · ' + esc(USE_TYPES[t].label) + '</h2><section class="card cut-card">' +
+      '<p class="muted small-note" style="margin:0 0 var(--s-3)">' + esc(USE_TYPES[t].cut) + ' · ผู้บันทึก: ' + esc(USE_TYPES[t].who) + '</p>' +
+      '<div class="cut-summary"><div><span>ขอไว้</span><strong>' + money(r.amount) + '</strong></div>' +
+      '<div><span>ตัดงบแล้ว</span><strong>' + money(cut) + '</strong></div>' +
+      '<div><span>' + (closed ? 'คืนเข้างบ' : 'ยังจองไว้') + '</span><strong>' + money(closed ? r.closed.returned : Math.max(0, round2(r.amount - cut))) + '</strong></div></div>';
+    if (cut > r.amount) html += '<div class="alert warn">ยอดจริงเกินที่ขอ ' + money(round2(cut - r.amount)) + ' บาท</div>';
+
+    if (t === 'advance') {
+      if (r.advance) {
+        html += '<p class="cut-step done">✓ จ่ายเงินทดรองแล้ว ' + money(r.advance.amount) + ' บาท · ' + fmtDay(r.advance.date) + ' · ' + esc(userName(r.advance.by)) + '</p>';
+      } else if (!closed && can('cut.record')) {
+        html += '<form id="advForm" class="cut-form" data-id="' + r.id + '"><h3>ขั้นที่ 1: จ่ายเงินทดรอง</h3><div class="row">' +
+          '<label class="field"><span>วันที่จ่าย</span><input name="date" type="date" required value="' + today() + '"></label>' +
+          '<label class="field"><span>ยอดเงินทดรอง (บาท)</span><input name="amount" type="number" min="0.01" step="0.01" class="right" required value="' + r.amount + '"></label></div>' +
+          '<p class="muted small-note">จ่ายเงินทดรองยังไม่ตัดงบ — ตัดงบเมื่อเคลียร์ตามใบเสร็จ</p>' +
+          '<div class="actions"><button class="btn primary" type="submit">บันทึกการจ่ายเงินทดรอง</button></div></form>';
+      } else {
+        html += '<p class="cut-step">รอผู้คุมงบจ่ายเงินทดรอง</p>';
+      }
+    }
+
+    if ((r.cuts || []).length) {
+      html += '<div class="table-wrap"><table><thead><tr><th>วันที่</th><th>รายการ</th><th>เลขที่อ้างอิง</th><th class="num">ยอด (รวม VAT)</th><th>ไฟล์</th><th>ผู้บันทึก</th></tr></thead><tbody>' +
+        r.cuts.map((c) => '<tr><td class="nowrap">' + fmtDay(c.date) + '</td><td>' + esc(CUT_KIND[c.kind] || c.kind) +
+          (c.asset || c.expense ? '<div class="muted">Asset ' + money(c.asset || 0) + ' · Expense ' + money(c.expense || 0) + '</div>' : '') +
+          (c.note ? '<div class="muted">' + esc(c.note) + '</div>' : '') + '</td>' +
+          '<td>' + (c.prNo ? 'PR ' + esc(c.prNo) + '<br>' : '') + (c.poNo ? 'PO ' + esc(c.poNo) : esc(c.ref || '-')) + '</td>' +
+          '<td class="num">' + money(c.amount) + '</td><td>' + ((c.attachments || []).length ? attachList(c.attachments) : '<span class="muted">-</span>') + '</td>' +
+          '<td class="nowrap">' + esc(userName(c.by)) + '</td></tr>').join('') + '</tbody></table></div>';
+    } else if (!(t === 'advance' && !r.advance)) {
+      html += '<p class="muted">ยังไม่มีการตัดงบ' + (t === 'prpo' ? ' — รอจัดซื้อบันทึก PO' : '') + '</p>';
+    }
+
+    if (canCut) {
+      const isPo = kind === 'po';
+      const left = Math.max(0, round2(r.amount - cut));
+      const title = { po: 'บันทึก PR / PO (ตัดงบตามยอด PO)', clear: 'ขั้นที่ 2: เคลียร์เงินทดรอง (ตัดงบตามใบเสร็จและปิดยอด)', reimburse: 'จ่ายคืนพนักงาน (ตัดงบตามใบเสร็จและปิดยอด)', payment: 'บันทึกการจ่ายเงิน Supplier' }[kind];
+      html += '<form id="cutForm" class="cut-form" data-id="' + r.id + '" data-kind="' + kind + '"><h3>' + title + '</h3><div class="row">' +
+        (isPo ? '<label class="field"><span>เลขที่ PR</span><input name="prNo" required></label><label class="field"><span>เลขที่ PO</span><input name="poNo" required></label>'
+          : '<label class="field"><span>เลขที่ใบเสร็จ / ใบแจ้งหนี้</span><input name="ref"></label>') +
+        '<label class="field"><span>' + (isPo ? 'วันที่ PO' : 'วันที่จ่าย') + '</span><input name="date" type="date" required value="' + today() + '"></label>' +
+        '<label class="field"><span>' + (isPo ? 'ยอด PO (รวม VAT)' : kind === 'clear' ? 'ยอดใช้จริงตามใบเสร็จ' : 'ยอดจ่าย (รวม VAT)') + '</span>' +
+        '<input name="amount" type="number" min="0.01" step="0.01" class="right" required value="' + (left || '') + '"></label></div>' +
+        (isPo ? '' : '<div class="row"><label class="field"><span>Asset (บัญชี — ไม่บังคับ)</span><input name="asset" type="number" min="0" step="0.01" class="right"></label>' +
+          '<label class="field"><span>Expenses (บัญชี — ไม่บังคับ)</span><input name="expense" type="number" min="0" step="0.01" class="right"></label></div>') +
+        '<label class="field"><span>หมายเหตุ (จำเป็นถ้ายอดรวมเกินที่ขอ)</span><input name="note"></label>' +
+        '<div class="field"><span>แนบไฟล์ ' + (isPo ? 'PO' : 'ใบเสร็จ / หลักฐานการจ่าย') + '</span><input type="file" name="files" accept="application/pdf,image/png,image/jpeg" multiple></div>' +
+        '<div class="actions"><button class="btn primary" type="submit">' + (CUT_CLOSES[kind] ? 'บันทึกและปิดยอด' : 'บันทึก') + '</button></div></form>';
+    }
+    if (!closed && cut > 0 && !CUT_CLOSES[kind] && (can(cutPerm(r)) || can('cut.record'))) {
+      html += '<form id="closeForm" class="cut-form" data-id="' + r.id + '"><h3>ยืนยันยอดจริงและปิดยอด</h3>' +
+        '<p class="muted small-note">ปิดแล้วจะคืนส่วนต่าง ' + money(Math.max(0, round2(r.amount - cut))) + ' บาทเข้างบ และบันทึกการตัดงบเพิ่มไม่ได้อีก</p>' +
+        '<label class="field"><span>หมายเหตุ (จำเป็นถ้ายอดจริงเกินที่ขอ)</span><input name="note"></label>' +
+        '<div class="actions"><button class="btn ok" type="submit">ปิดยอด</button></div></form>';
+    }
+    if (closed) {
+      html += '<div class="alert ok">ปิดยอดแล้ว · ยอดจริง ' + money(r.closed.actual) + ' บาท' + (r.closed.returned ? ' · คืนเข้างบ ' + money(r.closed.returned) + ' บาท' : '') +
+        (r.closed.over ? ' · เกินที่ขอ ' + money(r.closed.over) + ' บาท' : '') + '<br><small>' + esc(userName(r.closed.by)) + ' · ' + fmtDate(r.closed.at) +
+        (r.closed.note ? ' · ' + esc(r.closed.note) : '') + '</small>' +
+        (t === 'advance' && r.advance ? '<br><small>' + (r.advance.amount > r.closed.actual ? 'พนักงานต้องคืนเงินทดรองส่วนที่เหลือ ' + money(round2(r.advance.amount - r.closed.actual)) + ' บาท'
+          : r.advance.amount < r.closed.actual ? 'บริษัทต้องจ่ายเพิ่มให้พนักงาน ' + money(round2(r.closed.actual - r.advance.amount)) + ' บาท' : 'ยอดเคลียร์เท่ากับเงินทดรอง') + '</small>' : '') + '</div>';
+    }
+    return html + '</section>';
+  }
+
+  /** ปิดยอด: ยืนยันยอดจริง คืนส่วนต่างเข้างบ */
+  function closeRequest(r, note) {
+    const actual = cutTotal(r);
+    r.status = 'closed';
+    r.closed = { at: new Date().toISOString(), by: me().id, actual, returned: Math.max(0, round2(r.amount - actual)), over: Math.max(0, round2(actual - r.amount)), note: note || '' };
+    addEvent(r, 'ปิดยอด (ยืนยันยอดจริง)', 'ยอดจริง ' + money(actual) + (r.closed.returned ? ' · คืนเข้างบ ' + money(r.closed.returned) : '') +
+      (r.closed.over ? ' · เกินที่ขอ ' + money(r.closed.over) : '') + (note ? ' · ' + note : ''));
+  }
+
+  function bindCuts() {
+    const adv = document.getElementById('advForm');
+    if (adv) {
+      adv.addEventListener('submit', (e) => {
+        e.preventDefault();
+        const r = requestById(adv.dataset.id);
+        const amount = round2(adv.elements.amount.value);
+        if (!(amount > 0)) { alert('จำนวนเงินต้องมากกว่า 0'); return; }
+        r.advance = { date: adv.elements.date.value, amount, by: me().id, at: new Date().toISOString() };
+        addEvent(r, 'จ่ายเงินทดรอง', money(amount) + ' บาท');
+        save();
+        setFlash('success', 'บันทึกการจ่ายเงินทดรอง ' + money(amount) + ' บาทแล้ว — ตัดงบเมื่อเคลียร์ตามใบเสร็จ');
+        go('#/request/' + r.id);
+      });
+    }
+    const cf = document.getElementById('cutForm');
+    if (cf) {
+      cf.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const r = requestById(cf.dataset.id);
+        const f = cf.elements;
+        const kind = cf.dataset.kind;
+        const amount = round2(f.amount.value);
+        const note = f.note.value.trim();
+        if (!(amount > 0)) { alert('จำนวนเงินต้องมากกว่า 0'); return; }
+        if (round2(cutTotal(r) + amount) > r.amount + 0.005 && !note) { alert('ยอดรวมเกินที่ขอ ' + money(round2(cutTotal(r) + amount - r.amount)) + ' บาท — กรุณาระบุหมายเหตุ'); return; }
+        const asset = f.asset && f.asset.value !== '' ? round2(f.asset.value) : 0;
+        const expense = f.expense && f.expense.value !== '' ? round2(f.expense.value) : 0;
+        if (asset + expense > amount + 0.005) { alert('Asset + Expenses เกินยอดที่บันทึก'); return; }
+        const files = await readFiles(f.files, kind);
+        if (f.files.files.length && !files.length) return;
+        const c = { id: nextId('x'), kind, date: f.date.value, amount, note, by: me().id, at: new Date().toISOString(), attachments: files, asset, expense };
+        if (kind === 'po') Object.assign(c, { prNo: f.prNo.value.trim(), poNo: f.poNo.value.trim() });
+        else c.ref = f.ref.value.trim();
+        r.cuts = (r.cuts || []).concat(c);
+        if (kind === 'po') r.poNo = r.cuts.filter((x) => x.kind === 'po').map((x) => x.poNo).join(', ');
+        addEvent(r, 'บันทึก' + CUT_KIND[kind], money(amount) + ' บาท' + (c.poNo ? ' · PO ' + c.poNo : c.ref ? ' · ' + c.ref : ''));
+        if (CUT_CLOSES[kind]) closeRequest(r, note);
+        if (!save()) return;
+        setFlash('success', 'บันทึก' + CUT_KIND[kind] + ' ' + money(amount) + ' บาทแล้ว' + (CUT_CLOSES[kind] ? ' และปิดยอดเรียบร้อย' : ''));
+        go('#/request/' + r.id);
+      });
+    }
+    const cl = document.getElementById('closeForm');
+    if (cl) {
+      cl.addEventListener('submit', (e) => {
+        e.preventDefault();
+        const r = requestById(cl.dataset.id);
+        const note = cl.elements.note.value.trim();
+        if (cutTotal(r) > r.amount + 0.005 && !note) { alert('ยอดจริงเกินที่ขอ — กรุณาระบุหมายเหตุ'); return; }
+        if (!confirm('ยืนยันยอดจริง ' + money(cutTotal(r)) + ' บาท และปิดยอด?')) return;
+        closeRequest(r, note);
+        save();
+        setFlash('success', 'ปิดยอด ' + (r.docNo || r.no) + ' แล้ว' + (r.closed.returned ? ' คืน ' + money(r.closed.returned) + ' บาทเข้างบ' : ''));
+        go('#/request/' + r.id);
+      });
+    }
   }
 
   function viewRequestDetail(id) {
@@ -1541,7 +2217,7 @@
 
     // ---- ปุ่มคำสั่งของหน้า (อยู่บนหัวหน้า เห็นได้ทันที)
     const actions = [];
-    if (r.docNo && r.status === 'approved') actions.push('<a class="btn primary" href="#/doc/' + r.id + '">เปิดเอกสาร ' + esc(r.docNo) + '</a>');
+    if (r.docNo && (r.status === 'approved' || r.status === 'closed')) actions.push('<a class="btn primary" href="#/doc/' + r.id + '">เปิดเอกสาร ' + esc(r.docNo) + '</a>');
     if (r.status === 'rejected' && isOwner) actions.push('<a class="btn primary" href="#/request/' + r.id + '/edit">แก้ไขและส่งใหม่</a>');
     if ((r.status === 'pending' || r.status === 'rejected') && isOwner) {
       actions.push('<button class="btn bad" id="cancelRequest" data-id="' + r.id + '">ยกเลิกคำขอ</button>');
@@ -1552,8 +2228,9 @@
     }
 
     let html = '<div class="page-head detail-head"><div>' +
-      '<div class="eyebrow">คำขอเบิกใช้งบ · ' + badge(b.type, b.type) + ' <a href="#/budget/' + b.id + '">' + esc(b.code) + '</a> ' + esc(b.name) + '</div>' +
-      '<h1>' + esc(r.no) + ' ' + badge(r.status, STATUS_LABEL[r.status]) + '</h1></div>' +
+      '<div class="eyebrow">' + (isCapex ? 'ดำเนินการใช้งบ · ' + esc(USE_TYPES[r.useType || 'direct'].label) : 'คำขอเบิกใช้งบ') + ' · ' + badge(b.type, b.type) +
+      ' <a href="#/budget/' + b.id + '">' + esc(b.code) + '</a> ' + esc(b.name) + '</div>' +
+      '<h1>' + esc(r.no) + ' ' + badge(r.status, statusText(r)) + '</h1></div>' +
       (actions.length ? '<div class="head-actions">' + actions.join('') + '</div>' : '') + '</div>' + takeFlash();
 
     if (r.status === 'cancelled') {
@@ -1562,29 +2239,38 @@
         (r.cancelReason ? '<br>เหตุผล: ' + esc(r.cancelReason) : '') + '</div>';
     }
     if (r.overBudget) html += '<div class="alert warn">ใช้เกินงบของรายการต้นทุน · เหตุผล: ' + esc(r.overBudgetReason) + '</div>';
+    if (isCapex && r.status === 'pending') {
+      const ov = capexOver(r);
+      if (ov.project > 0) html += '<div class="alert error">เกินงบคงเหลือของโครงการ ' + money(ov.project) + ' บาท (คงเหลือ ' + money(ov.projRem) + ') — ผู้คุมงบต้องโยกงบเข้าก่อนจึงอนุมัติได้ หรือส่งกลับให้ขอเพิ่มงบ</div>';
+      else if (ov.item > 0) html += '<div class="alert warn">ขอเกินงบรายการย่อย ' + money(ov.item) + ' บาท (คงเหลือของรายการ ' + money(ov.itemRem) + ') แต่ยังไม่เกินงบรวมของโครงการ — ผู้คุมงบต้องใส่ Note เมื่ออนุมัติ</div>';
+    }
+    if (isCapex && r.approverNote) html += '<div class="alert info">Note ผู้คุมงบ' + (r.overItem ? ' (อนุมัติเกินงบรายการ ' + money(r.overItem) + ' บาท)' : '') + ': ' + esc(r.approverNote) + '</div>';
 
     // ---- ข้อมูลหลักแบบตาราง (ประหยัดพื้นที่)
     const fact = (label, value, wide) => (value || value === 0
       ? '<div class="fact' + (wide ? ' wide' : '') + '"><span>' + label + '</span><strong>' + value + '</strong></div>' : '');
     const facts = '<section class="card"><div class="facts">' +
-      (isCapex ? fact('รายการย่อย', item ? esc(item.code) + '<small>' + esc(item.name) + '</small>' : '-') : '') +
+      (isCapex ? fact('ประเภท', esc(USE_TYPES[r.useType || 'direct'].label) + '<small>' + esc(USE_TYPES[r.useType || 'direct'].cut) + '</small>') : '') +
+      (isCapex ? fact(b.structure === 'project' ? 'งบที่ใช้' : 'รายการย่อย', b.structure === 'project' ? 'งบรวมทั้งโครงการ' : item ? esc(item.code) + '<small>' + esc(item.name) + '</small>' : '-') : '') +
       fact('ผู้ขอ', esc(userName(r.requesterId)) + '<small>' + esc(b.department) + '</small>') +
       fact(isCapex ? 'วันที่ขอ' : 'วันที่เบิก', isCapex ? fmtDate(r.createdAt) : fmtDay(r.expenseDate)) +
-      fact(isCapex ? 'Supplier (ผู้รับเงิน)' : 'ผู้รับเงิน', esc(r.payee)) +
-      fact('PO No.', esc(r.poNo)) +
-      (isCapex ? fact('เงื่อนไขการจ่าย', esc(planText(r))) : '') +
+      fact(isCapex ? (r.useType === 'advance' || r.useType === 'reimburse' ? 'ผู้รับเงิน (พนักงาน)' : 'Supplier (ผู้รับเงิน)') : 'ผู้รับเงิน', esc(r.payee)) +
+      fact('PO No.', isCapex && r.useType === 'prpo' ? (hasPO(r) ? esc(r.poNo) : '<span class="muted">' + (r.status === 'approved' ? 'รอจัดซื้อออก PO' : 'ออกหลังผู้คุมงบอนุมัติ') + '</span>')
+        : isCapex ? '<span class="muted">ไม่ต้องออก PO</span>' : esc(r.poNo)) +
+      (isCapex && (r.useType === 'prpo' || r.useType === 'direct') ? fact('เงื่อนไขการจ่าย', esc(planText(r))) : '') +
       (isCapex ? fact('วัตถุประสงค์', esc(r.purpose), true) : '') +
+      (isCapex && r.requesterReason ? fact('เหตุผลที่ขอเกินงบ (ผู้ขอ)', esc(r.requesterReason), true) : '') +
       '</div></section>';
 
     // ---- คอลัมน์ขวา: ยอดเงิน + สถานะ + ฟอร์มตัดสินใจ
     let side = '<div class="card total-card"><span class="muted">รวมจำนวนเงิน</span>' +
       '<div class="total-amount">' + money(r.amount) + ' <small>บาท</small></div>' +
       '<div class="total-split"><span>ก่อน VAT ' + money(r.amountBeforeVat) + '</span><span>VAT ' + money(r.vat) + '</span><span>' + r.lines.length + ' บรรทัด</span></div>';
-    if (isCapex && r.status === 'approved') {
-      const paid = paidTotal(r);
-      const pct = r.amount > 0 ? Math.min(100, (paid / r.amount) * 100) : 0;
-      side += '<div class="paid-bar"><div class="bar"><div class="used" style="width:' + pct + '%;background:var(--ok)"></div></div>' +
-        '<div class="muted small-note" style="margin:.4rem 0 0">บันทึกงวดจ่ายแล้ว ' + money(paid) + ' · ค้าง ' + money(outstanding(r)) + '</div></div>';
+    if (isCapex && (r.status === 'approved' || r.status === 'closed')) {
+      const cut = cutTotal(r);
+      const pct = r.amount > 0 ? Math.min(100, (cut / r.amount) * 100) : 0;
+      side += '<div class="paid-bar"><div class="bar"><div class="used" style="width:' + pct + '%"></div></div>' +
+        '<div class="muted small-note" style="margin:.4rem 0 0">ตัดงบแล้ว ' + money(cut) + (r.status === 'closed' ? ' · ปิดยอดแล้ว' : ' · ยังจองไว้ ' + money(Math.max(0, round2(r.amount - cut)))) + '</div></div>';
     }
     side += '</div>';
 
@@ -1599,98 +2285,36 @@
       timeline += r.history.map(stepLi).join('') + tl('done', 'แก้ไขและส่งใหม่', fmtDate(r.resubmittedAt));
     }
     timeline += r.steps.map(stepLi).join('');
-    if (!r.steps.length && r.approvedAt) timeline += tl('approved', 'ออกเอกสารทันที (CBS ไม่ผ่านการเงิน)', fmtDate(r.approvedAt));
-    else if (r.status === 'approved') timeline += tl('approved', 'ออกเอกสาร ' + esc(r.docNo), fmtDate(r.approvedAt));
+    if (!r.steps.length && r.approvedAt) timeline += tl('approved', 'ออกเอกสารทันที (CBS ไม่ต้องผ่านการตรวจสอบ)', fmtDate(r.approvedAt));
+    else if (r.status === 'approved' || r.status === 'closed') timeline += tl('approved', 'ออก' + docTitle(r) + ' ' + esc(r.docNo), fmtDate(r.approvedAt));
+    if (r.status === 'closed') timeline += tl('approved', 'ปิดยอดแล้ว', esc(userName(r.closed.by)) + ' · ' + fmtDate(r.closed.at));
     if (r.status === 'cancelled') timeline += tl('rejected', 'ยกเลิก', esc(userName(r.cancelledBy || r.requesterId)) + ' · ' + fmtDate(r.cancelledAt));
 
     side += '<div class="card"><h3 class="side-title">สถานะ</h3><ol class="timeline">' + timeline + '</ol>';
     if (canAct(u, step)) {
+      const ov = isCapex ? capexOver(r) : { item: 0, project: 0 };
       side += '<form id="decisionForm" class="decision" data-id="' + r.id + '">' +
-        '<label class="field"><span>เหตุผล (จำเป็นเมื่อไม่อนุมัติ)</span><textarea name="comment" rows="2" placeholder="เช่น ควรใช้งบตัวไหนแทน"></textarea></label>' +
-        '<div class="decision-actions"><button class="btn ok" type="submit" data-decision="approved">อนุมัติเอกสาร</button>' +
-        '<button class="btn bad" type="submit" data-decision="rejected">ไม่อนุมัติ</button></div></form>';
+        (ov.project > 0
+          ? '<div class="alert error small">เกินงบโครงการ ' + money(ov.project) + ' บาท — โยกงบเข้าก่อน หรือส่งกลับให้ขอเพิ่มงบ</div>' +
+            '<a class="btn" style="width:100%;margin-bottom:var(--s-3)" href="#/adjust?to=' + b.id + '&item=' + r.itemId + '&amount=' + ov.project + '">โยกงบเข้าโครงการนี้</a>'
+          : '') +
+        '<label class="field"><span>' + (ov.item > 0 && ov.project <= 0 ? 'Note เหตุผลที่ให้ผ่าน (จำเป็น — ขอเกินงบรายการ ' + money(ov.item) + ' บาท)' : 'Note / เหตุผล (จำเป็นเมื่อส่งกลับ)') + '</span>' +
+        '<textarea name="comment" rows="2" placeholder="เช่น ควรใช้งบตัวไหนแทน"></textarea></label>' +
+        '<div class="decision-actions"><button class="btn ok" type="submit" data-decision="approved"' + (ov.project > 0 ? ' disabled title="เกินงบโครงการ"' : '') + '>' +
+        (isCapex ? 'อนุมัติ ออกใบดำเนินการใช้งบ' : 'อนุมัติเอกสาร') + '</button>' +
+        '<button class="btn bad" type="submit" data-decision="rejected">ส่งกลับให้แก้ไข</button></div></form>';
     }
     side += '</div>';
+    if (isCapex) side += historyCard(r.events, 'บันทึกการดำเนินการ');
 
-    let main = facts + '<h2>รายการที่ขอเบิก</h2>' + linesTable(b, r, false);
-    if (r.status === 'approved') main += isCapex ? paymentsPanel(r, u) : cbsAccountingPanel(b, r, u);
+    let main = facts + '<h2>' + (isCapex ? 'รายการที่ขอใช้' : 'รายการที่ขอเบิก') + '</h2>' + linesTable(b, r, false);
+    if ((r.attachments || []).length) main += '<h2>เอกสารประกอบ</h2><section class="card">' + attachList(r.attachments) + '</section>';
+    if (isCapex && (r.status === 'approved' || r.status === 'closed')) main += cutPanel(r);
+    else if (r.status === 'approved') main += cbsAccountingPanel(b, r, u);
 
     return html + '<div class="detail-layout"><div class="detail-main">' + main + '</div><aside class="detail-side">' + side + '</aside></div>';
   }
 
-  /** งวดจ่ายของใบเบิก CAPEX: การเงินบันทึกงวด (วันวางบิล/กำหนดจ่าย/ยอด) และบัญชีแยก Asset/Expenses รายงวด */
-  function paymentsPanel(r, u) {
-    const pays = r.payments || [];
-    const canFin = can('payment.record');
-    const canAcc = can('accounting.record');
-    const left = outstanding(r);
-    let html = '<h2>งวดการจ่ายเงิน' + (needsAccounting(r) ? ' <span class="badge pending">รอบัญชีจ่าย / แยก Asset-Expenses</span>' : '') + '</h2>' +
-      '<p class="muted small-note" style="margin:0 0 .5rem">งบจะถูกตัดเป็น "ใช้แล้ว" เมื่อฝ่ายบัญชีลงวันที่จ่ายจริงของแต่ละงวดเท่านั้น — ก่อนหน้านั้นนับเป็น "จองไว้"</p>' +
-      '<div class="card">';
-    const plan = isInstallments(r) ? r.paymentPlan.installments : null;
-    const planAmts = plan ? planAmounts(r.amount, plan.map((x) => x.pct)) : [];
-    if (plan) {
-      html += '<div class="plan-list"><div class="muted small-note" style="margin:0 0 .5rem">แผนการจ่ายตามใบเบิก</div><ol>' +
-        plan.map((x, i) => {
-          const st = i < pays.length ? '<span class="badge approved">บันทึกแล้ว</span>' : i === pays.length ? '<span class="badge pending">งวดถัดไป</span>' : '';
-          return '<li><strong>งวดที่ ' + (i + 1) + ' · ' + x.pct + '%</strong><span class="num-cell">' + money(planAmts[i]) + '</span>' +
-            '<span class="muted">' + esc(x.note || '') + '</span>' + st + '</li>';
-        }).join('') + '</ol></div>';
-    } else if (r.paymentPlan) {
-      html += '<p class="muted small-note" style="margin:0 0 .75rem">แผนการจ่าย: จ่ายครั้งเดียว ' + money(r.amount) + ' บาท</p>';
-    }
-
-    if (pays.length) {
-      html += '<form id="acctForm" data-id="' + r.id + '"><div class="table-wrap"><table class="edit-table pay-table"><thead><tr><th>งวด</th><th>วางบิล</th><th>กำหนดจ่าย</th>' +
-        '<th class="num">ก่อน VAT</th><th class="num">VAT</th><th class="num">รวม</th><th style="width:10rem">วันที่จ่ายจริง (บัญชี)</th><th class="num" style="width:9rem">Asset (บัญชี)</th><th class="num" style="width:9rem">Expenses (บัญชี)</th>' +
-        (canFin ? '<th></th>' : '') + '</tr></thead><tbody>' +
-        pays.map((p) => {
-          const accCell = (name, v) => canAcc
-            ? '<input name="' + name + '-' + p.id + '" type="number" min="0" step="0.01" class="right" value="' + esc(v == null ? '' : v) + '">'
-            : (v == null ? '<span class="muted">-</span>' : money(v));
-          return '<tr><td title="บันทึกโดย ' + esc(userName(p.by)) + '">' + esc(p.label) + '</td><td>' + fmtDay(p.deliveryDate) + '</td><td>' + fmtDay(p.dueDate) + '</td>' +
-            '<td class="num">' + money(p.amountBeforeVat) + '</td><td class="num">' + money(p.vat) + '</td><td class="num">' + money(p.amount) + '</td>' +
-            '<td>' + (canAcc ? '<input name="paid-' + p.id + '" type="date" value="' + esc(p.paidAt || '') + '">'
-              : p.paidAt ? '<span class="badge approved">จ่ายแล้ว</span> ' + fmtDay(p.paidAt) : '<span class="badge pending">รอบัญชีจ่าย</span>') + '</td>' +
-            '<td class="num">' + accCell('asset', p.asset) + '</td><td class="num">' + accCell('expense', p.expense) + '</td>' +
-            (canFin ? '<td>' + (p.acctAt || p.paidAt ? '' : '<button type="button" class="btn small bad" data-del-pay="' + p.id + '" title="ลบงวด">×</button>') + '</td>' : '') + '</tr>';
-        }).join('') + '</tbody></table></div>' +
-        (canAcc ? '<div class="actions"><button class="btn primary" type="submit">บันทึกข้อมูลบัญชี</button></div>' : '') + '</form>';
-    } else {
-      html += '<p class="muted">ยังไม่มีการบันทึกงวดจ่าย</p>';
-    }
-
-    if (canFin && left > 0) {
-      const nextNo = pays.length + 1;
-      // เติมชื่องวดและยอดตามแผนให้ล่วงหน้า (งวดสุดท้าย / จ่ายครั้งเดียว ใช้ยอดค้างทั้งหมดเพื่อไม่ให้คลาดจากการปัดเศษ)
-      const next = plan ? plan[pays.length] : null;
-      let label = 'งวดที่ ' + nextNo;
-      let prefill = '';
-      let rest = false;
-      if (next) {
-        label = 'งวดที่ ' + nextNo + ' (' + next.pct + '%)' + (next.note ? ' ' + next.note : '');
-        rest = pays.length === plan.length - 1;
-        prefill = rest ? '' : round2(r.amountBeforeVat * next.pct / 100);
-      } else if (r.paymentPlan && !plan) {
-        label = 'จ่ายครั้งเดียว';
-        rest = true;
-      }
-      html += '<form id="payForm" class="pay-form" data-id="' + r.id + '"' + (rest ? ' data-rest="1"' : '') + '><h3>บันทึกงวดจ่าย</h3><div class="row">' +
-        '<label class="field"><span>งวด</span><input name="label" value="' + esc(label) + '"></label>' +
-        '<label class="field"><span>วันที่ส่งมอบ / วางบิล</span><input name="deliveryDate" type="date"></label>' +
-        '<label class="field"><span>วันที่กำหนดจ่ายเงิน</span><input name="dueDate" type="date" required></label>' +
-        '</div><div class="row">' +
-        '<label class="field"><span>ก่อน VAT (บาท)</span><input name="amountBeforeVat" type="number" min="0.01" step="0.01" required value="' + prefill + '"></label>' +
-        '<label class="field check-field"><span>&nbsp;</span><span class="check"><input type="checkbox" name="hasVat"' + (r.vat > 0 ? ' checked' : '') + '> มี VAT 7%</span></label>' +
-        '<div class="field"><span>รวมงวดนี้</span><output id="payTotal" class="out strong">0.00</output></div>' +
-        '<div class="field"><span>ค้างบันทึก</span><output class="out">' + money(left) + '</output></div>' +
-        '</div><div class="actions" style="margin-top:0"><button class="btn primary" type="submit">+ บันทึกงวด</button>' +
-        '<button type="button" class="btn" id="payRest">ใส่ยอดที่เหลือทั้งหมด</button></div></form>';
-    }
-    return html + '</div>';
-  }
-
-  /** CBS: บัญชียืนยัน GL รายบรรทัด และสถานะจ่ายของทั้งใบ */
   function cbsAccountingPanel(b, r, u) {
     const canAcc = can('accounting.record');
     const acc = r.accounting || {};
@@ -1731,16 +2355,14 @@
         if (!canAct(u, step)) return;
         const comment = form.elements.comment.value.trim();
         if (decision === 'rejected' && !comment) {
-          alert('กรุณาแจ้งเหตุผลที่ไม่อนุมัติ');
+          alert('กรุณาแจ้งเหตุผลที่ส่งกลับ');
           return;
         }
-        if (decision === 'approved') {
-          // ตรวจซ้ำว่ายอดยังไม่เกินงบ (คำขอนี้ถูกจองไว้ในยอดคงเหลือแล้ว)
-          const us = usage(b, r.itemId);
-          if (us.remaining < 0) {
-            alert('งบไม่เพียงพอ กรุณาตรวจสอบวงเงินงบอีกครั้ง');
-            return;
-          }
+        let ov = { item: 0, project: 0 };
+        if (decision === 'approved' && r.type === 'CAPEX') {
+          ov = capexOver(r);
+          if (ov.project > 0) { alert('เกินงบคงเหลือของโครงการ ' + money(ov.project) + ' บาท — โยกงบเข้าก่อน หรือส่งกลับให้ขอเพิ่มงบ'); return; }
+          if (ov.item > 0 && !comment) { alert('ขอเกินงบรายการ ' + money(ov.item) + ' บาท — กรุณาใส่ Note เหตุผลที่ให้ผ่าน'); return; }
         }
         if (REMOTE) {
           if (!(await runAndReload(() => window.RemoteApi.decide(r.id, decision, comment)))) return;
@@ -1754,69 +2376,15 @@
         Object.assign(step, { status: decision, by: u.id, at: new Date().toISOString(), comment });
         if (decision === 'rejected') {
           r.status = 'rejected';
-          setFlash('info', 'ไม่อนุมัติคำขอ ' + r.no + ' แล้ว แจ้งเหตุผลให้ผู้ขอแก้ไขหรือยกเลิก งบที่จองไว้ถูกคืนเรียบร้อย');
+          addEvent(r, 'ส่งกลับให้แก้ไข', comment);
+          setFlash('info', 'ส่งคำขอ ' + r.no + ' กลับให้ผู้ขอแก้ไขแล้ว งบที่จองไว้ถูกคืนเรียบร้อย');
         } else {
+          if (r.type === 'CAPEX') Object.assign(r, { approverNote: comment, overItem: ov.item });
           issueDocument(r, b, step.at);
-          setFlash('success', 'อนุมัติเอกสารแล้ว ออกใบเบิกงบประมาณเลขที่ ' + r.docNo);
+          addEvent(r, 'อนุมัติ ออก' + docTitle(r) + ' ' + r.docNo, comment);
+          setFlash('success', 'อนุมัติแล้ว ออก' + docTitle(r) + 'เลขที่ ' + r.docNo + (r.useType === 'prpo' ? ' — รอจัดซื้อบันทึก PO' : ''));
         }
         save();
-        go('#/request/' + r.id);
-      });
-    }
-
-    const pay = document.getElementById('payForm');
-    if (pay) {
-      const r = requestById(pay.dataset.id);
-      const f = pay.elements;
-      // restMode: กด "ใส่ยอดที่เหลือทั้งหมด" แล้ว ให้ VAT = ยอดค้าง - ก่อน VAT เพื่อให้ยอดรวมตรงกับยอดค้างพอดี (ไม่คลาดจากการปัดเศษ)
-      let restMode = false;
-      const calc = () => {
-        const before = round2(f.amountBeforeVat.value);
-        let vat = f.hasVat.checked ? round2(before * VAT_RATE) : 0;
-        if (restMode && f.hasVat.checked) vat = round2(outstanding(r) - before);
-        document.getElementById('payTotal').textContent = money(before + vat);
-        return { before, vat, total: round2(before + vat) };
-      };
-      // แก้ยอดหรือ VAT เองเมื่อไร ค่อยเลิกใช้ยอดค้างทั้งหมด (กรอกวันที่ไม่กระทบ)
-      const onEdit = (e) => {
-        if (e.target.name === 'amountBeforeVat' || e.target.name === 'hasVat') restMode = false;
-        calc();
-      };
-      pay.addEventListener('input', onEdit);
-      pay.addEventListener('change', onEdit);
-      const fillRest = () => {
-        const left = outstanding(r);
-        f.amountBeforeVat.value = f.hasVat.checked ? round2(left / (1 + VAT_RATE)) : left;
-        restMode = true;
-        calc();
-      };
-      document.getElementById('payRest').addEventListener('click', fillRest);
-      if (pay.dataset.rest === '1') fillRest();
-      else calc();
-      pay.addEventListener('submit', async (e) => {
-        e.preventDefault();
-        const c = calc();
-        const left = outstanding(r);
-        if (!(c.before > 0)) { alert('จำนวนเงินต้องมากกว่า 0'); return; }
-        if (c.total > left + 0.005) { alert('ยอดงวดนี้ (' + money(c.total) + ') เกินยอดค้างบันทึก ' + money(left) + ' บาท'); return; }
-        if (!f.dueDate.value) { alert('กรุณาระบุวันที่กำหนดจ่ายเงิน'); return; }
-        if (REMOTE) {
-          const label = f.label.value.trim() || 'งวดที่ ' + ((r.payments || []).length + 1);
-          const payload = { label, deliveryDate: f.deliveryDate.value, dueDate: f.dueDate.value, amountBeforeVat: c.before, vat: c.vat };
-          if (!(await runAndReload(() => window.RemoteApi.recordPayment(r.id, payload)))) return;
-          const nr = requestById(r.id);
-          setFlash('success', 'บันทึก' + label + ' ' + money(c.total) + ' บาทแล้ว · ค้างบันทึก ' + money(outstanding(nr)) + ' บาท');
-          go('#/request/' + r.id);
-          return;
-        }
-        r.payments = r.payments || [];
-        r.payments.push({
-          id: nextId('p'), no: r.payments.length + 1, label: f.label.value.trim() || 'งวดที่ ' + (r.payments.length + 1),
-          deliveryDate: f.deliveryDate.value, dueDate: f.dueDate.value,
-          amountBeforeVat: c.before, vat: c.vat, amount: c.total, at: new Date().toISOString(), by: me().id
-        });
-        save();
-        setFlash('success', 'บันทึก' + r.payments[r.payments.length - 1].label + ' ' + money(c.total) + ' บาทแล้ว · ค้างบันทึก ' + money(outstanding(r)) + ' บาท');
         go('#/request/' + r.id);
       });
     }
@@ -1915,6 +2483,7 @@
           r.cancelledAt = new Date().toISOString();
           r.cancelledBy = me().id;
           r.cancelReason = reason;
+          addEvent(r, 'ยกเลิกคำขอ', reason);
           save();
         }
         setFlash('info', wasIssued
@@ -1931,8 +2500,8 @@
   function balanceAt(r, b, ids) {
     const approved = ids ? round2(b.items.filter((x) => ids.includes(x.id)).reduce((s, x) => s + itemTotal(x), 0)) : budgetTotal(b);
     const before = round2(db.requests
-      .filter((x) => x.budgetId === b.id && x.id !== r.id && x.status === 'approved' && x.approvedAt <= r.approvedAt)
-      .reduce((s, x) => s + linesAmount(x, ids), 0));
+      .filter((x) => x.budgetId === b.id && x.id !== r.id && (x.status === 'approved' || x.status === 'closed') && x.approvedAt <= r.approvedAt)
+      .reduce((s, x) => s + (x.status === 'closed' && x.type === 'CAPEX' ? (linesAmount(x, ids) ? cutTotal(x) : 0) : linesAmount(x, ids)), 0));
     const now = linesAmount(r, ids);
     return { approved, before, now, after: round2(approved - before - now) };
   }
@@ -1948,14 +2517,14 @@
         '<td>' + esc(row.code + ' ' + row.label) + '</td><td>' + esc(row.approver) + '</td><td></td><td></td></tr>').join('') +
       '</tbody></table>' +
       (hit < 0 ? '<p class="note">ยอดเงินเกินวงเงินในตาราง DOA — ต้องเสนอคณะกรรมการตามระเบียบ</p>'
-        : '<p class="note">ระบบเลือกระดับผู้อนุมัติตามจำนวนเงินที่ขอเบิกครั้งนี้ (' + money(amount) + ' บาท)</p>') + '</div>';
+        : '<p class="note">ระบบเลือกระดับผู้อนุมัติตามจำนวนเงินที่ขอใช้ครั้งนี้ (' + money(amount) + ' บาท)</p>') + '</div>';
   }
 
   function viewDocument(id) {
     const r = requestById(id);
     if (!r) return notFound();
     if (r.status === 'cancelled' && r.docNo) return '<div class="alert error">เอกสารเลขที่ ' + esc(r.docNo) + ' ถูกยกเลิกแล้ว ใช้แนบขอซื้อไม่ได้</div>';
-    if (r.status !== 'approved') return '<div class="alert error">คำขอนี้ยังไม่ได้รับอนุมัติจากฝ่ายการเงิน จึงยังไม่มีเอกสาร</div>';
+    if (r.status !== 'approved' && r.status !== 'closed') return '<div class="alert error">คำขอนี้ยังไม่ผ่านการตรวจสอบของผู้คุมงบ จึงยังไม่มีเอกสาร</div>';
     const b = budgetById(r.budgetId);
     const isCapex = r.type === 'CAPEX';
     const item = isCapex ? itemById(b, r.itemId) || {} : null;
@@ -1963,30 +2532,37 @@
     const tr = (k, v) => '<tr><th style="width:34%">' + k + '</th><td>' + v + '</td></tr>';
     const balanceTable = (title, bal) => '<table><thead><tr><th colspan="2">' + title + '</th></tr></thead><tbody>' +
       tr('จำนวนเงินงบประมาณ (รวม VAT)', '<span class="num-cell">' + money(bal.approved) + ' บาท</span>') +
-      tr('ใช้/จองงบประมาณไปแล้วก่อนการขอเบิก', '<span class="num-cell">' + money(bal.before) + ' บาท</span>') +
-      tr('จำนวนงบประมาณที่ขอเบิกครั้งนี้ (รวม VAT)', '<span class="num-cell"><strong>' + money(bal.now) + ' บาท</strong></span>') +
-      tr('งบประมาณคงเหลือ (หลังเบิกครั้งนี้)', '<span class="num-cell">' + moneyCell(bal.after) + ' บาท</span>') + '</tbody></table>';
+      tr('ใช้/จองงบประมาณไปแล้วก่อนหน้า', '<span class="num-cell">' + money(bal.before) + ' บาท</span>') +
+      tr('จำนวนงบประมาณที่ขอใช้ครั้งนี้ (รวม VAT)', '<span class="num-cell"><strong>' + money(bal.now) + ' บาท</strong></span>') +
+      tr('งบประมาณคงเหลือ (หลังใช้ครั้งนี้)', '<span class="num-cell">' + moneyCell(bal.after) + ' บาท</span>') + '</tbody></table>';
 
     const head = '<header><div><h1>' + esc(companyMap()[b.company] || b.company) + '</h1><div class="doc-sub">' +
-      (isCapex ? 'ใบเบิกงบประมาณ (งบลงทุน CAPEX)' : 'เอกสารการเบิกขอใช้งบประมาณ (งบโครงการ CBS)') + '</div></div>' +
-      '<div class="docno">ใบเบิกเลขที่ <strong>' + esc(r.docNo) + '</strong><br>วันที่ออกเอกสาร ' + fmtDay(r.approvedAt) +
-      (isCapex ? '<br><span class="stamp">การเงินตรวจสอบแล้ว</span>' : '') + '</div></header>';
+      (isCapex ? 'ใบดำเนินการใช้งบ (งบลงทุน CAPEX)' : 'เอกสารการเบิกขอใช้งบประมาณ (งบโครงการ CBS)') + '</div></div>' +
+      '<div class="docno">' + (isCapex ? 'เลขที่ดำเนินการใช้งบ' : 'เลขที่เอกสาร') + ' <strong>' + esc(r.docNo) + '</strong><br>วันที่ออกเอกสาร ' + fmtDay(r.approvedAt) +
+      (isCapex ? '<br><span class="stamp">ผู้คุมงบตรวจสอบแล้ว</span>' : '') + (r.status === 'closed' ? '<br><span class="stamp">ปิดยอดแล้ว</span>' : '') + '</div></header>';
+    const poCuts = (r.cuts || []).filter((c) => c.kind === 'po');
+    const poText = !isCapex ? esc(r.poNo || '-') : r.useType !== 'prpo' ? '- (ไม่ต้องออก PO)' : poCuts.length
+      ? poCuts.map((c) => esc((c.prNo ? 'PR ' + c.prNo + ' / ' : '') + 'PO ' + c.poNo) + ' · ' + money(c.amount) + ' บาท').join('<br>') : 'รอจัดซื้อออก PO';
 
     const info = '<div class="section"><table><tbody>' +
       tr(isCapex ? 'รหัสโครงการ (Project No.)' : 'Job No.', esc(b.code + ' ' + b.name)) +
-      (isCapex ? tr('รหัสรายการย่อย (Item No.)', esc(item.code + ' ' + item.name)) : '') +
-      tr('วันที่ขอเบิก', fmtDay(isCapex ? r.createdAt : r.expenseDate)) +
-      tr('ชื่อผู้ขอเบิกงบประมาณ', esc(userName(r.requesterId) + ' · ' + b.department)) +
-      (isCapex ? tr('วัตถุประสงค์ในการเบิกใช้', esc(r.purpose)) : '') +
-      tr(isCapex ? 'Supplier (ผู้รับเงิน)' : 'ผู้รับเงิน', esc(r.payee)) +
-      tr('PO No.', esc(r.poNo)) +
+      (isCapex && b.structure !== 'project' ? tr('รหัสรายการย่อย (Item No.)', esc(item.code + ' ' + item.name)) : '') +
+      (isCapex ? tr('ประเภทการใช้งบ', esc((USE_TYPES[r.useType] || {}).label || '-') + '<br><small>' + esc((USE_TYPES[r.useType] || {}).cut || '') + '</small>') : '') +
+      tr(isCapex ? 'วันที่ขอใช้งบ' : 'วันที่ขอเบิก', fmtDay(isCapex ? r.createdAt : r.expenseDate)) +
+      tr(isCapex ? 'ชื่อผู้ขอใช้งบประมาณ' : 'ชื่อผู้ขอเบิกงบประมาณ', esc(userName(r.requesterId) + ' · ' + b.department)) +
+      (isCapex ? tr('วัตถุประสงค์ในการใช้งบ', esc(r.purpose)) : '') +
+      tr(isCapex ? (r.useType === 'advance' || r.useType === 'reimburse' ? 'ผู้รับเงิน (พนักงาน)' : 'Supplier (ผู้รับเงิน)') : 'ผู้รับเงิน', esc(r.payee)) +
+      tr('PR / PO No.', poText) +
+      (r.overItem > 0 ? tr('หมายเหตุ: ใช้เกินงบรายการ', money(r.overItem) + ' บาท (อยู่ในงบรวมของโครงการ)' + (r.requesterReason ? '<br>เหตุผลผู้ขอ: ' + esc(r.requesterReason) : '')) : '') +
+      (r.approverNote ? tr('Note ผู้คุมงบ', esc(r.approverNote)) : '') +
+      (r.status === 'closed' && r.closed ? tr('ปิดยอด', 'ใช้จริง ' + money(r.closed.actual) + ' บาท' + (r.closed.returned > 0 ? ' · คืนเข้างบ ' + money(r.closed.returned) + ' บาท' : '') + (r.closed.over > 0 ? ' · เกินที่ขอ ' + money(r.closed.over) + ' บาท' : '')) : '') +
       (isCapex && planText(r) ? tr('เงื่อนไขการจ่าย', planDetailHtml(r)) : '') +
       (r.overBudget ? tr('หมายเหตุ: ใช้เกินงบ', esc(r.overBudgetReason)) : '') +
       '</tbody></table></div>';
 
-    let detail = '<div class="section"><h2>รายละเอียดการเบิกงบประมาณ</h2>';
+    let detail = '<div class="section"><h2>' + (isCapex ? 'รายละเอียดการใช้งบประมาณ' : 'รายละเอียดการเบิกงบประมาณ') + '</h2>';
     if (isCapex) {
-      detail += '<div class="doc-two">' + balanceTable('ระดับโครงการ: ' + esc(b.code), proj) +
+      detail += b.structure === 'project' ? balanceTable('ระดับโครงการ: ' + esc(b.code), proj) : '<div class="doc-two">' + balanceTable('ระดับโครงการ: ' + esc(b.code), proj) +
         balanceTable('ระดับรายการย่อย: ' + esc(item.code), balanceAt(r, b, leafIdsUnder(b, item))) + '</div>';
     } else {
       detail += balanceTable('ระดับโครงการ: ' + esc(b.code), proj) +
@@ -2000,19 +2576,20 @@
     }
     detail += '</div>';
 
-    const lines = '<div class="section"><h2>รายการที่ขอเบิกครั้งนี้</h2><table><thead><tr><th style="width:2rem">#</th>' +
-      (isCapex ? '' : '<th>รายการต้นทุน / GL</th>') + '<th>' + (isCapex ? 'รายการงบประมาณ' : 'รายละเอียด') + '</th>' +
+    const withCat = isCapex && r.lines.some((l) => l.category);
+    const lines = '<div class="section"><h2>' + (isCapex ? 'รายการที่ขอใช้ครั้งนี้' : 'รายการที่ขอเบิกครั้งนี้') + '</h2><table><thead><tr><th style="width:2rem">#</th>' +
+      (isCapex ? (withCat ? '<th>หมวดค่าใช้จ่าย</th>' : '') : '<th>รายการต้นทุน / GL</th>') + '<th>' + (isCapex ? 'รายการที่ซื้อ / จ่าย' : 'รายละเอียด') + '</th>' +
       '<th class="num">ก่อน VAT</th><th class="num">VAT 7%</th><th class="num">รวม</th></tr></thead><tbody>' +
       r.lines.map((l, i) => {
         const it = itemById(b, l.itemId) || {};
         return '<tr><td>' + (i + 1) + '</td>' +
-          (isCapex ? '' : '<td>' + esc(it.code + ' ' + it.name) + (l.glCode ? '<br><small>GL ' + esc(l.glCode + ' ' + (l.glName || '')) + '</small>' : '') + '</td>') +
+          (isCapex ? (withCat ? '<td>' + esc(l.category || '-') + '</td>' : '') : '<td>' + esc(it.code + ' ' + it.name) + (l.glCode ? '<br><small>GL ' + esc(l.glCode + ' ' + (l.glName || '')) + '</small>' : '') + '</td>') +
           '<td>' + esc(l.description) + '</td><td class="num">' + money(l.amountBeforeVat) + '</td><td class="num">' + money(l.vat) + '</td><td class="num">' + money(l.amount) + '</td></tr>';
       }).join('') +
-      '<tr><th colspan="' + (isCapex ? 2 : 3) + '" class="right">รวมทั้งสิ้น</th><td class="num">' + money(r.amountBeforeVat) + '</td><td class="num">' + money(r.vat) +
+      '<tr><th colspan="' + (isCapex && !withCat ? 2 : 3) + '" class="right">รวมทั้งสิ้น</th><td class="num">' + money(r.amountBeforeVat) + '</td><td class="num">' + money(r.vat) +
       '</td><td class="num"><strong>' + money(r.amount) + '</strong></td></tr></tbody></table></div>';
 
-    const signs = '<div class="signs"><div><div class="line"></div>ผู้ขอเบิกงบประมาณ<br>' + esc(userName(r.requesterId)) + '</div>' +
+    const signs = '<div class="signs"><div><div class="line"></div>' + (isCapex ? 'ผู้ขอใช้งบประมาณ' : 'ผู้ขอเบิกงบประมาณ') + '<br>' + esc(userName(r.requesterId)) + '</div>' +
       r.steps.map((s) => '<div><div class="line"></div>' + esc((user(s.by) || {}).title || '') + '<br>' + esc(userName(s.by)) + '<br><small>' + fmtDay(s.at) + '</small></div>').join('') +
       '</div>';
 
@@ -2020,8 +2597,9 @@
       '<button class="btn primary" onclick="window.print()">พิมพ์ / บันทึกเป็น PDF</button></div>' +
       '<article class="doc">' + head + info + detail + lines +
       (isCapex ? doaTable(item.doa, r.amount) : '') + signs +
-      '<p class="note">โปรดแนบเอกสารฉบับนี้ และระบุเลขที่ ' + esc(r.docNo) +
-      ' ในใบขอซื้อ (PR) ที่เกี่ยวข้อง · ยอดขอซื้อรวมต้องไม่เกิน ' + money(r.amount) + ' บาท</p>' +
+      '<p class="note">' + (isCapex && r.useType !== 'prpo'
+        ? 'ใช้เลขที่ ' + esc(r.docNo) + ' อ้างอิงในเอกสารการจ่าย / เคลียร์เงิน · ' + esc((USE_TYPES[r.useType] || {}).cut || '')
+        : 'โปรดแนบเอกสารฉบับนี้ และระบุเลขที่ ' + esc(r.docNo) + ' ในใบขอซื้อ (PR) ที่เกี่ยวข้อง · ยอดขอซื้อรวมต้องไม่เกิน ' + money(r.amount) + ' บาท') + '</p>' +
       '</article>';
   }
 
@@ -2032,12 +2610,12 @@
   const monthLabel = (key) => TH_MONTH[Number(key.slice(5, 7)) - 1] + ' ' + String((Number(key.slice(0, 4)) + 543) % 100);
 
   /** งบที่ผู้ใช้เห็นได้ (ผู้ขอเห็นเฉพาะงบของตนเอง) */
-  const visibleBudgets = () => db.budgets.filter((b) => canViewAll() || b.ownerId === me().id);
+  const visibleBudgets = () => db.budgets.filter((b) => isActive(b) && (canViewAll() || b.ownerId === me().id));
 
   /** วันที่และยอดที่ฝ่ายบัญชีจ่ายแล้วของคำขอ — ใช้ทำกราฟรายเดือน */
   function paidEntries(r) {
+    if (r.type === 'CAPEX') return (r.status === 'approved' || r.status === 'closed') ? (r.cuts || []).map((c) => ({ date: c.date, amount: Number(c.amount || 0) })) : [];
     if (r.status !== 'approved') return [];
-    if (r.type === 'CAPEX') return (r.payments || []).filter((p) => p.paidAt).map((p) => ({ date: p.paidAt, amount: p.amount }));
     const acc = r.accounting || {};
     return acc.paymentStatus === 'จ่ายแล้ว' ? [{ date: acc.paidAt || (acc.updatedAt || '').slice(0, 10), amount: r.amount }] : [];
   }
@@ -2116,7 +2694,7 @@
     const keys = Object.keys(months).sort();
     let chart;
     if (!keys.length) {
-      chart = '<p class="muted">ยังไม่มีรายการที่ฝ่ายบัญชีบันทึกจ่ายแล้ว</p>';
+      chart = '<p class="muted">ยังไม่มีรายการที่ตัดงบแล้ว</p>';
     } else {
       const last = keys[keys.length - 1];
       const span = [];
@@ -2131,22 +2709,32 @@
         (months[k] ? money(months[k]) : '') + '</span><div class="chart-bar" style="height:' + Math.round(((months[k] || 0) / max) * 100) + '%"></div>' +
         '<span class="chart-label">' + monthLabel(k) + '</span></div>').join('') + '</div>';
     }
-    const monthly = '<section class="card"><div class="section-head"><h2 class="section-title">ตัดงบรายเดือน (จ่ายแล้ว 6 เดือนล่าสุด)</h2></div>' + chart + '</section>';
+    const monthly = '<section class="card"><div class="section-head"><h2 class="section-title">ตัดงบรายเดือน (6 เดือนล่าสุด)</h2></div>' + chart + '</section>';
 
     // ---- งานที่ต้องทำ
     const mineReq = db.requests.filter((r) => r.requesterId === u.id);
     const task = (label, n, href, note) => '<li><a href="' + href + '"><span>' + label + (note ? '<small>' + note + '</small>' : '') + '</span><b class="' + (n ? 'has' : '') + '">' + n + '</b></a></li>';
     const tasks = [];
-    if (can('request.decide')) tasks.push(task('เอกสาร CAPEX รอตรวจสอบ', inbox(u).length, '#/approvals'));
-    if (can('payment.record')) {
-      const pay = db.requests.filter(needsPayment);
-      tasks.push(task('งวดจ่ายค้างบันทึก', pay.length, '#/payments', pay.length ? 'ค้าง ' + money(pay.reduce((s2, r) => s2 + outstanding(r), 0)) + ' บาท' : ''));
+    if (can('budget.verify')) {
+      tasks.push(task('งบที่รอยืนยันเปิดใช้', db.budgets.filter((b) => b.state === 'review').length, '#/approvals'),
+        task('คำขอเพิ่มงบรอตรวจสอบ', (db.changes || []).filter((c) => c.state === 'review').length, '#/approvals'));
     }
-    if (can('accounting.record')) tasks.push(task('รอบันทึกข้อมูลบัญชี / จ่ายเงิน', db.requests.filter(needsAccounting).length, '#/accounting'));
+    if (can('request.decide')) tasks.push(task('คำขอดำเนินการใช้งบรอตรวจสอบ', inbox(u).length, '#/approvals'));
+    if (can('po.record')) tasks.push(task('รอออก PO', db.requests.filter(needsPO).length, '#/po'));
+    if (can('cut.record')) {
+      const cuts = db.requests.filter(needsCut);
+      tasks.push(task('รอตัดงบ / ปิดยอด', cuts.length, '#/cuts', cuts.length ? 'รวม ' + money(cuts.reduce((s2, r) => s2 + Math.max(r.amount - cutTotal(r), 0), 0)) + ' บาท' : ''));
+    }
+    if (can('accounting.record')) tasks.push(task('CBS รอบันทึกบัญชี / จ่ายเงิน', db.requests.filter(needsAccounting).length, '#/accounting'));
+    if (can('budget.create')) {
+      const mineB = db.budgets.filter((b) => b.ownerId === u.id);
+      tasks.push(task('งบร่าง / ถูกส่งกลับแก้ไข', mineB.filter((b) => b.state === 'draft' || b.state === 'returned').length, '#/my-budgets'),
+        task('งบรอผู้คุมงบยืนยัน', mineB.filter((b) => b.state === 'review').length, '#/my-budgets'));
+    }
     if (can('request.create')) {
-      tasks.push(task('คำขอของฉันที่รอการเงินตรวจสอบ', mineReq.filter((r) => r.status === 'pending').length, '#/requests'),
-        task('ไม่อนุมัติ รอแก้ไข', mineReq.filter((r) => r.status === 'rejected').length, '#/requests'),
-        task('ออกเอกสารแล้ว รอบัญชีจ่าย', mineReq.filter((r) => r.status === 'approved' && paidByAccounting(r) < r.amount).length, '#/requests'));
+      tasks.push(task('คำขอของฉันที่รอผู้คุมงบตรวจสอบ', mineReq.filter((r) => r.status === 'pending').length, '#/requests'),
+        task('ส่งกลับแก้ไข', mineReq.filter((r) => r.status === 'rejected').length, '#/requests'),
+        task('ออกใบดำเนินการใช้งบแล้ว รอปิดยอด', mineReq.filter((r) => r.status === 'approved').length, '#/requests'));
     }
     if (REMOTE && can('user.manage')) tasks.push(task('ผู้ใช้ที่รอกำหนดบทบาท', Number(adminCounts.pending || 0), '#/admin'));
     if (!tasks.length) tasks.push('<li><span class="muted">ไม่มีงานที่ต้องทำสำหรับบทบาทนี้</span></li>');
@@ -2166,9 +2754,9 @@
 
     return '<div class="page-head"><div><h1>ภาพรวมงบประมาณ</h1><div class="page-sub">' + (canViewAll() ? 'ทุกงบในระบบ' : 'เฉพาะงบของคุณ') + ' · ' + list.length + ' งบ</div></div>' + filters + '</div>' +
       '<div class="kpis">' +
-      kpi('งบที่ได้รับอนุมัติ', money(tot.approved), list.length + ' งบ') +
-      kpi('ตัดงบแล้ว (บัญชีจ่ายแล้ว)', money(tot.used), pctText(tot.used, tot.approved) + ' ของงบ') +
-      kpi('จองไว้ (ยังไม่จ่าย)', money(tot.reserved), pctText(tot.reserved, tot.approved) + ' ของงบ') +
+      kpi('งบที่เปิดใช้แล้ว', money(tot.approved), list.length + ' งบ') +
+      kpi('ตัดงบแล้ว', money(tot.used), pctText(tot.used, tot.approved) + ' ของงบ') +
+      kpi('จองไว้ (ยังไม่ตัดงบ)', money(tot.reserved), pctText(tot.reserved, tot.approved) + ' ของงบ') +
       kpi('คงเหลือ', moneyCell(tot.remaining), pctText(tot.remaining, tot.approved) + ' ของงบ', tot.remaining < 0 ? 'bad' : '') + '</div>' +
       '<div class="card dash-bar">' + usageBar(Object.assign({}, tot)) + '</div>' +
       '<div class="dash-grid"><div class="dash-main">' + breakdown + monthly + '</div><aside class="dash-side">' + tasksCard + watchCard + '</aside></div>';
@@ -2439,6 +3027,426 @@
     });
   }
 
+  // ---------------------------------------------------------------- คำขอเพิ่มงบ (Business → ที่ประชุม → ผู้คุมงบยืนยัน)
+
+  function changeLineRow(b, l) {
+    const opts = leaves(b).map((i) => opt(i.id, i.code + ' ' + i.name + ' — งบ ' + money(itemTotal(i)), l.itemId || '')).join('');
+    const isNew = l.itemId === 'new';
+    return '<tr><td><div class="select-wrap"><select name="chItem" aria-label="รายการ">' + opts + opt('new', '+ เพิ่มรายการใหม่', l.itemId || '') + '</select></div>' +
+      '<div class="new-item"' + (isNew ? '' : ' hidden') + '><input name="chCode" placeholder="รหัสรายการ" value="' + esc(l.code || '') + '"><input name="chName" placeholder="ชื่อรายการ" value="' + esc(l.name || '') + '"></div></td>' +
+      '<td><input name="chAmount" type="number" min="0.01" step="0.01" class="right" value="' + esc(l.amount || '') + '" aria-label="ขอเพิ่ม"></td>' +
+      '<td><button type="button" class="btn small bad" data-remove-ch title="ลบ">×</button></td></tr>';
+  }
+
+  function viewChangeForm(budgetId, changeId) {
+    const c = changeId ? changeById(changeId) : null;
+    if (changeId && !c) return notFound();
+    const b = budgetById(c ? c.budgetId : budgetId);
+    if (!b) return notFound();
+    if (b.ownerId !== me().id || !can('request.create')) return '<div class="alert error">ขอเพิ่มงบได้เฉพาะ Business เจ้าของงบนี้</div>';
+    if (!isActive(b)) return '<div class="alert error">งบนี้ยังไม่เปิดใช้งาน</div>';
+    if (c && !['draft', 'returned'].includes(c.state)) return '<div class="alert error">แก้ไขได้เฉพาะร่างหรือคำขอที่ถูกส่งกลับ</div>';
+    const isProject = b.structure === 'project';
+    const lines = c ? c.lines : [{ itemId: isProject ? b.items[0].id : (leaves(b)[0] || {}).id }];
+    return '<div class="page-head"><div><h1>' + (c ? 'แก้ไขคำขอเพิ่มงบ ' + esc(c.no) : 'ขอเพิ่มงบ') + '</h1><div class="page-sub">' + badge(b.type, b.type) + ' ' + esc(b.code + ' ' + b.name) +
+      ' — บันทึกเป็นร่าง → เข้าที่ประชุม → แนบมติ → ผู้คุมงบยืนยัน แล้ววงเงินจึงเพิ่ม</div></div></div><div id="formError"></div>' +
+      '<form id="changeForm" class="card form-section" data-budget="' + b.id + '" data-id="' + esc(changeId || '') + '">' +
+      '<label class="field"><span>เหตุผลที่ขอเพิ่มงบ</span><textarea name="reason" rows="3" required>' + esc(c ? c.reason : '') + '</textarea></label>' +
+      (isProject
+        ? '<label class="field"><span>ขอเพิ่มวงเงินรวมทั้งโครงการ (รวม VAT)</span><input name="projAdd" type="number" min="0.01" step="0.01" class="right" required value="' + esc(c ? c.lines[0].amount : '') + '"></label>'
+        : '<div class="table-wrap"><table class="edit-table"><thead><tr><th>รายการ</th><th class="num" style="width:12rem">ขอเพิ่ม (รวม VAT)</th><th style="width:3rem"></th></tr></thead>' +
+          '<tbody id="chRows">' + lines.map((l) => changeLineRow(b, l)).join('') + '</tbody></table></div>' +
+          '<template id="chTpl">' + changeLineRow(b, { itemId: (leaves(b)[0] || {}).id }) + '</template>' +
+          '<div class="actions table-actions"><button type="button" class="btn small" id="addCh">+ เพิ่มบรรทัด</button><span class="muted">รวมขอเพิ่ม <strong id="chTotal">0.00</strong> บาท</span></div>') +
+      '<div class="actions"><button class="btn primary" type="submit">บันทึกร่าง</button><a class="btn" data-back href="#/budget/' + b.id + '">ยกเลิก</a></div></form>';
+  }
+
+  function bindChangeForm() {
+    const form = document.getElementById('changeForm');
+    if (!form) return;
+    const b = budgetById(form.dataset.budget);
+    const rows = document.getElementById('chRows');
+    const recalc = () => {
+      if (!rows) return;
+      let t = 0;
+      Array.from(rows.rows).forEach((tr) => {
+        t += Number(tr.querySelector('[name="chAmount"]').value || 0);
+        tr.querySelector('.new-item').hidden = tr.querySelector('[name="chItem"]').value !== 'new';
+      });
+      document.getElementById('chTotal').textContent = money(t);
+    };
+    if (rows) {
+      document.getElementById('addCh').addEventListener('click', () => { rows.insertAdjacentHTML('beforeend', document.getElementById('chTpl').innerHTML); recalc(); });
+      rows.addEventListener('click', (e) => { if (e.target.matches('[data-remove-ch]') && rows.rows.length > 1) { e.target.closest('tr').remove(); recalc(); } });
+      form.addEventListener('input', recalc);
+      form.addEventListener('change', recalc);
+      recalc();
+    }
+    form.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const f = form.elements;
+      const errors = [];
+      const reason = f.reason.value.trim();
+      if (!reason) errors.push('กรุณาระบุเหตุผล');
+      let lines;
+      if (b.structure === 'project') {
+        lines = [{ itemId: b.items[0].id, amount: round2(f.projAdd.value) }];
+      } else {
+        lines = Array.from(rows.rows).map((tr) => {
+          const itemId = tr.querySelector('[name="chItem"]').value;
+          const l = { itemId, amount: round2(tr.querySelector('[name="chAmount"]').value) };
+          if (itemId === 'new') Object.assign(l, { code: tr.querySelector('[name="chCode"]').value.trim(), name: tr.querySelector('[name="chName"]').value.trim() });
+          return l;
+        });
+        lines.filter((l) => l.itemId === 'new').forEach((l) => {
+          if (!l.code || !l.name) errors.push('กรุณากรอกรหัสและชื่อรายการใหม่');
+          else if (b.items.some((i) => i.code === l.code)) errors.push('รหัสรายการ ' + l.code + ' มีอยู่แล้ว');
+        });
+      }
+      if (lines.some((l) => !(l.amount > 0))) errors.push('จำนวนเงินที่ขอเพิ่มต้องมากกว่า 0');
+      if (errors.length) { showErrors(errors); return; }
+      let c = form.dataset.id ? changeById(form.dataset.id) : null;
+      if (c) {
+        Object.assign(c, { reason, lines });
+        addHistory(c, 'แก้ไขคำขอเพิ่มงบ', '', c.no);
+      } else {
+        db.seq.chg = (db.seq.chg || 0) + 1;
+        c = { id: nextId('g'), no: 'INC-' + new Date().getFullYear() + '-' + String(db.seq.chg).padStart(4, '0'), budgetId: b.id, state: 'draft', reason, lines,
+          meeting: {}, attachments: [], createdBy: me().id, createdAt: new Date().toISOString(), history: [] };
+        db.changes = (db.changes || []).concat(c);
+        addHistory(c, 'สร้างคำขอเพิ่มงบ', money(changeTotal(c)) + ' บาท', c.no);
+      }
+      save();
+      setFlash('success', 'บันทึกคำขอเพิ่มงบ ' + c.no + ' แล้ว — เข้าที่ประชุมแล้วแนบมติและส่งให้ผู้คุมงบ');
+      go('#/change/' + c.id);
+    });
+  }
+
+  function viewChangeDetail(id) {
+    const c = changeById(id);
+    if (!c) return notFound();
+    const b = budgetById(c.budgetId);
+    const own = c.createdBy === me().id;
+    const editable = own && ['draft', 'returned'].includes(c.state);
+    const actions = [];
+    if (editable) {
+      actions.push('<a class="btn" href="#/change/' + c.id + '/edit">แก้ไขร่าง</a>');
+      actions.push('<button type="button" class="btn bad" id="cancelChange">ยกเลิกคำขอ</button>');
+    }
+    let html = '<div class="page-head detail-head"><div><div class="eyebrow">คำขอเพิ่มงบ · ' + badge(b.type, b.type) + ' <a href="#/budget/' + b.id + '">' + esc(b.code) + '</a> ' + esc(b.name) + '</div>' +
+      '<h1>' + esc(c.no) + ' ' + badge(CHANGE_STATE_BADGE[c.state], CHANGE_STATE[c.state]) + '</h1></div>' +
+      (actions.length ? '<div class="head-actions">' + actions.join('') + '</div>' : '') + '</div>' + takeFlash();
+    if (c.state === 'returned') html += '<div class="alert error">ผู้คุมงบส่งกลับ: ' + esc(c.returnReason || '') + '</div>';
+    const rows = c.lines.map((l) => {
+      const it = l.itemId === 'new' ? null : itemById(b, l.itemId);
+      return '<tr><td>' + (it ? esc(it.code + ' ' + it.name) : esc((l.code || '') + ' ' + (l.name || '')) + ' <span class="badge draft">รายการใหม่</span>') + '</td>' +
+        '<td class="num">' + (it ? money(itemTotal(it)) : '-') + '</td><td class="num"><strong>+' + money(l.amount) + '</strong></td></tr>';
+    }).join('');
+    let main = '<section class="card"><p><strong>เหตุผล:</strong> ' + esc(c.reason) + '</p>' +
+      '<div class="table-wrap"><table><thead><tr><th>รายการ</th><th class="num">งบปัจจุบัน</th><th class="num">ขอเพิ่ม</th></tr></thead><tbody>' + rows +
+      '</tbody><tfoot><tr><td colspan="2" class="right"><strong>รวมขอเพิ่ม</strong></td><td class="num"><strong>+' + money(changeTotal(c)) + '</strong></td></tr></tfoot></table></div></section>';
+    main += '<h2>มติที่ประชุม</h2><section class="card">';
+    if (editable) {
+      main += '<form id="submitChange" data-id="' + c.id + '"><div class="form-grid">' +
+        '<label class="field"><span>วันที่ประชุม</span><input name="meetingDate" type="date" value="' + esc(c.meeting.date || '') + '"></label>' +
+        '<label class="field"><span>เลขที่มติ</span><input name="meetingNo" value="' + esc(c.meeting.no || '') + '"></label></div>' +
+        '<div class="field"><span>ไฟล์มติที่ประชุม</span>' + attachList(c.attachments, { del: true, empty: 'ยังไม่ได้แนบมติ' }) +
+        '<label class="btn small file-btn">+ แนบไฟล์<input type="file" id="changeFiles" accept="application/pdf,image/png,image/jpeg" multiple hidden></label></div>' +
+        '<div class="actions"><button class="btn primary" type="submit">ส่งให้ผู้คุมงบตรวจสอบ</button></div></form>';
+    } else {
+      main += (c.meeting.no ? '<p>' + esc(c.meeting.no) + (c.meeting.date ? ' · ประชุมวันที่ ' + fmtDay(c.meeting.date) : '') + '</p>' : '<p class="muted">ยังไม่มีข้อมูลมติ</p>') +
+        attachList(c.attachments, { empty: 'ยังไม่ได้แนบมติ' });
+    }
+    main += '</section>';
+    let side = '<div class="card total-card"><span class="muted">ขอเพิ่มงบ</span><div class="total-amount">+' + money(changeTotal(c)) + ' <small>บาท</small></div>' +
+      '<dl class="kv compact"><dt>งบปัจจุบันของโครงการ</dt><dd>' + money(budgetTotal(b)) + '</dd><dt>หลังเพิ่ม</dt><dd>' + money(round2(budgetTotal(b) + changeTotal(c))) + '</dd></dl></div>';
+    if (c.state === 'review' && can('budget.verify')) {
+      side += '<div class="card decision"><h3 class="side-title">ตรวจสอบมติและเพิ่มงบ</h3><form id="verifyChange" data-id="' + c.id + '">' +
+        '<label class="field"><span>หมายเหตุ (จำเป็นเมื่อส่งกลับ)</span><textarea name="comment" rows="3"></textarea></label>' +
+        '<div class="actions"><button class="btn primary" type="submit" data-verify="approved">ยืนยันเพิ่มงบ</button><button class="btn bad" type="submit" data-verify="returned">ส่งกลับ</button></div></form></div>';
+    }
+    side += historyCard(c.history);
+    return html + '<div class="detail-layout"><div class="detail-main">' + main + '</div><aside class="detail-side">' + side + '</aside></div>';
+  }
+
+  function bindChangeDetail() {
+    const sub = document.getElementById('submitChange');
+    if (sub) {
+      const c = changeById(sub.dataset.id);
+      const keep = () => { c.meeting = { date: sub.elements.meetingDate.value, no: sub.elements.meetingNo.value.trim() }; };
+      sub.querySelector('#changeFiles').addEventListener('change', async (e) => {
+        const files = await readFiles(e.target, 'resolution');
+        if (!files.length) return;
+        keep();
+        c.attachments = (c.attachments || []).concat(files);
+        addHistory(c, 'แนบไฟล์มติ', files.map((f) => f.name).join(', '), c.no);
+        if (save()) go('#/change/' + c.id);
+      });
+      sub.addEventListener('click', (e) => {
+        const del = e.target.closest('[data-att-del]');
+        if (!del) return;
+        keep();
+        c.attachments = c.attachments.filter((x) => x.id !== del.dataset.attDel);
+        save();
+        go('#/change/' + c.id);
+      });
+      sub.addEventListener('submit', (e) => {
+        e.preventDefault();
+        keep();
+        if (!c.meeting.no || !c.attachments.length) { alert('กรุณาระบุเลขที่มติและแนบไฟล์มติ'); return; }
+        c.state = 'review';
+        addHistory(c, 'แนบมติที่ประชุมและส่งให้ผู้คุมงบตรวจสอบ', c.meeting.no, c.no);
+        save();
+        setFlash('success', 'ส่งคำขอเพิ่มงบ ' + c.no + ' ให้ผู้คุมงบแล้ว');
+        go('#/change/' + c.id);
+      });
+    }
+    const cancel = document.getElementById('cancelChange');
+    if (cancel) {
+      cancel.addEventListener('click', () => {
+        const c = changeById(location.hash.split('/')[2]);
+        if (!confirm('ยกเลิกคำขอเพิ่มงบ ' + c.no + ' ?')) return;
+        c.state = 'cancelled';
+        addHistory(c, 'ยกเลิกคำขอเพิ่มงบ', '', c.no);
+        save();
+        go('#/change/' + c.id);
+      });
+    }
+    const ver = document.getElementById('verifyChange');
+    if (ver) {
+      let decision = 'approved';
+      ver.querySelectorAll('[data-verify]').forEach((btn) => btn.addEventListener('click', () => { decision = btn.dataset.verify; }));
+      ver.addEventListener('submit', (e) => {
+        e.preventDefault();
+        const c = changeById(ver.dataset.id);
+        const b = budgetById(c.budgetId);
+        const comment = ver.elements.comment.value.trim();
+        if (decision === 'returned') {
+          if (!comment) { alert('กรุณาระบุเหตุผลที่ส่งกลับ'); return; }
+          Object.assign(c, { state: 'returned', returnReason: comment });
+          addHistory(c, 'ส่งกลับให้แก้ไข', comment, c.no);
+        } else {
+          c.lines.forEach((l) => {
+            if (l.itemId === 'new') {
+              const it = { id: nextId('i'), code: l.code, name: l.name, amount: l.amount, vat: 0, qty: '', unit: '', glCode: '', glName: '' };
+              if (b.type === 'CAPEX') Object.assign(it, { assetType: assetTypeList()[0], doa: '2.5' });
+              b.items.push(it);
+              l.itemId = it.id;
+            } else {
+              adjustItem(itemById(b, l.itemId), l.amount);
+            }
+          });
+          addRevision(b, 'เพิ่มงบตามคำขอ ' + c.no + ' (' + (c.meeting.no || '') + ')' + (comment ? ' — ' + comment : ''));
+          addHistory(b, 'เพิ่มงบตามคำขอ ' + c.no, '+' + money(changeTotal(c)) + ' บาท', 'งบ ' + b.code);
+          Object.assign(c, { state: 'approved', approvedAt: new Date().toISOString(), approvedBy: me().id });
+          addHistory(c, 'ยืนยันเพิ่มงบ', comment, c.no);
+        }
+        save();
+        setFlash(decision === 'approved' ? 'success' : 'info', decision === 'approved' ? 'เพิ่มงบ ' + b.code + ' +' + money(changeTotal(c)) + ' บาทแล้ว' : 'ส่งคำขอ ' + c.no + ' กลับแล้ว');
+        go('#/change/' + c.id);
+      });
+    }
+  }
+
+  // ---------------------------------------------------------------- ผู้คุมงบ: โยก / ลดงบ
+
+  function itemSelectOptions(selected) {
+    return db.budgets.filter(isActive).map((b) => '<optgroup label="' + esc(b.code + ' ' + b.name) + '">' +
+      leaves(b).map((i) => {
+        const v = b.id + '|' + i.id;
+        return opt(v, (b.structure === 'project' ? 'งบรวมทั้งโครงการ' : i.code + ' ' + i.name) + ' — คงเหลือ ' + money(usage(b, i.id).remaining), selected);
+      }).join('') + '</optgroup>').join('');
+  }
+
+  function viewAdjust(params) {
+    if (!can('budget.adjust')) return '<div class="alert error">ไม่มีสิทธิ์โยก/ลดงบ</div>';
+    const to = params.get('to') ? params.get('to') + '|' + (params.get('item') || '') : '';
+    const from = params.get('budget') ? params.get('budget') + '|' + ((leaves(budgetById(params.get('budget')) || { items: [] })[0] || {}).id || '') : '';
+    const recent = (db.log || []).filter((x) => /^(โยกงบ|ลดงบ)/.test(x.action)).slice(-10).reverse();
+    return '<div class="page-head"><div><h1>โยก / ลดงบ</h1><div class="page-sub">เครื่องมือของผู้คุมงบ — โยกข้ามรายการหรือข้ามโครงการได้ตามดุลพินิจ ทุกครั้งต้องระบุเหตุผลและเก็บเป็นประวัติการปรับงบ</div></div></div>' + takeFlash() +
+      '<div id="formError"></div><div class="form-main">' +
+      '<section class="card form-section"><div class="section-head"><h2 class="section-title"><span class="step">1</span>โยกงบ</h2></div>' +
+      '<form id="moveForm" class="form-grid"><label class="field"><span>โยกจาก</span><div class="select-wrap"><select name="from" required><option value="">— เลือก —</option>' + itemSelectOptions(from) + '</select></div></label>' +
+      '<label class="field"><span>ไปยัง</span><div class="select-wrap"><select name="to" required><option value="">— เลือก —</option>' + itemSelectOptions(to) + '</select></div></label>' +
+      '<label class="field"><span>จำนวนเงิน (รวม VAT)</span><input name="amount" type="number" min="0.01" step="0.01" class="right" required value="' + esc(params.get('amount') || '') + '"></label>' +
+      '<label class="field"><span>เหตุผล</span><input name="reason" required></label>' +
+      '<div class="field full"><button class="btn primary" type="submit">โยกงบ</button></div></form></section>' +
+      '<section class="card form-section"><div class="section-head"><h2 class="section-title"><span class="step">2</span>ลดงบ</h2></div>' +
+      '<p class="muted small-note">เช่น ซื้อได้ถูกกว่างบ โครงการยกเลิก/เลื่อน หรือผู้บริหารสั่งตัดงบ — ลดได้ไม่เกินยอดคงเหลือ (ยอดที่ใช้/จองแล้วลดไม่ได้)</p>' +
+      '<form id="cutBudgetForm" class="form-grid"><label class="field"><span>รายการ</span><div class="select-wrap"><select name="target" required><option value="">— เลือก —</option>' + itemSelectOptions(from) + '</select></div></label>' +
+      '<label class="field"><span>ลดลง (รวม VAT)</span><input name="amount" type="number" min="0.01" step="0.01" class="right" required></label>' +
+      '<label class="field full"><span>เหตุผล</span><input name="reason" required></label>' +
+      '<div class="field full"><button class="btn bad" type="submit">ลดงบ</button></div></form></section>' +
+      '<section class="card form-section"><div class="section-head"><h2 class="section-title">การโยก / ลดงบล่าสุด</h2></div>' +
+      (recent.length ? '<div class="table-wrap"><table><thead><tr><th>เมื่อ</th><th>รายการ</th><th>รายละเอียด</th><th>โดย</th></tr></thead><tbody>' +
+        recent.map((x) => '<tr><td class="nowrap">' + fmtDate(x.at) + '</td><td>' + esc(x.action) + '</td><td>' + esc(x.detail) + '</td><td class="nowrap">' + esc(userName(x.by)) + '</td></tr>').join('') +
+        '</tbody></table></div>' : '<p class="muted">ยังไม่มี</p>') + '</section></div>';
+  }
+
+  function bindAdjust() {
+    const mv = document.getElementById('moveForm');
+    if (!mv) return;
+    const pick = (v) => { const [bid, iid] = v.split('|'); const b = budgetById(bid); return { b, it: b && itemById(b, iid) }; };
+    const label = (x) => x.b.code + (x.b.structure === 'project' ? '' : ' / ' + x.it.code);
+    mv.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const f = mv.elements;
+      const src = pick(f.from.value);
+      const dst = pick(f.to.value);
+      const amount = round2(f.amount.value);
+      const reason = f.reason.value.trim();
+      const errors = [];
+      if (!src.it || !dst.it) errors.push('กรุณาเลือกรายการต้นทางและปลายทาง');
+      else if (src.it === dst.it) errors.push('ต้นทางและปลายทางต้องไม่ใช่รายการเดียวกัน');
+      else if (amount > usage(src.b, src.it.id).remaining + 0.005) errors.push('ต้นทางมีคงเหลือไม่พอ (คงเหลือ ' + money(usage(src.b, src.it.id).remaining) + ' บาท)');
+      if (!(amount > 0)) errors.push('จำนวนเงินต้องมากกว่า 0');
+      if (!reason) errors.push('กรุณาระบุเหตุผล');
+      if (errors.length) { showErrors(errors); return; }
+      adjustItem(src.it, -amount);
+      adjustItem(dst.it, amount);
+      const detail = money(amount) + ' บาท จาก ' + label(src) + ' ไป ' + label(dst) + ' — ' + reason;
+      addRevision(src.b, 'โยกออก ' + money(amount) + ' ไป ' + label(dst) + ' — ' + reason);
+      if (dst.b !== src.b) addRevision(dst.b, 'โยกเข้า ' + money(amount) + ' จาก ' + label(src) + ' — ' + reason);
+      else src.b.revisions[src.b.revisions.length - 1].note = 'โยกภายในโครงการ ' + detail;
+      src.b.history.push({ at: new Date().toISOString(), by: me().id, action: 'โยกงบออก', note: detail });
+      if (dst.b !== src.b) dst.b.history.push({ at: new Date().toISOString(), by: me().id, action: 'รับงบที่โยกเข้า', note: detail });
+      logAction('โยกงบ', src.b.code + ' → ' + dst.b.code, detail);
+      save();
+      setFlash('success', 'โยกงบ ' + detail);
+      go(location.hash.indexOf('to=') >= 0 ? '#/budget/' + dst.b.id : '#/adjust');
+    });
+    const cb = document.getElementById('cutBudgetForm');
+    cb.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const f = cb.elements;
+      const t = pick(f.target.value);
+      const amount = round2(f.amount.value);
+      const reason = f.reason.value.trim();
+      const errors = [];
+      if (!t.it) errors.push('กรุณาเลือกรายการ');
+      else if (amount > usage(t.b, t.it.id).remaining + 0.005) errors.push('ลดได้ไม่เกินยอดคงเหลือ ' + money(usage(t.b, t.it.id).remaining) + ' บาท');
+      if (!(amount > 0)) errors.push('จำนวนเงินต้องมากกว่า 0');
+      if (!reason) errors.push('กรุณาระบุเหตุผล');
+      if (errors.length) { showErrors(errors); return; }
+      adjustItem(t.it, -amount);
+      const detail = money(amount) + ' บาท ที่ ' + label(t) + ' — ' + reason;
+      addRevision(t.b, 'ลดงบ ' + detail);
+      t.b.history.push({ at: new Date().toISOString(), by: me().id, action: 'ลดงบ', note: detail });
+      logAction('ลดงบ', t.b.code, detail);
+      save();
+      setFlash('success', 'ลดงบ ' + detail);
+      go('#/adjust');
+    });
+  }
+
+  // ---------------------------------------------------------------- คิวงาน / Log / สิ่งที่รอยืนยัน
+
+  function budgetQueueTable(list) {
+    if (!list.length) return '<div class="card empty">ไม่มีรายการ</div>';
+    return '<div class="table-wrap"><table><thead><tr><th>งบ</th><th>Business</th><th>มติ</th><th class="num">วงเงิน</th><th>ส่งเมื่อ</th></tr></thead><tbody>' +
+      list.map((b) => '<tr><td>' + badge(b.type, b.type) + ' <a href="#/budget/' + b.id + '">' + esc(b.code) + '</a><div class="muted">' + esc(b.name) + '</div></td>' +
+        '<td class="nowrap">' + esc(userName(b.ownerId)) + '</td><td>' + esc((b.meeting && b.meeting.no) || '-') + '<div class="muted">' + (b.attachments || []).length + ' ไฟล์</div></td>' +
+        '<td class="num">' + money(budgetTotal(b)) + '</td><td class="nowrap">' + fmtDay(b.submittedAt || (b.history.slice(-1)[0] || {}).at) + '</td></tr>').join('') + '</tbody></table></div>';
+  }
+  function changeQueueTable(list) {
+    if (!list.length) return '<div class="card empty">ไม่มีรายการ</div>';
+    return '<div class="table-wrap"><table><thead><tr><th>เลขที่</th><th>งบ</th><th>เหตุผล</th><th class="num">ขอเพิ่ม</th><th>สถานะ</th></tr></thead><tbody>' +
+      list.map((c) => { const b = budgetById(c.budgetId); return '<tr><td class="nowrap"><a href="#/change/' + c.id + '">' + esc(c.no) + '</a></td><td>' + esc(b.code) + '<div class="muted">' + esc(b.name) + '</div></td>' +
+        '<td>' + esc(c.reason) + '</td><td class="num">+' + money(changeTotal(c)) + '</td><td>' + badge(CHANGE_STATE_BADGE[c.state], CHANGE_STATE[c.state]) + '</td></tr>'; }).join('') + '</tbody></table></div>';
+  }
+
+  function viewApprovals() {
+    let html = '<div class="page-head"><h1>รอตรวจสอบ</h1></div>' + takeFlash();
+    if (can('budget.verify')) {
+      const bs = db.budgets.filter((b) => b.state === 'review');
+      const cs = (db.changes || []).filter((c) => c.state === 'review');
+      html += '<h2>งบรอเปิดใช้งาน <span class="muted count-note">(' + bs.length + ')</span></h2>' + budgetQueueTable(bs) +
+        '<h2>คำขอเพิ่มงบ <span class="muted count-note">(' + cs.length + ')</span></h2>' + changeQueueTable(cs);
+    }
+    if (can('request.decide')) {
+      const rs = inbox(me());
+      html += '<h2>ดำเนินการใช้งบ (CAPEX) รอตรวจสอบ <span class="muted count-note">(' + rs.length + ')</span></h2>' + requestTable(rs, true);
+    }
+    return html;
+  }
+
+  function nextCutStep(r) {
+    if (r.useType === 'prpo') return 'ยืนยันยอด PO และปิดยอด';
+    if (r.useType === 'advance') return r.advance ? 'เคลียร์เงินทดรอง' : 'จ่ายเงินทดรอง';
+    if (r.useType === 'reimburse') return 'จ่ายคืนพนักงาน';
+    return cutTotal(r) > 0 ? 'บันทึกจ่ายงวดถัดไป / ปิดยอด' : 'บันทึกการจ่ายเงิน';
+  }
+  function cutQueueTable(list, withStep) {
+    if (!list.length) return '<div class="card empty">ไม่มีรายการค้าง</div>';
+    return '<div class="table-wrap"><table><thead><tr><th>เลขที่</th><th>งบ</th><th>ประเภท</th><th>ผู้ขอ</th><th class="num">ขอไว้</th><th class="num">ตัดงบแล้ว</th>' + (withStep ? '<th>ขั้นถัดไป</th>' : '') + '</tr></thead><tbody>' +
+      list.map((r) => { const b = budgetById(r.budgetId); return '<tr><td class="nowrap"><a href="#/request/' + r.id + '">' + esc(r.docNo) + '</a><div class="muted">' + fmtDay(r.approvedAt) + '</div></td>' +
+        '<td>' + esc(b.code) + '<div class="muted">' + esc(reqSummary(r)) + '</div></td><td class="nowrap">' + esc(USE_TYPES[r.useType].short) + '</td><td class="nowrap">' + esc(userName(r.requesterId)) + '</td>' +
+        '<td class="num">' + money(r.amount) + '</td><td class="num">' + money(cutTotal(r)) + '</td>' + (withStep ? '<td>' + esc(nextCutStep(r)) + '</td>' : '') + '</tr>'; }).join('') + '</tbody></table></div>';
+  }
+  function viewPO() {
+    if (!can('po.record')) return '<div class="alert error">ไม่มีสิทธิ์บันทึก PO</div>';
+    const list = db.requests.filter(needsPO);
+    const done = db.requests.filter((r) => r.type === 'CAPEX' && r.useType === 'prpo' && hasPO(r) && r.status === 'approved');
+    return '<div class="page-head"><div><h1>รอออก PO</h1><div class="page-sub">ใบดำเนินการใช้งบประเภท PR/PO ที่ผู้คุมงบอนุมัติแล้ว — บันทึกเลข PR/PO และยอด PO เพื่อตัดงบ</div></div></div>' + takeFlash() +
+      cutQueueTable(list, false) + '<h2>บันทึก PO แล้ว รอปิดยอด <span class="muted count-note">(' + done.length + ')</span></h2>' + cutQueueTable(done, false);
+  }
+  function viewCuts() {
+    if (!can('cut.record')) return '<div class="alert error">ไม่มีสิทธิ์บันทึกการตัดงบ</div>';
+    return '<div class="page-head"><div><h1>รอตัดงบ / ปิดยอด</h1><div class="page-sub">ใบดำเนินการใช้งบที่ออกแล้วแต่ยังไม่ปิดยอด (ไม่รวม PR/PO ที่รอจัดซื้อออก PO)</div></div></div>' + takeFlash() +
+      cutQueueTable(db.requests.filter(needsCut), true);
+  }
+
+  function viewLog(params) {
+    if (!can('log.view')) return '<div class="alert error">ไม่มีสิทธิ์ดู Log</div>';
+    const q = (params.get('q') || '').toLowerCase();
+    const who = params.get('by') || '';
+    const list = (db.log || []).slice().reverse().filter((x) => (!who || x.by === who) &&
+      (!q || (x.action + ' ' + x.ref + ' ' + x.detail).toLowerCase().includes(q)));
+    return '<div class="page-head"><div><h1>Log การทำงาน</h1><div class="page-sub">บันทึกทุกการกระทำในระบบ เพิ่มได้อย่างเดียว แก้หรือลบไม่ได้</div></div></div>' +
+      '<form id="logFilter" class="admin-filters"><label class="input-wrap search">' + ICON_SEARCH + '<input name="q" type="search" placeholder="ค้นหาการกระทำ เลขที่ รายละเอียด" value="' + esc(params.get('q') || '') + '"></label>' +
+      '<div class="select-wrap"><select name="by">' + opt('', 'ผู้ใช้: ทั้งหมด', who) + USERS.map((x) => opt(x.id, 'ผู้ใช้: ' + x.name, who)).join('') + '</select></div><button class="btn" type="submit">กรอง</button></form>' +
+      '<div class="table-wrap"><table><thead><tr><th>เวลา</th><th>ผู้ใช้</th><th>การกระทำ</th><th>เรื่อง</th><th>รายละเอียด</th></tr></thead><tbody>' +
+      (list.length ? list.slice(0, 300).map((x) => '<tr><td class="nowrap">' + fmtDate(x.at) + '</td><td class="nowrap">' + esc(userName(x.by)) + '</td><td>' + esc(x.action) + '</td><td class="nowrap">' + esc(x.ref) + '</td><td>' + esc(x.detail) + '</td></tr>').join('')
+        : '<tr><td colspan="5" class="muted">ไม่พบรายการ</td></tr>') + '</tbody></table></div>';
+  }
+  function bindLog() {
+    const f = document.getElementById('logFilter');
+    if (!f) return;
+    f.addEventListener('submit', (e) => {
+      e.preventDefault();
+      go('#/log?q=' + encodeURIComponent(f.elements.q.value.trim()) + '&by=' + encodeURIComponent(f.elements.by.value));
+    });
+  }
+
+  /** สมมติฐานที่ใช้ในต้นแบบรอบนี้ — รอทีมผู้ใช้ยืนยัน */
+  function viewAssumptions() {
+    const rows = [
+      ['ตั้งงบ', 'ใครกำหนดรหัสโครงการ/รหัสรายการย่อย', 'Business กรอกเองตอนร่าง'],
+      ['ตั้งงบ', 'แบบฟอร์มขออนุมัติงบเข้าที่ประชุม', 'ใช้แบบฟอร์มชั่วคราว (รอแบบฟอร์มจริง)'],
+      ['ตั้งงบ', 'หลักฐานที่ต้องแนบ', 'ไฟล์มติที่ประชุมอย่างน้อย 1 ไฟล์ + เลขที่มติ'],
+      ['ปรับงบ', 'ผู้คุมงบลดงบได้ไหม', 'ได้ ต้องใส่เหตุผล ลดไม่ได้เกินยอดคงเหลือ'],
+      ['ปรับงบ', 'ผู้บริหารสั่งตัดงบต้องแนบเอกสารไหม', 'ยังไม่บังคับแนบ (ใส่เหตุผลอย่างเดียว)'],
+      ['ปรับงบ', 'ปิดปีงบ: งบเหลือหมดสิทธิ์หรือยกไป', 'ยังไม่ได้ทำ — งบปีก่อนยังใช้ต่อได้เหมือนเดิม'],
+      ['ปรับงบ', 'มีงบกลาง/งบสำรองไหม', 'ไม่มี — โยกตรงจากรายการ/โครงการหนึ่งไปอีกที่'],
+      ['ปรับงบ', 'โยก/ลดงบแล้วแจ้งเจ้าของงบไหม', 'บันทึกในประวัติของงบทั้งสองฝั่ง (ยังไม่มีแจ้งเตือน)'],
+      ['ใช้งบ', 'ขอเกินงบรายการย่อยแต่ไม่เกินงบโครงการ', 'ขอได้ ระบบเตือน ผู้คุมงบต้องใส่ Note'],
+      ['ใช้งบ', 'ขอเกินงบโครงการ', 'อนุมัติไม่ได้จนกว่าผู้คุมงบโยกงบเข้า หรือส่งกลับให้ขอเพิ่มงบ'],
+      ['ใช้งบ', 'ผู้ขอต้องใส่เหตุผลที่ขอเกินไหม', 'ไม่บังคับ (มีช่องให้ใส่)'],
+      ['ใช้งบ', 'Note ผู้อนุมัติแสดงบนใบที่พิมพ์ไหม', 'แสดง'],
+      ['ใช้งบ', 'ยอดจริงมากกว่าที่ขอได้ไหม', 'ได้ ต้องใส่หมายเหตุ (ยังไม่ต้องอนุมัติซ้ำ)'],
+      ['ใช้งบ', 'คืนส่วนต่างเมื่อไร', 'เมื่อปิดยอด (Advance/สำรองจ่ายปิดอัตโนมัติเมื่อบันทึกใบเสร็จ)'],
+      ['ใช้งบ', 'ผู้ขอยกเลิกใบ CAPEX ที่ออกแล้วได้ไหม', 'ไม่ได้ (ยกเลิกได้เฉพาะตอนรอตรวจ/ถูกส่งกลับ)'],
+      ['ใช้งบ', 'จ่ายหลายงวด', 'ใช้ได้กับ PR/PO และจ่ายตรง — บันทึกจ่ายหลายครั้งแล้วปิดยอด'],
+      ['ใช้งบ', 'หมวดค่าใช้จ่าย', 'ใช้กับงบรวมโครงการ · แก้รายการหมวดได้ที่ข้อมูลหลัก'],
+      ['CBS', 'เงื่อนไขการใช้งบ CBS', 'ยังเป็นขั้นตอนเดิม (ออกเอกสารทันที) รอคำอธิบาย'],
+      ['ไฟล์แนบ', 'จุดแนบและชนิดเอกสาร', 'มติ (ตั้งงบ/เพิ่มงบ) · เอกสารประกอบคำขอ · PO · ใบเสร็จ/หลักฐานจ่าย — โหมดทดลองจำกัด 400 KB ต่อไฟล์'],
+      ['ระบบ', 'ฐานข้อมูล Supabase', 'ต้นแบบนี้ยังไม่เชื่อม — จะปรับฐานข้อมูลเมื่อยืนยันขั้นตอนแล้ว (เวอร์ชันเดิมอยู่ที่ /v1/)']
+    ];
+    return '<div class="page-head"><div><h1>สิ่งที่รอยืนยัน</h1><div class="page-sub">ต้นแบบรอบนี้ใช้ค่าตั้งต้นด้านล่างแทนข้อที่ยังไม่ได้ตอบ — ถ้าไม่ตรงกับงานจริง แจ้งได้เลย</div></div></div>' +
+      '<div class="table-wrap"><table><thead><tr><th>หมวด</th><th>คำถาม</th><th>ต้นแบบนี้ใช้</th></tr></thead><tbody>' +
+      rows.map((x) => '<tr><td class="nowrap">' + esc(x[0]) + '</td><td>' + esc(x[1]) + '</td><td>' + esc(x[2]) + '</td></tr>').join('') + '</tbody></table></div>';
+  }
+
   function notFound() {
     return '<div class="card empty">ไม่พบข้อมูลที่ต้องการ</div>';
   }
@@ -2457,7 +3465,8 @@
   /** หน้าฟอร์ม (สร้าง/แก้ไข) ไม่ใช่ที่ที่ควรย้อนกลับมา — หลังส่งหรือยกเลิกแล้วจะถูกตัดออกจาก stack */
   function isFormHash(hash) {
     const p = navPath(hash).slice(2).split('/');
-    return (p[0] === 'budget' && (p[1] === 'new' || p[2] === 'edit')) || (p[0] === 'request' && (p[1] === 'new' || p[2] === 'edit'));
+    return (p[0] === 'budget' && (p[1] === 'new' || p[2] === 'edit')) || (p[0] === 'request' && (p[1] === 'new' || p[2] === 'edit')) ||
+      (p[0] === 'change' && (p[1] === 'new' || p[2] === 'edit'));
   }
   /** หน้าที่อ้างถึงข้อมูลที่ถูกลบไปแล้วไม่ใช้เป็นปลายทางย้อนกลับ */
   function navValid(hash) {
@@ -2465,6 +3474,7 @@
     if (p[0] === 'budget' && p[1] !== 'new') return !!budgetById(p[1]);
     if (p[0] === 'request' && p[1] !== 'new') return !!requestById(p[1]);
     if (p[0] === 'doc') return !!requestById(p[1]);
+    if (p[0] === 'change' && p[1] !== 'new') return !!changeById(p[1]);
     return true;
   }
   function trackNav(here) {
@@ -2485,7 +3495,7 @@
   }
   const previousPage = () => (navStack.length > 1 ? navStack[navStack.length - 2] : null);
 
-  const LIST_PAGES = ['dashboard', 'master', 'admin', 'budgets', 'my-budgets', 'requests', 'approvals', 'accounting', 'payments'];
+  const LIST_PAGES = ['dashboard', 'master', 'admin', 'adjust', 'po', 'cuts', 'log', 'assumptions', 'budgets', 'my-budgets', 'requests', 'approvals', 'accounting', 'payments'];
   let lastBudgetList = null; // หน้ารายการงบล่าสุด (จำแท็บ/ตัวกรอง)
   let lastRequestParent = null; // หน้าที่เปิดคำขอมาล่าสุด: รายการคำขอ / รอตรวจสอบ / งวดจ่าย / หน้ารายละเอียดงบ
 
@@ -2508,9 +3518,14 @@
       dashboard: 'ภาพรวมงบประมาณ', master: 'ข้อมูลหลัก',
       admin: 'ผู้ใช้และสิทธิ์',
       budgets: can('budget.manage') ? 'จัดการงบประมาณ' : 'งบประมาณ', 'my-budgets': 'งบของฉัน',
-      requests: canViewAll() ? 'คำขอใช้งบทั้งหมด' : 'คำขอของฉัน',
-      approvals: 'รอตรวจสอบ', accounting: 'รอบันทึกบัญชี', payments: 'งวดจ่ายค้าง'
+      requests: canViewAll() ? 'รายการดำเนินการใช้งบ' : 'ดำเนินการใช้งบของฉัน',
+      approvals: 'รอตรวจสอบ', accounting: 'รอบันทึกบัญชี', payments: 'งวดจ่ายค้าง',
+      adjust: 'โยก / ลดงบ', po: 'รอออก PO', cuts: 'รอตัดงบ / ปิดยอด', log: 'Log การทำงาน', assumptions: 'สิ่งที่รอยืนยัน'
     };
+    if (p[0] === 'change') {
+      const c = changeById(p[1]);
+      return c ? 'คำขอเพิ่มงบ ' + c.no : 'คำขอเพิ่มงบ';
+    }
     return titles[p[0]] || 'กลับ';
   }
 
@@ -2518,12 +3533,15 @@
   function backTarget(parts) {
     const budgetList = lastBudgetList || (canViewAll() ? '#/budgets' : '#/my-budgets');
     if (parts[0] === 'budget' && parts[1] === 'new') return budgetList;
-    if (parts[0] === 'budget' && parts[2] === 'edit') return '#/budget/' + parts[1];
+    if (parts[0] === 'budget' && (parts[2] === 'edit' || parts[2] === 'form')) return '#/budget/' + parts[1];
     if (parts[0] === 'budget') return budgetList;
     if (parts[0] === 'request' && parts[1] === 'new') return '#/budget/' + parts[2];
     if (parts[0] === 'request' && parts[2] === 'edit') return '#/request/' + parts[1];
     if (parts[0] === 'request') return lastRequestParent || '#/requests';
     if (parts[0] === 'doc') return '#/request/' + parts[1];
+    if (parts[0] === 'change' && parts[1] === 'new') return '#/budget/' + parts[2];
+    if (parts[0] === 'change' && parts[2] === 'edit') return '#/change/' + parts[1];
+    if (parts[0] === 'change') { const c = changeById(parts[1]); return c ? '#/budget/' + c.budgetId : budgetList; }
     return null;
   }
 
@@ -2543,14 +3561,23 @@
     else if (parts[0] === 'budgets' || parts[0] === 'my-budgets') html = viewBudgets(params, parts[0] === 'my-budgets');
     else if (parts[0] === 'budget' && parts[1] === 'new') html = viewBudgetForm(null);
     else if (parts[0] === 'budget' && parts[2] === 'edit') html = viewBudgetForm(parts[1]);
+    else if (parts[0] === 'budget' && parts[2] === 'form') html = viewBudgetRequestForm(parts[1]);
     else if (parts[0] === 'budget') html = viewBudgetDetail(parts[1]);
     else if (parts[0] === 'request' && parts[1] === 'new') html = viewRequestForm(parts[2], null, params);
     else if (parts[0] === 'request' && parts[2] === 'edit') html = viewRequestForm(null, parts[1], params);
     else if (parts[0] === 'request') html = viewRequestDetail(parts[1]);
     else if (parts[0] === 'requests') html = viewRequests();
+    else if (parts[0] === 'change' && parts[1] === 'new') html = viewChangeForm(parts[2], null);
+    else if (parts[0] === 'change' && parts[2] === 'edit') html = viewChangeForm(null, parts[1]);
+    else if (parts[0] === 'change') html = viewChangeDetail(parts[1]);
+    else if (parts[0] === 'adjust') html = viewAdjust(params);
+    else if (parts[0] === 'po') html = viewPO();
+    else if (parts[0] === 'cuts') html = viewCuts();
+    else if (parts[0] === 'log') html = viewLog(params);
+    else if (parts[0] === 'assumptions') html = viewAssumptions();
     else if (parts[0] === 'approvals') html = viewApprovals();
     else if (parts[0] === 'accounting') html = viewAccounting();
-    else if (parts[0] === 'payments') html = viewPayments();
+    else if (parts[0] === 'payments') html = viewCuts();
     else if (parts[0] === 'doc') html = viewDocument(parts[1]);
     else html = notFound();
 
@@ -2569,10 +3596,16 @@
     // ปุ่ม "ยกเลิก" ในฟอร์มกลับไปหน้าก่อนหน้าเช่นเดียวกับปุ่มย้อนกลับ
     if (back) app.querySelectorAll('[data-back]').forEach((a) => { a.setAttribute('href', back); });
     bindBudgetForm();
+    bindBudgetDetail();
+    bindChangeForm();
+    bindChangeDetail();
+    bindAdjust();
+    bindLog();
     bindDashboard();
     bindMaster();
     bindAdmin();
     bindRequestForm();
+    bindCuts();
     bindRequestDetail();
     bindBudgetFilters();
     document.body.classList.remove('nav-open');
