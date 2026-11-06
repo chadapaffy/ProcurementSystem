@@ -699,3 +699,11 @@ th.req::after, .section-title.req::after, legend.req::after { content: " *"; col
 .memo-doc .memo-sig-line { border-bottom: 1px dotted #000; height: 44px; margin: var(--s-2) 0; }
 @media print { .memo-doc table, .memo-doc .memo-signoff { page-break-inside: avoid; } }
 @media (max-width: 600px) { .memo-doc .memo-signoff { width: 100%; } }
+
+/* ---- ผู้รับและผู้ลงนามใน Memo (ส่วนพับได้ในฟอร์มคำขอ) */
+.memo-people > summary { cursor: pointer; font-weight: 600; font-size: var(--fs-md); color: var(--heading); display: flex; align-items: center; gap: var(--s-3); list-style: none; }
+.memo-people > summary::-webkit-details-marker { display: none; }
+.memo-people > summary small { font-weight: 400; color: var(--muted); font-size: var(--fs-sm); }
+.memo-people > summary::after { content: "▾"; margin-left: auto; color: var(--muted); }
+.memo-people:not([open]) > summary::after { content: "▸"; }
+.memo-people[open] > summary { margin-bottom: var(--s-3); padding-bottom: var(--s-3); border-bottom: 1px solid var(--border); }

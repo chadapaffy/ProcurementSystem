@@ -176,6 +176,15 @@
   const lineInvestor = (b, l) => l.investor || (b.structure === 'project' ? b.company : itemInvestor(b, itemById(b, l.itemId)));
   const investorSelect = (name, selected, label) => '<div class="select-wrap"><select name="' + name + '" aria-label="' + (label || 'บริษัทที่ลงทุน') + '">' +
     optList(db.master.companies, 'code', (c) => c.code, selected) + '</select></div>';
+  /** หลายคนคั่นด้วย ; หรือขึ้นบรรทัดใหม่ */
+  const splitPeople = (v) => String(v || '').split(/\s*;\s*|\n/).map((x) => x.trim()).filter(Boolean);
+  /** ผู้รับ/ผู้ลงนามใน Memo ตั้งต้น: ของบริษัทที่ลงทุน (เรียน/สำเนา/ผู้ทบทวน/ผู้พิจารณา) และผู้ลงนามเสนอของบริษัทเจ้าของงบ */
+  function defaultMemoParties(b, investor) {
+    const list = db.master.memoParties || [];
+    const inv = list.find((x) => x.code === investor) || {};
+    const own = list.find((x) => x.code === b.company) || {};
+    return { to: splitPeople(inv.to), cc: splitPeople(inv.cc), reviewers: splitPeople(inv.reviewer), approvers: splitPeople(inv.to), proposer: String(own.signer || '').trim() };
+  }
   const investorCell = (code) => '<span class="nowrap">' + esc(code) + '</span>';
   const memoMode = (b) => (b ? (db.master.companies.find((c) => c.code === b.company) || {}).memo || '' : '');
   /** งบนี้ต้องแนบ Memo ที่ผู้บริหารเซ็นตอนขอดำเนินการใช้งบหรือไม่ (ตามเกณฑ์ของบริษัท) */
@@ -336,6 +345,8 @@
       mk({ id: 'r8', no: 'REQ-' + year + '-0008', budgetId: 'b6', itemId: 'c8', useType: 'prpo', requesterId: 'req1', createdAt: iso(day(11, 2)),
         status: 'memo', purpose: 'ติดตั้งระบบไฟส่องสว่างชั้น 2', payee: '',
         memo: { no: 'MEMO-PBI' + yy + '-002', by: '', files: [], issuedAt: iso(day(11, 2)) },
+        memoParties: { to: ['ผู้บริหารสูงสุด PBI (ตัวอย่าง)', 'ผู้บริหารอาวุโส PBI (ตัวอย่าง)'], cc: ['บัญชี / การเงิน PBI (ตัวอย่าง)'], reviewers: ['ผู้บริหารฝ่ายการเงิน PBI (ตัวอย่าง)'],
+          approvers: ['ผู้บริหารสูงสุด PBI (ตัวอย่าง)', 'ผู้บริหารอาวุโส PBI (ตัวอย่าง)'], proposer: 'กรรมการผู้จัดการ PBI (ตัวอย่าง)' },
         lines: [line('c8', 'โคมไฟ LED พร้อมติดตั้ง 40 ชุด', 60000, { category: 'ค่าวัสดุ / อุปกรณ์', investor: 'PBI' })] }),
       mk({ id: 'r7', no: 'REQ-' + year + '-0007', budgetId: 'b3', type: 'CBS', itemId: 'i5', useType: 'prpo', requesterId: 'req2', createdAt: iso(day(10, 31)),
         status: 'pending', purpose: 'วัสดุเพาะกล้ารอบถัดไป', payee: '',
@@ -1714,6 +1725,7 @@
     const lastReject = existing ? existing.steps.find((s) => s.status === 'rejected') : null;
     const needMemo = memoRequired(b);
     const mv = (existing && existing.memo) || {};
+    const mp = (existing && existing.memoParties) || defaultMemoParties(b, b.company);
 
     const remaining = usage(b).remaining;
     const step = (n, title, extra) => '<div class="section-head"><h2 class="section-title"><span class="step">' + n + '</span>' + title + '</h2>' + (extra || '') + '</div>';
@@ -1775,6 +1787,16 @@
       '<form id="requestForm" class="req-form" data-budget="' + b.id + '" data-request="' + esc(requestId || '') + '" data-remaining="' + remaining + '">' +
       '<div class="detail-layout"><div class="detail-main form-main">' + general + linesCard +
       '<div id="planWrap">' + planFieldset(existing && existing.paymentPlan, 4) + '</div>' +
+      '<details class="card form-section memo-people" id="memoPeople"' + (needMemo || (existing && existing.memo) ? ' open' : '') + '>' +
+        '<summary><span class="step">5</span> ผู้รับและผู้ลงนามใน Memo <small>(ใช้เมื่อกด "ทำ Memo")</small></summary>' +
+        '<p class="muted memo-hint">ค่าเริ่มต้นดึงจาก ข้อมูลหลัก &gt; ผู้ลงนาม Memo ของบริษัทที่ลงทุน แก้เฉพาะคำขอนี้ได้ · ใส่ได้หลายคน หนึ่งคนต่อบรรทัด (ชื่อ / ตำแหน่ง)</p>' +
+        '<div class="form-grid">' +
+        field('เรียน', '<textarea name="memoTo" rows="2">' + esc(mp.to.join('\n')) + '</textarea>') +
+        field('สำเนาถึง', '<textarea name="memoCc" rows="2">' + esc(mp.cc.join('\n')) + '</textarea>') +
+        field('ผู้ทบทวน / ให้ความเห็นชอบ (ผู้ลงนาม)', '<textarea name="memoReviewers" rows="2">' + esc(mp.reviewers.join('\n')) + '</textarea>') +
+        field('ผู้พิจารณาอนุมัติ (ผู้ลงนาม)', '<textarea name="memoApprovers" rows="2">' + esc(mp.approvers.join('\n')) + '</textarea>') +
+        '<div class="full">' + field('ผู้ลงนามเสนอ (ผู้ขอ)', '<input name="memoProposer" value="' + esc(mp.proposer || '') + '" placeholder="ชื่อ / ตำแหน่ง">') + '</div>' +
+        '</div></details>' +
       '</div><aside class="detail-side">' + side + '</aside></div></form>';
   }
 
@@ -1873,6 +1895,29 @@
       });
     }
     const needMemo = memoRequired(b);
+    // ---- ผู้รับและผู้ลงนามใน Memo: เปลี่ยนตามบริษัทที่ลงทุนจนกว่าผู้ขอจะพิมพ์แก้เอง
+    const PARTY_FIELDS = { to: 'memoTo', cc: 'memoCc', reviewers: 'memoReviewers', approvers: 'memoApprovers' };
+    const readParties = () => ({ to: splitPeople(f.memoTo.value), cc: splitPeople(f.memoCc.value), reviewers: splitPeople(f.memoReviewers.value),
+      approvers: splitPeople(f.memoApprovers.value), proposer: f.memoProposer.value.trim() });
+    const touched = new Set(existing && existing.memoParties ? Object.keys(PARTY_FIELDS).concat(['proposer']) : []);
+    Object.entries(PARTY_FIELDS).forEach(([k, n]) => f[n].addEventListener('input', () => touched.add(k)));
+    f.memoProposer.addEventListener('input', () => touched.add('proposer'));
+    const mainInvestor = () => {
+      const weight = {};
+      readLines(form, isCapex).forEach((l) => {
+        const c = l.investor || itemInvestor(b, itemById(b, l.itemId));
+        weight[c] = (weight[c] || 0) + (l.amount || 0);
+      });
+      const top = Object.keys(weight).sort((x, y) => weight[y] - weight[x])[0];
+      return top || (f.itemId && f.itemId.value ? itemInvestor(b, itemById(b, f.itemId.value)) : b.company);
+    };
+    const syncParties = () => {
+      const d = defaultMemoParties(b, mainInvestor());
+      Object.entries(PARTY_FIELDS).forEach(([k, n]) => { if (!touched.has(k)) f[n].value = d[k].join('\n'); });
+      if (!touched.has('proposer')) f.memoProposer.value = d.proposer;
+    };
+    form.addEventListener('change', syncParties);
+    form.addEventListener('input', syncParties);
     let action = needMemo ? 'memo' : 'send';
     form.querySelectorAll('[data-action]').forEach((btn) => btn.addEventListener('click', () => { action = btn.dataset.action; }));
     const useType = () => (form.querySelector('[name="useType"]:checked') || {}).value;
@@ -2025,7 +2070,10 @@
       fields.cuts = [];
       fields.attachments = files;
       // ต้องใช้ Memo: บันทึกเป็น "รอแนบ Memo" ออกเลขที่ Memo (ใช้เลขเดิมถ้ามี) — แก้ข้อมูลแล้วต้องเซ็นใหม่ จึงล้างไฟล์ที่แนบไว้
-      if (useMemo) fields.memo = { no: (existing && existing.memo && existing.memo.no) || nextMemoNo(b), by: '', files: [], issuedAt: now };
+      if (useMemo) {
+        fields.memo = { no: (existing && existing.memo && existing.memo.no) || nextMemoNo(b), by: '', files: [], issuedAt: now };
+        fields.memoParties = readParties();
+      }
       fields.requesterReason = f.requesterReason ? f.requesterReason.value.trim() : '';
 
       let r;
@@ -2034,7 +2082,7 @@
         r = existing;
         if (existing.status === 'rejected') r.history = (r.history || []).concat(r.steps);
         Object.assign(r, fields, { status: useMemo ? 'memo' : 'pending', steps: stepsFor(b), resubmittedAt: now });
-        if (!useMemo) delete r.memo; // เลือกส่งตรงโดยไม่ใช้ Memo
+        if (!useMemo) { delete r.memo; delete r.memoParties; } // เลือกส่งตรงโดยไม่ใช้ Memo
       } else {
         r = Object.assign({
           id: nextId('r'), no: nextReqNo(), budgetId: b.id, type: b.type,
@@ -2355,6 +2403,7 @@
       (isCapex && (r.useType === 'prpo' || r.useType === 'direct') ? fact('เงื่อนไขการจ่าย', esc(planText(r))) : '') +
       (isCapex ? fact('วัตถุประสงค์', esc(r.purpose), true) : '') +
       (r.memoBackground ? fact('เรื่องสืบเนื่อง / ความเป็นมา (Memo)', esc(r.memoBackground).replace(/\n/g, '<br>'), true) : '') +
+      (r.memoParties ? fact('Memo — เรียน', esc(r.memoParties.to.join(' / ') || '-')) + fact('Memo — ผู้ลงนาม', esc(r.memoParties.reviewers.concat(r.memoParties.approvers).join(' / ') || '-')) : '') +
       (isCapex && r.requesterReason ? fact('เหตุผลที่ขอเกินงบ (ผู้ขอ)', esc(r.requesterReason), true) : '') +
       '</div></section>';
 
@@ -2598,7 +2647,8 @@
     const invCodes = Object.keys(byInv).sort((x, y) => byInv[y] - byInv[x]);
     const investor = invCodes[0] || b.company;
     const approver = party(investor);
-    const proposer = party(b.company);
+    const mp = r.memoParties || defaultMemoParties(b, investor);
+    const rowsOf = (list) => (list.length ? list : ['']).map((x) => '<tr><td>' + esc(x) + '</td><td>☐ อนุมัติ &nbsp; ☐ ไม่อนุมัติ</td><td></td><td></td></tr>').join('');
 
     // ครั้งที่ และยอดที่เบิกไปแล้วก่อนหน้า
     const live = ['memo', 'pending', 'approved', 'closed'];
@@ -2646,9 +2696,10 @@
     return '<article class="doc memo-doc">' +
       '<table class="memo-head"><tbody>' +
       '<tr><td colspan="2" class="memo-title">บันทึกข้อความ (Memo) — ' + esc(cname(b.company)) + '</td></tr>' +
-      '<tr><td><span class="lbl">เรียน</span>: ' + esc(approver.to || 'ผู้บริหาร') + '<br><span class="lbl"></span>&nbsp; ' + esc(cname(investor)) + '</td>' +
+      '<tr><td>' + (mp.to.length ? mp.to : ['ผู้บริหาร']).map((x, i) => '<span class="lbl">' + (i ? '' : 'เรียน') + '</span>' + (i ? '&nbsp; ' : ': ') + esc(x)).join('<br>') +
+      '<br><span class="lbl"></span>&nbsp; ' + esc(cname(investor)) + '</td>' +
       '<td class="memo-date">วันที่ ' + fmtDay(r.createdAt) + '<br><small>เลขที่ Memo ' + esc((r.memo || {}).no || '........') + '</small><br><small>คำขอเลขที่ ' + esc(r.no) + '</small></td></tr>' +
-      '<tr><td colspan="2"><span class="lbl">สำเนาถึง</span>: ' + esc(approver.cc || '-') + '</td></tr>' +
+      '<tr><td colspan="2"><span class="lbl">สำเนาถึง</span>: ' + esc(mp.cc.join(' , ') || '-') + '</td></tr>' +
       '<tr><td colspan="2"><span class="lbl">เรื่อง</span>: ขอเบิกใช้งบ ' + esc(b.name) + ' ครั้งที่ ' + seq + '<br>' +
       '<span class="lbl">อ้างอิง</span>: ' + esc(refText) + '</td></tr></tbody></table>' +
 
@@ -2678,14 +2729,14 @@
       (doaText ? '<p class="memo-doa"><strong><u>อ้างอิงอำนาจอนุมัติ</u></strong> ' + esc(doaText) + '</p>' : '') +
 
       '<p>จึงเรียนมาเพื่อโปรดพิจารณาลงนาม</p>' +
-      '<div class="memo-signoff"><div>ขอแสดงความนับถือ</div><div class="memo-sig-line"></div><div>(' + esc(userName(r.requesterId)) + ')</div><div>' + esc(proposer.signer || '') + '</div></div>' +
+      '<div class="memo-signoff"><div>ขอแสดงความนับถือ</div><div class="memo-sig-line"></div><div>(' + esc(userName(r.requesterId)) + ')</div><div>' + esc(mp.proposer || '') + '</div></div>' +
 
       '<h2 class="memo-h">ทบทวน และให้ความเห็นชอบ</h2>' +
       '<table class="memo-sign"><thead><tr><th>ชื่อ / ตำแหน่ง</th><th style="width:9rem">ผลการพิจารณา</th><th style="width:11rem">ลงนามอนุมัติ</th><th style="width:6rem">วันที่</th></tr></thead><tbody>' +
-      '<tr><td>' + esc(approver.reviewer || '') + '</td><td>☐ อนุมัติ &nbsp; ☐ ไม่อนุมัติ</td><td></td><td></td></tr></tbody></table>' +
+      rowsOf(mp.reviewers) + '</tbody></table>' +
       '<h2 class="memo-h">ผู้พิจารณาอนุมัติ</h2>' +
       '<table class="memo-sign"><thead><tr><th>ชื่อ / ตำแหน่ง</th><th style="width:9rem">ผลการพิจารณา</th><th style="width:11rem">ลงนามอนุมัติ</th><th style="width:6rem">วันที่</th></tr></thead><tbody>' +
-      '<tr><td>' + esc(approver.to || '') + '</td><td>☐ อนุมัติ &nbsp; ☐ ไม่อนุมัติ</td><td></td><td></td></tr></tbody></table>' +
+      rowsOf(mp.approvers) + '</tbody></table>' +
       '<p class="note">เมื่อผู้บริหารลงนามแล้ว ให้สแกน / ถ่ายรูป แนบในคำขอดำเนินการใช้งบ พร้อมชื่อผู้บริหารที่ลงนาม ก่อนส่งให้ผู้คุมงบตรวจสอบ</p></article>';
   }
   /** หน้า Memo ของคำขอที่บันทึกแล้ว (#/request/:id/memo) */
@@ -3034,9 +3085,9 @@
       inUse: (it) => db.requests.some((r) => r.lines.some((l) => l.category === it.name)),
       rename: (from, to) => db.requests.forEach((r) => r.lines.forEach((l) => { if (l.category === from) l.category = to; })) },
     { key: 'memoParties', title: 'ผู้ลงนามและอำนาจอนุมัติใน Memo', lock: true,
-      hint: 'ใช้พิมพ์ Memo ขอดำเนินการใช้งบ ตั้งรายบริษัท — "เรียน / สำเนาถึง / ผู้ทบทวน / อ้างอิงอำนาจอนุมัติ" ใช้ของ <strong>บริษัทที่ลงทุน</strong> (ถ้าคำขอมีหลายบริษัทใช้ของบริษัทที่ลงทุนมากที่สุด) · "ผู้ลงนามเสนอ" ใช้ของ <strong>บริษัทเจ้าของงบ</strong> · ข้อมูลในโหมดทดลองเก็บในเบราว์เซอร์นี้เท่านั้น',
-      cols: [{ k: 'code', label: 'บริษัท', w: '7rem' }, { k: 'to', label: 'เรียน / ผู้พิจารณาอนุมัติ (ชื่อ / ตำแหน่ง)', w: '15rem' }, { k: 'cc', label: 'สำเนาถึง', w: '13rem' },
-        { k: 'reviewer', label: 'ผู้ทบทวน / ให้ความเห็นชอบ (ชื่อ / ตำแหน่ง)', w: '15rem' }, { k: 'signer', label: 'ผู้ลงนามเสนอ (ชื่อ / ตำแหน่ง)', w: '15rem' },
+      hint: 'ใช้พิมพ์ Memo ขอดำเนินการใช้งบ ตั้งรายบริษัท — "เรียน / สำเนาถึง / ผู้ทบทวน / อ้างอิงอำนาจอนุมัติ" ใช้ของ <strong>บริษัทที่ลงทุน</strong> (ถ้าคำขอมีหลายบริษัทใช้ของบริษัทที่ลงทุนมากที่สุด) · "ผู้ลงนามเสนอ" ใช้ของ <strong>บริษัทเจ้าของงบ</strong> · ใช้เป็น <strong>ค่าเริ่มต้น</strong> ในฟอร์มคำขอ (ผู้ขอแก้ได้ต่อคำขอ) · ข้อมูลในโหมดทดลองเก็บในเบราว์เซอร์นี้เท่านั้น',
+      cols: [{ k: 'code', label: 'บริษัท', w: '7rem' }, { k: 'to', label: 'เรียน / ผู้พิจารณาอนุมัติ (หลายคนคั่นด้วย ;)', w: '15rem' }, { k: 'cc', label: 'สำเนาถึง (หลายคนคั่นด้วย ;)', w: '13rem' },
+        { k: 'reviewer', label: 'ผู้ทบทวน / ให้ความเห็นชอบ (หลายคนคั่นด้วย ;)', w: '15rem' }, { k: 'signer', label: 'ผู้ลงนามเสนอ (ชื่อ / ตำแหน่ง)', w: '15rem' },
         { k: 'doa', label: 'อ้างอิงอำนาจอนุมัติ (DOA)', w: '16rem' }],
       inUse: () => false },
     { key: 'glCodes', title: 'GL Code (CBS)', hint: 'เลือก GL Code ในรายการต้นทุน แล้วระบบเติมชื่อ GL ให้', lock: true,
@@ -3829,7 +3880,7 @@
       ['ใช้งบ', 'จ่ายหลายงวด', 'ใช้ได้กับ PR/PO และจ่ายตรง — บันทึกจ่ายหลายครั้งแล้วปิดยอด'],
       ['ใช้งบ', 'Memo ผู้บริหารเซ็นตอนขอดำเนินการใช้งบ', 'ใช้เฉพาะงบที่ไม่มี Item (งบรวมโครงการ) ทั้ง CAPEX และ CBS · ตั้งเกณฑ์รายบริษัทได้ที่ข้อมูลหลัก (ไม่ต้องใช้ / เฉพาะงบที่ไม่มี Item / ทุกงบ) · ต้องแนบไฟล์ Memo ที่เซ็นแล้ว + เลขที่ + ชื่อผู้บริหาร ก่อนส่ง · ทุกประเภทและทุกยอดเงิน · ผู้บริหารเซ็นนอกระบบ'],
       ['ใช้งบ', 'แบบฟอร์ม Memo', 'ออกตามแบบฟอร์ม Memo จริงของบริษัท: เรียน/สำเนาถึง/เรื่อง/อ้างอิง → 1. เรื่องสืบเนื่อง → 2. เรื่องเพื่อพิจารณาลงนาม (ยอดเงินเป็นตัวอักษร) → ตารางสรุปงบ (กรอบงบ − เบิกไปแล้ว − ขอครั้งนี้ = คงเหลือ) → อ้างอิงอำนาจอนุมัติ → ตารางทบทวน/ผู้พิจารณาอนุมัติ · ยังไม่ทำหัวกระดาษและเลขหน้าของบริษัท'],
-      ['ใช้งบ', 'Memo ถึงใคร / ใครลงนาม', 'เรียน-สำเนา-ผู้ทบทวน-ผู้พิจารณาอนุมัติ-อ้างอิงอำนาจอนุมัติ ใช้ของบริษัทที่ลงทุน (ถ้าหลายบริษัท ใช้บริษัทที่ลงทุนมากที่สุด และแจ้งยอดแยกบริษัทใน Memo) · ผู้ลงนามเสนอใช้ของบริษัทเจ้าของงบ · ตั้งที่ ข้อมูลหลัก > ผู้ลงนาม Memo (ชื่อที่ใส่ไว้เป็นข้อความตัวอย่าง)'],
+      ['ใช้งบ', 'Memo ถึงใคร / ใครลงนาม', 'ผู้ขอกรอกในฟอร์มคำขอได้ทุกครั้ง (ส่วน "ผู้รับและผู้ลงนามใน Memo"): เรียน · สำเนาถึง · ผู้ทบทวน · ผู้พิจารณาอนุมัติ ใส่ได้หลายคน หนึ่งคนต่อบรรทัด · ค่าเริ่มต้นดึงจาก ข้อมูลหลัก > ผู้ลงนาม Memo ของบริษัทที่ลงทุน (ถ้าหลายบริษัท ใช้บริษัทที่ลงทุนมากที่สุด) จนกว่าผู้ขอจะพิมพ์แก้เอง · ผู้ลงนามเสนอค่าเริ่มต้นเป็นของบริษัทเจ้าของงบ · ต้องมี "เรียน" และ "ผู้พิจารณาอนุมัติ" อย่างน้อย 1 คนจึงทำ Memo ได้'],
       ['ใช้งบ', 'เรื่องสืบเนื่อง / อ้างอิงใน Memo', 'เรื่องสืบเนื่อง = ข้อความที่ผู้ขอกรอกในฟอร์มคำขอ (ไม่บังคับ) · อ้างอิง = มติที่ประชุม (CAPEX) / เอกสารอนุมัติผู้บริหาร (CBS) ของงบ ดึงจากข้อมูลตอนตั้งงบอัตโนมัติ · "ครั้งที่" นับจากคำขอก่อนหน้าของงบเดียวกัน'],
       ['ใช้งบ', 'ใครเลือกว่าทำ Memo', 'ผู้ขอเลือกเองด้วยปุ่ม "ทำ Memo" ข้างปุ่มส่ง · ถ้าเกณฑ์ของบริษัทบังคับ (ตั้งต้น: งบที่ไม่มี Item) จะมีแค่ปุ่มทำ Memo'],
       ['ใช้งบ', 'ขั้นตอน Memo', 'บันทึกคำขอ → ระบบออกเลขที่ Memo (MEMO-บริษัทปี-ลำดับ) และจองงบไว้ → ผู้ขอพิมพ์ไปให้ผู้บริหารเซ็น → แนบไฟล์ที่เซ็นแล้ว + ชื่อผู้บริหาร → ส่งให้ผู้คุมงบ · แก้ไขคำขอระหว่างรอได้ (ต้องเซ็นใหม่ ใช้เลขที่เดิม)'],
@@ -3878,15 +3929,21 @@
     }
     const run = () => {
       const notes = [];
+      const per = new Map(); // ปุ่มหนึ่งอาจถูกหลายกฎตรวจ: ขาดอะไรก็ได้ = กดไม่ได้
+      let active = 0;
       rules.forEach((rule) => {
+        const btns = Array.from(form.querySelectorAll(rule.btn));
+        if (!btns.length) return;
+        active += 1;
         const miss = rule.missing(form).filter(Boolean);
-        form.querySelectorAll(rule.btn).forEach((btn) => {
-          btn.disabled = miss.length > 0;
-          btn.title = miss.length ? 'ยังขาด: ' + miss.join(', ') : '';
-        });
-        if (miss.length) notes.push((rules.length > 1 && rule.label ? rule.label + ': ' : '') + miss.join(' · '));
+        btns.forEach((btn) => per.set(btn, (per.get(btn) || []).concat(miss)));
+        if (miss.length) notes.push({ label: rule.label, text: miss.join(' · ') });
       });
-      hint.textContent = notes.length ? (rules.length > 1 ? notes.join(' | ') : 'กรอกให้ครบก่อน: ' + notes[0]) : '';
+      per.forEach((miss, btn) => {
+        btn.disabled = miss.length > 0;
+        btn.title = miss.length ? 'ยังขาด: ' + miss.join(', ') : '';
+      });
+      hint.textContent = notes.length ? 'กรอกให้ครบก่อน: ' + notes.map((n) => (active > 1 && n.label ? n.label + ': ' : '') + n.text).join(' | ') : '';
       hint.hidden = !notes.length;
     };
     form.addEventListener('input', run);
@@ -3960,6 +4017,7 @@
       markReq(rf, ['itemId', 'purpose']);
       markReqText(rf, '.section-title', /ประเภทการดำเนินการใช้งบ/);
       markReqText(rf, '.lines-table thead th', /^(รายการต้นทุน \(CBS\)|หมวดค่าใช้จ่าย|รายละเอียด|ก่อน VAT)/);
+      markReq(rf, ['memoTo', 'memoApprovers']);
       guard(rf, [{ btn: 'button[type="submit"]', missing: (f) => {
         const e = f.elements;
         const m = [];
@@ -3984,7 +4042,9 @@
           if (pcts.length < 2 || round2(pcts.reduce((s, x) => s + x, 0)) !== 100) m.push('งวดจ่ายอย่างน้อย 2 งวด รวม 100%');
         }
         return m;
-      } }]);
+      } }, { btn: '[data-action="memo"]', label: 'ทำ Memo', missing: (f) => [
+        !splitPeople(f.elements.memoTo.value).length && 'เรียน (ส่วนผู้รับและผู้ลงนามใน Memo)',
+        !splitPeople(f.elements.memoApprovers.value).length && 'ผู้พิจารณาอนุมัติ (ผู้ลงนาม)'] }]);
     }
 
     // ---- ผู้คุมงบตรวจคำขอ
