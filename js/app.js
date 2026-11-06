@@ -830,12 +830,19 @@
     else if (can('request.create') || can('budget.create')) links.push(['budgets', '#/my-budgets', 'งบประมาณ', ['#/my-budgets', '#/budget/', '#/request/new', '#/change/', '#/adjust']]);
     if (canViewAll() || can('request.create')) links.push(['requests', '#/requests', 'รายการดำเนินการใช้งบ', ['#/requests', '#/request/', '#/doc/']]);
     if (isWorker(u)) links.push(['history', '#/history', 'ประวัติการทำรายการ', ['#/history']]);
-    if (can('master.manage')) links.push(['master', '#/master', 'ข้อมูลหลัก', ['#/master']]);
+    if (can('master.manage')) {
+      links.push(['master', '#/master', 'ข้อมูลหลัก', ['#/master']]);
+      if (route.startsWith('#/master')) {
+        const cur = route.split('/')[2] || MASTER_NAV[0][0];
+        MASTER_NAV.forEach(([k, t]) => links.push(['sub', '#/master/' + k, t, [], k === cur]));
+      }
+    }
     if (can('log.view')) links.push(['log', '#/log', 'Log การทำงาน', ['#/log']]);
     if (can('user.manage')) links.push(['admin', '#/admin', 'ผู้ใช้และสิทธิ์' + count(REMOTE ? adminCounts.pending : 0), ['#/admin']]);
     links.push(['assumptions', '#/assumptions', 'สิ่งที่รอยืนยัน', ['#/assumptions']]);
     let activeDone = false;
-    document.getElementById('nav').innerHTML = links.map(([icon, href, text, prefixes]) => {
+    document.getElementById('nav').innerHTML = links.map(([icon, href, text, prefixes, subActive]) => {
+      if (icon === 'sub') return '<a class="sub' + (subActive ? ' sub-active' : '') + '" href="' + href + '"' + (subActive ? ' aria-current="page"' : '') + '><span>' + text + '</span></a>';
       const active = !activeDone && prefixes.some((p) => route.startsWith(p));
       if (active) activeDone = true;
       return '<a href="' + href + '"' + (active ? ' class="active" aria-current="page"' : '') + '>' + navIcon(icon) + '<span>' + text + '</span></a>';
@@ -2701,6 +2708,45 @@
     return (r.status === 'approved' || r.status === 'closed') ? (r.cuts || []).map((c) => ({ date: c.date, amount: Number(c.amount || 0) })) : [];
   }
 
+  /**
+   * สรุปตามบริษัทที่ลงทุน: งบที่ได้รับตาม Item (งบไม่มี Item = บริษัทเจ้าของงบ)
+   * ยอดตัดงบ / จองไว้ตามบรรทัดของคำขอ (แบ่งยอดที่ตัดตามสัดส่วนของบรรทัด เหมือน usage())
+   */
+  function investorGroups(budgets) {
+    const groups = {};
+    const names = companyMap();
+    const g = (code) => groups[code] || (groups[code] = { label: code + (names[code] ? ' — ' + names[code] : ''), ids: new Set(), n: 0, approved: 0, used: 0, reserved: 0, remaining: 0 });
+    budgets.forEach((b) => {
+      if (b.structure === 'project') {
+        const x = g(b.company);
+        x.approved = round2(x.approved + budgetTotal(b));
+        x.ids.add(b.id);
+      } else {
+        leaves(b).forEach((it) => {
+          const x = g(itemInvestor(b, it));
+          x.approved = round2(x.approved + itemTotal(it));
+          x.ids.add(b.id);
+        });
+      }
+      db.requests.forEach((r) => {
+        if (r.budgetId !== b.id || !['memo', 'pending', 'approved', 'closed'].includes(r.status) || !(r.amount > 0)) return;
+        const cut = cutTotal(r);
+        r.lines.forEach((l) => {
+          const x = g(lineInvestor(b, l));
+          x.ids.add(b.id);
+          const share = l.amount / r.amount;
+          if (isReserving(r)) x.reserved = round2(x.reserved + l.amount);
+          else {
+            x.used = round2(x.used + cut * share);
+            if (r.status === 'approved') x.reserved = round2(x.reserved + Math.max(l.amount - cut * share, 0));
+          }
+        });
+      });
+    });
+    Object.values(groups).forEach((x) => { x.n = x.ids.size; x.remaining = round2(x.approved - x.used - x.reserved); });
+    return groups;
+  }
+
   function dashDimension(by, b) {
     if (by === 'group') {
       if (b.type === 'CBS') return { key: 'CBS', label: 'งบโครงการ (CBS)' };
@@ -2720,7 +2766,7 @@
     const year = params.has('year') ? params.get('year') : (years.includes(thisYear) ? thisYear : 'all');
     const company = params.get('company') || 'all';
     const type = TYPE_LABEL[params.get('type')] ? params.get('type') : 'all';
-    const by = ['company', 'group', 'dept', 'type'].includes(params.get('by')) ? params.get('by') : 'company';
+    const by = ['company', 'investor', 'group', 'dept', 'type'].includes(params.get('by')) ? params.get('by') : 'company';
     const list = all.filter((b) => (year === 'all' || String(b.fiscalYear) === year) && (company === 'all' || b.company === company) && (type === 'all' || b.type === type));
     const q = (o) => '#/dashboard?' + Object.entries(Object.assign({ year, company, type, by }, o)).map(([k, v]) => k + '=' + encodeURIComponent(v)).join('&');
 
@@ -2742,26 +2788,30 @@
       sel('type', 'ประเภทงบ', [['all', 'ทั้งหมด'], ['CAPEX', 'CAPEX'], ['CBS', 'CBS']], type) + '</div>';
 
     // ---- ตารางสรุปตามมิติที่เลือก
-    const groups = {};
-    rows.forEach((x) => {
-      const d = dashDimension(by, x.b);
-      const g = groups[d.key] || (groups[d.key] = { label: d.label, n: 0, approved: 0, used: 0, reserved: 0, remaining: 0 });
-      g.n += 1;
-      ['approved', 'used', 'reserved', 'remaining'].forEach((k) => { g[k] = round2(g[k] + x.u[k]); });
-    });
+    const groups = by === 'investor' ? investorGroups(list) : {};
+    if (by !== 'investor') {
+      rows.forEach((x) => {
+        const d = dashDimension(by, x.b);
+        const g = groups[d.key] || (groups[d.key] = { label: d.label, n: 0, approved: 0, used: 0, reserved: 0, remaining: 0 });
+        g.n += 1;
+        ['approved', 'used', 'reserved', 'remaining'].forEach((k) => { g[k] = round2(g[k] + x.u[k]); });
+      });
+    }
     const gl = Object.values(groups).sort((a, b) => b.approved - a.approved);
-    const seg = [['company', 'บริษัท'], ['group', 'กลุ่มงบ'], ['dept', 'หน่วยงาน'], ['type', 'ประเภทงบ']]
+    const seg = [['company', 'บริษัท'], ['investor', 'บริษัทที่ลงทุน'], ['group', 'กลุ่มงบ'], ['dept', 'หน่วยงาน'], ['type', 'ประเภทงบ']]
       .map(([k, t]) => '<a href="' + q({ by: k }) + '"' + (by === k ? ' class="active" aria-current="true"' : '') + '>' + t + '</a>').join('');
     const miniBar = (g) => '<div class="bar mini" role="img" aria-label="ตัดงบแล้ว ' + pctText(g.used, g.approved) + ' จองไว้ ' + pctText(g.reserved, g.approved) + '">' +
       '<div class="used" style="width:' + pct(g.used, g.approved) + '%"></div><div class="reserved" style="width:' + pct(g.reserved, g.approved) + '%"></div></div>';
     const breakdown = '<section class="card"><div class="section-head"><h2 class="section-title">สรุปงบตาม</h2><div class="seg">' + seg + '</div></div>' +
       (gl.length
-        ? '<div class="table-wrap"><table><thead><tr><th>' + { company: 'บริษัท', group: 'กลุ่มงบ', dept: 'หน่วยงาน', type: 'ประเภทงบ' }[by] + '</th><th class="num">งบ</th>' +
+        ? '<div class="table-wrap"><table><thead><tr><th>' + { company: 'บริษัทเจ้าของงบ', investor: 'บริษัทที่ลงทุน', group: 'กลุ่มงบ', dept: 'หน่วยงาน', type: 'ประเภทงบ' }[by] + '</th><th class="num">งบ</th>' +
           '<th class="num">งบที่ได้รับ</th><th class="num">ตัดงบแล้ว</th><th class="num">จองไว้</th><th class="num">คงเหลือ</th><th style="width:9rem">สัดส่วน</th></tr></thead><tbody>' +
           gl.map((g) => '<tr><td>' + esc(g.label) + '</td><td class="num">' + g.n + '</td><td class="num">' + money(g.approved) + '</td><td class="num">' + money(g.used) +
             '</td><td class="num">' + money(g.reserved) + '</td><td class="num"><strong>' + moneyCell(g.remaining) + '</strong></td><td>' + miniBar(g) + '</td></tr>').join('') +
           '</tbody><tfoot><tr><td>รวม</td><td class="num">' + rows.length + '</td><td class="num">' + money(tot.approved) + '</td><td class="num">' + money(tot.used) + '</td>' +
-          '<td class="num">' + money(tot.reserved) + '</td><td class="num"><strong>' + moneyCell(tot.remaining) + '</strong></td><td></td></tr></tfoot></table></div>'
+          '<td class="num">' + money(tot.reserved) + '</td><td class="num"><strong>' + moneyCell(tot.remaining) + '</strong></td><td></td></tr></tfoot></table></div>' +
+          (by === 'investor' ? '<p class="muted small-note dash-note">งบที่ได้รับนับตามบริษัทที่ลงทุนของแต่ละ Item · งบที่ไม่มี Item นับเป็นของบริษัทเจ้าของงบ · ' +
+            'ยอดตัดงบ / จองไว้นับตามบริษัทที่ลงทุนของแต่ละบรรทัดในคำขอ (ถ้าบรรทัดเลือกบริษัทอื่น คงเหลือของบริษัทนั้นจะติดลบ) · คอลัมน์ "งบ" = จำนวนงบที่บริษัทนั้นลงทุนอยู่</p>' : '')
         : '<p class="muted">ไม่มีงบตามเงื่อนไขที่เลือก</p>') + '</section>';
 
     // ---- กราฟตัดงบรายเดือน (เฉพาะที่ฝ่ายบัญชีบันทึกจ่ายแล้ว)
@@ -2869,11 +2919,19 @@
       cols: [{ k: 'name', label: 'ประเภทสินทรัพย์' }],
       inUse: (it) => db.budgets.some((b) => b.type === 'CAPEX' && b.items.some((i) => i.assetType === it.name)),
       rename: (from, to) => db.budgets.forEach((b) => b.items.forEach((i) => { if (b.type === 'CAPEX' && i.assetType === from) i.assetType = to; })) },
+    { key: 'expenseCategories', title: 'หมวดค่าใช้จ่าย', hint: 'ตัวเลือกหมวดค่าใช้จ่ายของแต่ละบรรทัด เมื่อขอดำเนินการใช้งบของงบที่ไม่มี Item (งบรวมโครงการ)', lock: false,
+      cols: [{ k: 'name', label: 'หมวดค่าใช้จ่าย' }, { k: 'gl', label: 'GL Code (ถ้ามี)', w: '12rem' }],
+      inUse: (it) => db.requests.some((r) => r.lines.some((l) => l.category === it.name)),
+      rename: (from, to) => db.requests.forEach((r) => r.lines.forEach((l) => { if (l.category === from) l.category = to; })) },
     { key: 'glCodes', title: 'GL Code (CBS)', hint: 'เลือก GL Code ในรายการต้นทุน แล้วระบบเติมชื่อ GL ให้', lock: true,
       cols: [{ k: 'code', label: 'GL Code', w: '10rem' }, { k: 'name', label: 'ชื่อ GL' }],
       inUse: (it) => db.budgets.some((b) => b.type === 'CBS' && b.items.some((i) => i.glCode === it.code)) ||
         db.requests.some((r) => r.type === 'CBS' && r.lines.some((l) => l.glCode === it.code)) }
   ];
+
+  /** เมนูย่อยของข้อมูลหลัก: [key, ชื่อเมนู] */
+  const MASTER_NAV = [['companies', 'บริษัท'], ['departments', 'หน่วยงาน'], ['groups', 'กลุ่มงบประมาณ'], ['assetTypes', 'ประเภทสินทรัพย์'],
+    ['expenseCategories', 'หมวดค่าใช้จ่าย'], ['glCodes', 'GL Code'], ['doa', 'ตารางอำนาจอนุมัติ (DOA)']];
 
   function masterRow(sec, it, isNew) {
     return '<tr data-orig="' + (isNew ? '' : esc(it[sec.cols[0].k])) + '">' + sec.cols.map((c, i) => (c.type === 'select'
@@ -2884,10 +2942,11 @@
       '<td style="width:3rem"><button type="button" class="btn small bad" data-m-remove title="ลบ">×</button></td></tr>';
   }
 
-  function viewMaster() {
-    const u = me();
+  function viewMaster(sub) {
     if (!can('master.manage')) return '<div class="alert error">ไม่มีสิทธิ์จัดการข้อมูลหลัก</div>';
-    const sections = MASTER_SECTIONS.map((sec) => '<section class="card form-section"><div class="section-head"><div><h2 class="section-title">' + sec.title +
+    const key = MASTER_NAV.some(([k]) => k === sub) ? sub : MASTER_NAV[0][0];
+    const navTitle = MASTER_NAV.find(([k]) => k === key)[1];
+    const sections = MASTER_SECTIONS.filter((sec) => sec.key === key).map((sec) => '<section class="card form-section"><div class="section-head"><div><h2 class="section-title">' + sec.title +
       '</h2><div class="muted section-hint">' + sec.hint + '</div></div></div>' +
       '<form class="master-form" data-key="' + sec.key + '"><div class="table-wrap"><table class="edit-table"><thead><tr>' +
       sec.cols.map((c) => '<th>' + c.label + '</th>').join('') + '<th></th></tr></thead><tbody>' +
@@ -2897,9 +2956,9 @@
 
     const doa = Object.keys(DOA).map((k) => '<h3 class="side-title">' + esc(DOA[k].short) + '</h3><div class="table-wrap"><table><thead><tr><th>ข้อ</th><th>วงเงิน</th><th>ผู้อนุมัติ</th></tr></thead><tbody>' +
       DOA[k].rows.map((r) => '<tr><td class="nowrap">' + esc(r.code) + '</td><td>' + esc(r.label) + '</td><td>' + esc(r.approver) + '</td></tr>').join('') + '</tbody></table></div>').join('');
-    return '<div class="page-head"><div><h1>ข้อมูลหลัก</h1><div class="page-sub">ค่าที่ใช้เป็นตัวเลือกในฟอร์มและรายงาน</div></div></div>' + takeFlash() +
+    return '<div class="page-head"><div><h1>' + esc(navTitle) + '</h1><div class="page-sub">ข้อมูลหลัก — ค่าที่ใช้เป็นตัวเลือกในฟอร์มและรายงาน</div></div></div>' + takeFlash() +
       '<div id="formError"></div><div class="form-main">' + sections +
-      '<section class="card form-section"><div class="section-head"><div><h2 class="section-title">ตารางอำนาจอนุมัติ (DOA)</h2><div class="muted section-hint">อ่านอย่างเดียว — ใช้ติ๊กระดับผู้อนุมัติบนใบเบิก CAPEX ตามยอดเงิน (หน่วย: ล้านบาท)</div></div></div>' + doa + '</section>' +
+      (key === 'doa' ? '<section class="card form-section"><div class="section-head"><div><h2 class="section-title">ตารางอำนาจอนุมัติ (DOA)</h2><div class="muted section-hint">อ่านอย่างเดียว — ใช้ติ๊กระดับผู้อนุมัติบนใบดำเนินการใช้งบ CAPEX ตามยอดเงิน (หน่วย: ล้านบาท)</div></div></div>' + doa + '</section>' : '') +
       '</div>';
   }
 
@@ -2946,7 +3005,7 @@
           save();
         }
         setFlash('success', 'บันทึก' + sec.title + 'แล้ว');
-        go('#/master');
+        go('#/master/' + sec.key);
       });
     });
   }
@@ -4002,7 +4061,7 @@
     let html;
 
     if (parts[0] === 'dashboard') html = viewDashboard(params);
-    else if (parts[0] === 'master') html = viewMaster();
+    else if (parts[0] === 'master') html = viewMaster(parts[1]);
     else if (parts[0] === 'admin') html = viewAdmin(params);
     else if (parts[0] === 'budgets' || parts[0] === 'my-budgets') html = viewBudgets(params, parts[0] === 'my-budgets');
     else if (parts[0] === 'budget' && parts[1] === 'new') html = viewBudgetForm(null);

@@ -665,3 +665,14 @@ th.req::after, .section-title.req::after, legend.req::after { content: " *"; col
 @media (max-width: 600px) {
   .doc { overflow-x: auto; }
 }
+
+/* ---- เมนูย่อย (ข้อมูลหลัก) */
+#nav a.sub { height: 32px; padding: 0 var(--s-3) 0 46px; font-size: var(--fs-sm); color: var(--text-2); position: relative; }
+#nav a.sub::before { content: ""; position: absolute; left: 30px; top: 50%; width: 5px; height: 5px; margin-top: -2.5px; border-radius: 50%; background: var(--border-strong); }
+#nav a.sub.sub-active { color: var(--primary); font-weight: 600; background: none; }
+#nav a.sub.sub-active::before { background: var(--primary); }
+.dash-note { margin: var(--s-3) 0 0; }
+@media (max-width: 600px) {
+  .card > .section-head:has(.seg) { flex-wrap: wrap; }
+  .seg { flex-wrap: wrap; max-width: 100%; }
+}
