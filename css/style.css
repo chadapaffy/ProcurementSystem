@@ -676,3 +676,23 @@ th.req::after, .section-title.req::after, legend.req::after { content: " *"; col
   .card > .section-head:has(.seg) { flex-wrap: wrap; }
   .seg { flex-wrap: wrap; max-width: 100%; }
 }
+
+/* ---- Memo ตามแบบฟอร์มบริษัท */
+.memo-doc { font-size: 14px; line-height: 1.8; }
+.memo-doc table.memo-head { width: 100%; border-collapse: collapse; margin-bottom: var(--s-4); }
+.memo-doc .memo-head td { border: 1px solid #000; padding: 6px 10px; vertical-align: top; font-size: 14px; }
+.memo-doc .memo-head .memo-title { font-size: 16px; font-weight: 700; text-align: center; background: #f3f3f3; }
+.memo-doc .memo-head .memo-date { width: 11rem; }
+.memo-doc .lbl { display: inline-block; min-width: 4.5rem; }
+.memo-doc .memo-h { font-size: 15px; font-weight: 700; text-decoration: underline; margin: var(--s-5) 0 var(--s-2); }
+.memo-doc p { margin: 0 0 var(--s-3); text-indent: 2.5rem; text-align: justify; }
+.memo-doc p.note, .memo-doc p.memo-inv { text-indent: 0; }
+.memo-doc ol.memo-list { margin: 0 0 var(--s-3) 2.5rem; padding-left: 0; list-style: none; }
+.memo-doc ol.memo-list li { margin-bottom: var(--s-1); }
+.memo-doc ol.memo-list small { color: #444; font-size: 13px; }
+.memo-doc li.memo-total { font-weight: 700; margin-top: var(--s-2); }
+.memo-doc table.memo-sum, .memo-doc table.memo-sign { width: 100%; border-collapse: collapse; margin: var(--s-3) 0; }
+.memo-doc .memo-signoff { margin: var(--s-4) 0 var(--s-5) auto; width: 18rem; text-align: center; }
+.memo-doc .memo-sig-line { border-bottom: 1px dotted #000; height: 44px; margin: var(--s-2) 0; }
+@media print { .memo-doc table, .memo-doc .memo-signoff { page-break-inside: avoid; } }
+@media (max-width: 600px) { .memo-doc .memo-signoff { width: 100%; } }

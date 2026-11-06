@@ -75,6 +75,11 @@
    */
   const MEMO_MODES = [['', 'ไม่ต้องใช้'], ['project', 'เฉพาะงบที่ไม่มี Item'], ['all', 'ทุกงบ']];
   const MEMO_DEFAULT = 'project';
+  /** ผู้ลงนามใน Memo ตั้งต้น (ข้อความตัวอย่างทั่วไป ใส่ชื่อ/ตำแหน่งจริงที่ข้อมูลหลัก > ผู้ลงนาม Memo) */
+  const MEMO_PARTY_SAMPLE = {
+    PBI: { to: 'ผู้บริหารสูงสุด PBI (ตัวอย่าง)', cc: 'บัญชี / การเงิน PBI (ตัวอย่าง)', reviewer: 'ผู้บริหารฝ่ายการเงิน PBI (ตัวอย่าง)', signer: 'กรรมการผู้จัดการ PBI (ตัวอย่าง)', doa: '' },
+    PCC: { to: 'ผู้บริหารสูงสุด PCC (ตัวอย่าง)', cc: 'บัญชี / การเงิน PCC (ตัวอย่าง)', reviewer: 'ผู้บริหารฝ่ายการเงิน PCC (ตัวอย่าง)', signer: 'กรรมการผู้จัดการ PCC (ตัวอย่าง)', doa: '' }
+  };
   const TYPE_LABEL = { CAPEX: 'งบลงทุน (CAPEX)', CBS: 'งบโครงการ (CBS)' };
   const STATUS_LABEL = {
     memo: 'รอแนบ Memo ที่เซ็นแล้ว',
@@ -158,7 +163,11 @@
     });
     // ค่าเดิมแบบติ๊ก (true/false) หรือยังไม่ตั้ง → ใช้เกณฑ์ตั้งต้น "เฉพาะงบที่ไม่มี Item"
     companies.forEach((c) => { if (!MEMO_MODES.some(([v]) => v === c.memo)) c.memo = MEMO_DEFAULT; });
-    d.master = { companies, departments, groups, assetTypes, glCodes, expenseCategories };
+    const memoParties = list('memoParties').slice();
+    companies.forEach((c) => {
+      if (!memoParties.some((x) => x.code === c.code)) memoParties.push(Object.assign({ code: c.code, to: '', cc: '', reviewer: '', signer: '', doa: '' }, MEMO_PARTY_SAMPLE[c.code] || {}));
+    });
+    d.master = { companies, departments, groups, assetTypes, glCodes, expenseCategories, memoParties };
     return d;
   }
   const companyMap = () => Object.fromEntries(db.master.companies.map((c) => [c.code, c.name]));
@@ -396,6 +405,7 @@
     if (comps.some((c) => c.code === to)) m.companies = comps.filter((c) => c.code !== from);
     else comps.forEach((c) => { if (c.code === from) { c.code = to; c.name = String(c.name || '').split(from).join(to); } });
     const fix = (o, k) => { if (o && o[k] === from) o[k] = to; };
+    (m.memoParties || []).forEach((x) => fix(x, 'code'));
     (d.budgets || []).forEach((b) => { fix(b, 'company'); (b.items || []).forEach((it) => fix(it, 'investor')); });
     (d.requests || []).forEach((r) => (r.lines || []).forEach((l) => fix(l, 'investor')));
     (d.changes || []).forEach((c) => (c.lines || []).forEach((l) => fix(l, 'investor')));
@@ -1719,6 +1729,7 @@
             : field('รหัสรายการย่อย (Item No.)', '<div class="select-wrap"><select name="itemId" required><option value="">— เลือกรายการย่อย —</option>' +
                 itemOptions(b, existing, v.itemId, true) + '</select></div>') + '<div id="itemHint" class="item-hint"></div>') + '</div>') +
           '<div class="full">' + field('วัตถุประสงค์ในการใช้งบ', '<textarea name="purpose" rows="3" required placeholder="เช่น จัดซื้อเครื่องชั่งสำหรับห้องปฏิบัติการ">' + esc(v.purpose || '') + '</textarea>') + '</div>' +
+          '<div class="full">' + field('เรื่องสืบเนื่อง / ความเป็นมา (ใช้ใน Memo — ไม่บังคับ)', '<textarea name="memoBackground" rows="3" placeholder="เช่น ที่มาของงบ เหตุผลความจำเป็น ที่ทำให้ต้องขอใช้งบครั้งนี้">' + esc(v.memoBackground || '') + '</textarea>') + '</div>' +
           field('<span id="payeeLabel">Supplier / ผู้รับเงิน</span>', '<input name="payee" required' + val('payee') + '>') +
           '<div class="field"><span>เอกสารประกอบ (ใบเสนอราคา ฯลฯ — ไม่บังคับ)</span><div id="reqFiles">' + attachList(v.attachments, { del: true, empty: 'ยังไม่มีไฟล์' }) + '</div>' +
           '<label class="btn small file-btn">+ แนบไฟล์<input type="file" id="reqFileInput" accept="application/pdf,image/png,image/jpeg" multiple hidden></label></div>' +
@@ -2006,6 +2017,7 @@
         amount: round2(clean.reduce((s, l) => s + l.amount, 0))
       };
       fields.purpose = f.purpose.value.trim();
+      fields.memoBackground = f.memoBackground ? f.memoBackground.value.trim() : '';
       fields.useType = useType();
       fields.paymentPlan = plan;
       fields.paymentTerms = planText({ paymentPlan: plan });
@@ -2342,6 +2354,7 @@
         : isCapex ? '<span class="muted">ไม่ต้องออก PO</span>' : esc(r.poNo)) +
       (isCapex && (r.useType === 'prpo' || r.useType === 'direct') ? fact('เงื่อนไขการจ่าย', esc(planText(r))) : '') +
       (isCapex ? fact('วัตถุประสงค์', esc(r.purpose), true) : '') +
+      (r.memoBackground ? fact('เรื่องสืบเนื่อง / ความเป็นมา (Memo)', esc(r.memoBackground).replace(/\n/g, '<br>'), true) : '') +
       (isCapex && r.requesterReason ? fact('เหตุผลที่ขอเกินงบ (ผู้ขอ)', esc(r.requesterReason), true) : '') +
       '</div></section>';
 
@@ -2537,54 +2550,151 @@
 
   // ---------------------------------------------------------------- documents
 
+  // ---- ยอดเงินเป็นตัวอักษรไทย เช่น 4,300,000 → สี่ล้านสามแสนบาทถ้วน
+  const TH_DIGIT = ['ศูนย์', 'หนึ่ง', 'สอง', 'สาม', 'สี่', 'ห้า', 'หก', 'เจ็ด', 'แปด', 'เก้า'];
+  const TH_POS = ['', 'สิบ', 'ร้อย', 'พัน', 'หมื่น', 'แสน'];
+  function thaiGroup(str, prefixed) {
+    const t = str.replace(/^0+/, '');
+    let out = '';
+    for (let i = 0; i < t.length; i += 1) {
+      const d = Number(t[i]);
+      const pos = t.length - 1 - i;
+      if (!d) continue;
+      if (pos === 0) out += d === 1 && (t.length > 1 || prefixed) ? 'เอ็ด' : TH_DIGIT[d];
+      else if (pos === 1) out += (d === 1 ? '' : d === 2 ? 'ยี่' : TH_DIGIT[d]) + 'สิบ';
+      else out += TH_DIGIT[d] + TH_POS[pos];
+    }
+    return out;
+  }
+  function thaiInt(str) {
+    const t = String(str).replace(/^0+/, '');
+    if (!t) return 'ศูนย์';
+    if (t.length <= 6) return thaiGroup(t, false);
+    return thaiInt(t.slice(0, -6)) + 'ล้าน' + thaiGroup(t.slice(-6), true);
+  }
+  function bahtText(n) {
+    const v = Math.round(Math.abs(Number(n) || 0) * 100);
+    const baht = Math.floor(v / 100);
+    const sat = v % 100;
+    if (!baht && sat) return thaiInt(String(sat)) + 'สตางค์';
+    return thaiInt(String(baht)) + 'บาท' + (sat ? thaiInt(String(sat)) + 'สตางค์' : 'ถ้วน');
+  }
+
   /**
-   * Memo ขออนุมัติดำเนินการใช้งบ ให้ผู้บริหารเซ็น (ฟอร์มชั่วคราว รอแบบฟอร์มจริงของบริษัท)
-   * d = { no, date, requesterId, useType, purpose, payee, lines, amountBeforeVat, vat, amount, remaining, memoNo }
+   * Memo ขออนุมัติดำเนินการใช้งบ ตามแบบฟอร์ม Memo ของบริษัท (ผู้ขอพิมพ์ไปให้ผู้บริหารเซ็น)
+   * เรียน/สำเนา/ผู้ทบทวน/อ้างอิง DOA ใช้ของบริษัทที่ลงทุน · ผู้ลงนามเสนอใช้ของบริษัทเจ้าของงบ (ตั้งที่ข้อมูลหลัก)
    */
-  function memoHtml(b, d) {
-    const tr = (k, v) => '<tr><th style="width:30%">' + k + '</th><td>' + v + '</td></tr>';
-    const t = USE_TYPES[d.useType] || {};
+  function memoHtml(b, r) {
+    const party = (c) => (db.master.memoParties || []).find((x) => x.code === c) || {};
+    const cname = (c) => companyMap()[c] || c;
+    const t = USE_TYPES[r.useType] || {};
     const perLine = b.type === 'CBS' && b.structure !== 'project';
-    const lines = d.lines || [];
-    return '<article class="doc memo-doc"><header><div><h1>' + esc(companyMap()[b.company] || b.company) + '</h1>' +
-      '<div class="doc-sub">บันทึกข้อความ (Memo) — ขออนุมัติดำเนินการใช้งบ</div></div>' +
-      '<div class="docno">เลขที่ Memo <strong>' + esc(d.memoNo || '....................') + '</strong><br>วันที่ ' + fmtDay(d.date) +
-      '<br>คำขอเลขที่ ' + esc(d.no || '(ออกเลขเมื่อส่งคำขอ)') + '</div></header>' +
-      '<div class="section"><table><tbody>' +
-      tr('เรียน', 'ผู้บริหาร') +
-      tr('เรื่อง', 'ขออนุมัติดำเนินการใช้งบ' + (t.label ? ' — ' + esc(t.label) : '')) +
-      tr('งบที่ใช้', esc(TYPE_LABEL[b.type]) + '<br>' + esc(b.code + ' ' + b.name)) +
-      tr('ผู้ขอ', esc(userName(d.requesterId) + ' · ' + b.department)) +
-      tr('วัตถุประสงค์', esc(d.purpose || '-')) +
-      tr(d.useType === 'advance' || d.useType === 'reimburse' ? 'ผู้รับเงิน (พนักงาน)' : 'Supplier (ผู้รับเงิน)', esc(d.payee || '-')) +
-      tr('จำนวนเงินที่ขอ (รวม VAT)', '<strong>' + money(d.amount) + ' บาท</strong>') +
-      tr('งบคงเหลือของโครงการ (ก่อนขอครั้งนี้)', money(d.remaining) + ' บาท') +
-      '</tbody></table></div>' +
-      '<div class="section"><h2>รายการที่ขอใช้</h2><table><thead><tr><th style="width:2rem">#</th>' + (perLine ? '<th>รายการต้นทุน</th>' : '') +
-      '<th>บริษัทที่ลงทุน</th><th>รายละเอียด</th><th class="num">ก่อน VAT</th><th class="num">VAT</th><th class="num">รวม</th></tr></thead><tbody>' +
-      (lines.length ? lines.map((l, i) => {
-        const it = itemById(b, l.itemId) || {};
-        return '<tr><td>' + (i + 1) + '</td>' + (perLine ? '<td>' + esc((it.code || '') + ' ' + (it.name || '')) + '</td>' : '') +
-          '<td>' + esc(lineInvestor(b, l)) + '</td><td>' + esc((l.category ? l.category + ' · ' : '') + (l.description || '')) + '</td><td class="num">' + money(l.amountBeforeVat) + '</td>' +
-          '<td class="num">' + money(l.vat) + '</td><td class="num">' + money(l.amount) + '</td></tr>';
-      }).join('') : '<tr><td colspan="' + (perLine ? 7 : 6) + '" class="muted">ยังไม่ได้ใส่รายการ</td></tr>') +
-      '<tr><th colspan="' + (perLine ? 4 : 3) + '" class="right">รวมทั้งสิ้น</th><td class="num">' + money(d.amountBeforeVat) + '</td><td class="num">' + money(d.vat) +
-      '</td><td class="num"><strong>' + money(d.amount) + '</strong></td></tr></tbody></table></div>' +
-      '<div class="section"><h2>ความเห็น / การอนุมัติของผู้บริหาร</h2><table><tbody>' +
-      tr('ผลการพิจารณา', '☐ อนุมัติ &nbsp; ☐ อนุมัติโดยมีเงื่อนไข &nbsp; ☐ ไม่อนุมัติ') + tr('ความเห็น', '<br><br>') + '</tbody></table></div>' +
-      '<div class="signs"><div><div class="line"></div>ผู้ขอใช้งบ<br>' + esc(userName(d.requesterId)) + '</div>' +
-      '<div><div class="line"></div>ผู้บังคับบัญชา</div><div><div class="line"></div>ผู้บริหารผู้อนุมัติ<br><small>วันที่ ....................</small></div></div>' +
-      '<p class="note">เมื่อผู้บริหารเซ็นแล้ว ให้สแกน / ถ่ายรูป แนบในคำขอดำเนินการใช้งบ พร้อมเลขที่ Memo ก่อนส่งให้ผู้คุมงบตรวจสอบ</p></article>';
+    const single = b.type === 'CAPEX' && b.structure !== 'project' ? itemById(b, r.itemId) : null;
+    const ids = single ? leafIdsUnder(b, single) : null;
+
+    // บริษัทที่ลงทุน (ถ้ามีหลายบริษัท ใช้บริษัทที่ลงทุนมากที่สุดเป็นผู้พิจารณา)
+    const byInv = {};
+    r.lines.forEach((l) => { const c = lineInvestor(b, l); byInv[c] = round2((byInv[c] || 0) + l.amount); });
+    const invCodes = Object.keys(byInv).sort((x, y) => byInv[y] - byInv[x]);
+    const investor = invCodes[0] || b.company;
+    const approver = party(investor);
+    const proposer = party(b.company);
+
+    // ครั้งที่ และยอดที่เบิกไปแล้วก่อนหน้า
+    const live = ['memo', 'pending', 'approved', 'closed'];
+    const prior = db.requests.filter((x) => x.budgetId === b.id && x.id !== r.id && live.includes(x.status) && x.createdAt < r.createdAt)
+      .sort((x, y) => x.createdAt.localeCompare(y.createdAt));
+    const seq = prior.length + 1;
+    const approved = ids ? round2(b.items.filter((x) => ids.includes(x.id)).reduce((s2, x) => s2 + itemTotal(x), 0)) : budgetTotal(b);
+    const share = (x) => { const a = linesAmount(x, ids); return x.status === 'closed' && x.amount > 0 ? cutTotal(x) * a / x.amount : a; };
+    const priorRows = prior.map((x, i) => ({ label: 'ครั้งที่ ' + (i + 1) + ' (' + (x.docNo || x.no) + ')' + (x.purpose ? ' — ' + x.purpose : ''), amount: round2(share(x)) })).filter((x) => x.amount > 0);
+    const priorSum = round2(priorRows.reduce((s2, x) => s2 + x.amount, 0));
+    const now = ids ? linesAmount(r, ids) : r.amount;
+    const after = round2(approved - priorSum - now);
+
+    // รายการที่ขอใช้ครั้งนี้ จัดกลุ่มตามหมวด / รายการ
+    const groups = [];
+    r.lines.forEach((l) => {
+      const it = itemById(b, l.itemId) || {};
+      const key = l.category || (perLine ? ((it.code || '') + ' ' + (it.name || '')).trim() : single ? single.code + ' ' + single.name : b.name);
+      let g = groups.find((x) => x.key === key);
+      if (!g) { g = { key, amount: 0, descs: [] }; groups.push(g); }
+      g.amount = round2(g.amount + l.amount);
+      g.descs.push(l.description + (invCodes.length > 1 ? ' [ลงทุนโดย ' + lineInvestor(b, l) + ']' : ''));
+    });
+
+    // อ้างอิงหลักฐานการอนุมัติงบ (มติที่ประชุม / เอกสารอนุมัติผู้บริหาร)
+    const m = b.meeting || {};
+    const ap = apprOf(b.type);
+    const refText = m.no
+      ? (ap.exec ? 'เอกสารอนุมัติจากผู้บริหาร เลขที่ ' + m.no + (m.by ? ' (ผู้อนุมัติ: ' + m.by + ')' : '') : 'มติที่ประชุม ' + m.no) + (m.date ? ' วันที่ ' + fmtDay(m.date) : '')
+      : 'งบ ' + b.code + ' ' + b.name;
+
+    // อำนาจอนุมัติ: ของบริษัทที่ลงทุน (ข้อมูลหลัก) หรือคำนวณจากตาราง DOA (CAPEX แยกรายการ)
+    let doaText = approver.doa || '';
+    if (!doaText && single && DOA[single.doa]) {
+      const tbl = DOA[single.doa];
+      const row = tbl.rows.find((x) => x.match(r.amount / 1e6));
+      doaText = 'ตาม' + tbl.title + (row ? ' — ' + row.code + ' ' + row.label + ' · ผู้อนุมัติ: ' + row.approver : '');
+    }
+
+    const amt = (v) => money(v) + ' บาท (' + bahtText(v) + ')';
+    const items = b.structure === 'project' ? [] : leaves(b);
+    const cell = (v) => '<td class="num">' + v + '</td>';
+    const paren = (v) => '(' + money(v) + ')';
+
+    return '<article class="doc memo-doc">' +
+      '<table class="memo-head"><tbody>' +
+      '<tr><td colspan="2" class="memo-title">บันทึกข้อความ (Memo) — ' + esc(cname(b.company)) + '</td></tr>' +
+      '<tr><td><span class="lbl">เรียน</span>: ' + esc(approver.to || 'ผู้บริหาร') + '<br><span class="lbl"></span>&nbsp; ' + esc(cname(investor)) + '</td>' +
+      '<td class="memo-date">วันที่ ' + fmtDay(r.createdAt) + '<br><small>เลขที่ Memo ' + esc((r.memo || {}).no || '........') + '</small><br><small>คำขอเลขที่ ' + esc(r.no) + '</small></td></tr>' +
+      '<tr><td colspan="2"><span class="lbl">สำเนาถึง</span>: ' + esc(approver.cc || '-') + '</td></tr>' +
+      '<tr><td colspan="2"><span class="lbl">เรื่อง</span>: ขอเบิกใช้งบ ' + esc(b.name) + ' ครั้งที่ ' + seq + '<br>' +
+      '<span class="lbl">อ้างอิง</span>: ' + esc(refText) + '</td></tr></tbody></table>' +
+
+      '<h2 class="memo-h">1. เรื่องสืบเนื่อง</h2>' +
+      '<p>สืบเนื่องจาก' + esc(refText) + ' ได้อนุมัติงบ ' + esc(b.code + ' ' + b.name) + ' กรอบวงเงิน' + (single ? 'ของรายการ ' + esc(single.code + ' ' + single.name) + ' ' : 'รวมทั้งสิ้น ') +
+      esc(amt(approved)) + '</p>' +
+      (r.memoBackground ? '<p>' + esc(r.memoBackground).replace(/\n/g, '<br>') + '</p>' : '') +
+      (items.length ? '<p>โดยมีกรอบวงเงินแยกตามรายการ ดังนี้:</p><ol class="memo-list">' + items.map((it, i) => '<li>1.' + (i + 1) + ' ' + esc(it.code + ' ' + it.name) + ' จำนวน ' +
+        money(itemTotal(it)) + ' บาท' + (itemInvestor(b, it) !== b.company ? ' (ลงทุนโดย ' + esc(itemInvestor(b, it)) + ')' : '') + '</li>').join('') + '</ol>' : '') +
+
+      '<h2 class="memo-h">2. เรื่องเพื่อพิจารณาลงนาม</h2>' +
+      '<p>' + (r.purpose ? 'เพื่อ' + esc(r.purpose) + ' ' : '') + esc(cname(b.company)) + ' จึงมีความประสงค์ขอเบิกใช้งบ ครั้งที่ ' + seq + ' (' + esc(t.label || '') + ')' +
+      (r.payee ? ' ผู้รับเงิน / Supplier: ' + esc(r.payee) : '') + ' ในหมวด</p>' +
+      '<ol class="memo-list">' + groups.map((g, i) => '<li>' + (i + 1) + '. ' + esc(g.key) + ' เป็นจำนวนเงิน ' + esc(amt(g.amount)) +
+        '<br><small>' + g.descs.map(esc).join(' · ') + '</small></li>').join('') +
+      '<li class="memo-total">รวมเป็นจำนวนเงินทั้งสิ้น ' + esc(amt(r.amount)) + '</li></ol>' +
+      (invCodes.length > 1 ? '<p class="memo-inv">บริษัทที่ลงทุน: ' + invCodes.map((c) => esc(c) + ' ' + money(byInv[c]) + ' บาท').join(' · ') + '</p>' : '') +
+
+      '<table class="memo-sum"><thead><tr><th style="width:3rem">ลำดับ</th><th>รายการงบประมาณ</th><th class="num" style="width:9rem">จำนวนเงิน (บาท)</th></tr></thead><tbody>' +
+      '<tr><td class="center">1</td><td>กรอบวงเงินงบที่ได้รับอนุมัติ' + (single ? ' (' + esc(single.code) + ')' : ' (' + esc(b.code) + ')') + '</td>' + cell(money(approved)) + '</tr>' +
+      '<tr><td class="center">2</td><td>หัก : เบิกใช้งบไปแล้ว' + (priorRows.length ? priorRows.map((x) => '<br><small>- ' + esc(x.label) + '</small>').join('') : '<br><small>- ยังไม่มี</small>') + '</td>' +
+      cell(priorRows.length ? priorRows.map((x) => paren(x.amount)).join('<br><br>') : '-') + '</tr>' +
+      '<tr><td class="center">3</td><td>ขอเบิกใช้ ครั้งที่ ' + seq + ' :' + groups.map((g) => '<br><small>- ' + esc(g.key) + '</small>').join('') + '</td>' +
+      cell(groups.map((g) => money(g.amount)).join('<br>')) + '</tr>' +
+      '<tr><td></td><td><strong>งบประมาณคงเหลือหลังการเบิกใช้ ครั้งที่ ' + seq + '</strong></td>' + cell('<strong>' + moneyCell(after) + '</strong>') + '</tr></tbody></table>' +
+      '<p>จึงขอเบิกใช้งบ ครั้งที่ ' + seq + ' รวมเป็นเงินทั้งสิ้น ' + esc(amt(r.amount)) + '</p>' +
+      (doaText ? '<p class="memo-doa"><strong><u>อ้างอิงอำนาจอนุมัติ</u></strong> ' + esc(doaText) + '</p>' : '') +
+
+      '<p>จึงเรียนมาเพื่อโปรดพิจารณาลงนาม</p>' +
+      '<div class="memo-signoff"><div>ขอแสดงความนับถือ</div><div class="memo-sig-line"></div><div>(' + esc(userName(r.requesterId)) + ')</div><div>' + esc(proposer.signer || '') + '</div></div>' +
+
+      '<h2 class="memo-h">ทบทวน และให้ความเห็นชอบ</h2>' +
+      '<table class="memo-sign"><thead><tr><th>ชื่อ / ตำแหน่ง</th><th style="width:9rem">ผลการพิจารณา</th><th style="width:11rem">ลงนามอนุมัติ</th><th style="width:6rem">วันที่</th></tr></thead><tbody>' +
+      '<tr><td>' + esc(approver.reviewer || '') + '</td><td>☐ อนุมัติ &nbsp; ☐ ไม่อนุมัติ</td><td></td><td></td></tr></tbody></table>' +
+      '<h2 class="memo-h">ผู้พิจารณาอนุมัติ</h2>' +
+      '<table class="memo-sign"><thead><tr><th>ชื่อ / ตำแหน่ง</th><th style="width:9rem">ผลการพิจารณา</th><th style="width:11rem">ลงนามอนุมัติ</th><th style="width:6rem">วันที่</th></tr></thead><tbody>' +
+      '<tr><td>' + esc(approver.to || '') + '</td><td>☐ อนุมัติ &nbsp; ☐ ไม่อนุมัติ</td><td></td><td></td></tr></tbody></table>' +
+      '<p class="note">เมื่อผู้บริหารลงนามแล้ว ให้สแกน / ถ่ายรูป แนบในคำขอดำเนินการใช้งบ พร้อมชื่อผู้บริหารที่ลงนาม ก่อนส่งให้ผู้คุมงบตรวจสอบ</p></article>';
   }
   /** หน้า Memo ของคำขอที่บันทึกแล้ว (#/request/:id/memo) */
   function viewRequestMemo(id) {
     const r = requestById(id);
     if (!r) return notFound();
     const b = budgetById(r.budgetId);
-    const own = isReserving(r) ? r.amount : 0;
-    const d = Object.assign({}, r, { date: r.createdAt, remaining: round2(usage(b).remaining + own), memoNo: (r.memo || {}).no });
     return '<div class="actions no-print" style="margin:0 0 1rem"><button class="btn primary" onclick="window.print()">พิมพ์ / บันทึกเป็น PDF</button></div>' +
-      '<div class="alert info no-print">แบบ Memo ชั่วคราว — จะปรับตามแบบฟอร์มจริงของบริษัท</div>' + memoHtml(b, d);
+      '<div class="alert info no-print">Memo ออกตามแบบฟอร์มของบริษัท — แก้ชื่อผู้ลงนามและอ้างอิงอำนาจอนุมัติได้ที่ ข้อมูลหลัก &gt; ผู้ลงนาม Memo</div>' + memoHtml(b, r);
   }
 
   /** ยอด ณ วันที่ออกเอกสาร ของทั้งโครงการ (ids = null) หรือของรายการที่ระบุ: งบ / ใช้ก่อนหน้า / ครั้งนี้ / คงเหลือ */
@@ -2923,6 +3033,12 @@
       cols: [{ k: 'name', label: 'หมวดค่าใช้จ่าย' }, { k: 'gl', label: 'GL Code (ถ้ามี)', w: '12rem' }],
       inUse: (it) => db.requests.some((r) => r.lines.some((l) => l.category === it.name)),
       rename: (from, to) => db.requests.forEach((r) => r.lines.forEach((l) => { if (l.category === from) l.category = to; })) },
+    { key: 'memoParties', title: 'ผู้ลงนามและอำนาจอนุมัติใน Memo', lock: true,
+      hint: 'ใช้พิมพ์ Memo ขอดำเนินการใช้งบ ตั้งรายบริษัท — "เรียน / สำเนาถึง / ผู้ทบทวน / อ้างอิงอำนาจอนุมัติ" ใช้ของ <strong>บริษัทที่ลงทุน</strong> (ถ้าคำขอมีหลายบริษัทใช้ของบริษัทที่ลงทุนมากที่สุด) · "ผู้ลงนามเสนอ" ใช้ของ <strong>บริษัทเจ้าของงบ</strong> · ข้อมูลในโหมดทดลองเก็บในเบราว์เซอร์นี้เท่านั้น',
+      cols: [{ k: 'code', label: 'บริษัท', w: '7rem' }, { k: 'to', label: 'เรียน / ผู้พิจารณาอนุมัติ (ชื่อ / ตำแหน่ง)', w: '15rem' }, { k: 'cc', label: 'สำเนาถึง', w: '13rem' },
+        { k: 'reviewer', label: 'ผู้ทบทวน / ให้ความเห็นชอบ (ชื่อ / ตำแหน่ง)', w: '15rem' }, { k: 'signer', label: 'ผู้ลงนามเสนอ (ชื่อ / ตำแหน่ง)', w: '15rem' },
+        { k: 'doa', label: 'อ้างอิงอำนาจอนุมัติ (DOA)', w: '16rem' }],
+      inUse: () => false },
     { key: 'glCodes', title: 'GL Code (CBS)', hint: 'เลือก GL Code ในรายการต้นทุน แล้วระบบเติมชื่อ GL ให้', lock: true,
       cols: [{ k: 'code', label: 'GL Code', w: '10rem' }, { k: 'name', label: 'ชื่อ GL' }],
       inUse: (it) => db.budgets.some((b) => b.type === 'CBS' && b.items.some((i) => i.glCode === it.code)) ||
@@ -2931,7 +3047,7 @@
 
   /** เมนูย่อยของข้อมูลหลัก: [key, ชื่อเมนู] */
   const MASTER_NAV = [['companies', 'บริษัท'], ['departments', 'หน่วยงาน'], ['groups', 'กลุ่มงบประมาณ'], ['assetTypes', 'ประเภทสินทรัพย์'],
-    ['expenseCategories', 'หมวดค่าใช้จ่าย'], ['glCodes', 'GL Code'], ['doa', 'ตารางอำนาจอนุมัติ (DOA)']];
+    ['expenseCategories', 'หมวดค่าใช้จ่าย'], ['glCodes', 'GL Code'], ['memoParties', 'ผู้ลงนาม Memo'], ['doa', 'ตารางอำนาจอนุมัติ (DOA)']];
 
   function masterRow(sec, it, isNew) {
     return '<tr data-orig="' + (isNew ? '' : esc(it[sec.cols[0].k])) + '">' + sec.cols.map((c, i) => (c.type === 'select'
@@ -3712,7 +3828,9 @@
       ['ใช้งบ', 'ผู้ขอยกเลิกใบ CAPEX ที่ออกแล้วได้ไหม', 'ไม่ได้ (ยกเลิกได้เฉพาะตอนรอตรวจ/ถูกส่งกลับ)'],
       ['ใช้งบ', 'จ่ายหลายงวด', 'ใช้ได้กับ PR/PO และจ่ายตรง — บันทึกจ่ายหลายครั้งแล้วปิดยอด'],
       ['ใช้งบ', 'Memo ผู้บริหารเซ็นตอนขอดำเนินการใช้งบ', 'ใช้เฉพาะงบที่ไม่มี Item (งบรวมโครงการ) ทั้ง CAPEX และ CBS · ตั้งเกณฑ์รายบริษัทได้ที่ข้อมูลหลัก (ไม่ต้องใช้ / เฉพาะงบที่ไม่มี Item / ทุกงบ) · ต้องแนบไฟล์ Memo ที่เซ็นแล้ว + เลขที่ + ชื่อผู้บริหาร ก่อนส่ง · ทุกประเภทและทุกยอดเงิน · ผู้บริหารเซ็นนอกระบบ'],
-      ['ใช้งบ', 'แบบฟอร์ม Memo', 'ใช้แบบชั่วคราว (รอแบบฟอร์มจริงของบริษัท)'],
+      ['ใช้งบ', 'แบบฟอร์ม Memo', 'ออกตามแบบฟอร์ม Memo จริงของบริษัท: เรียน/สำเนาถึง/เรื่อง/อ้างอิง → 1. เรื่องสืบเนื่อง → 2. เรื่องเพื่อพิจารณาลงนาม (ยอดเงินเป็นตัวอักษร) → ตารางสรุปงบ (กรอบงบ − เบิกไปแล้ว − ขอครั้งนี้ = คงเหลือ) → อ้างอิงอำนาจอนุมัติ → ตารางทบทวน/ผู้พิจารณาอนุมัติ · ยังไม่ทำหัวกระดาษและเลขหน้าของบริษัท'],
+      ['ใช้งบ', 'Memo ถึงใคร / ใครลงนาม', 'เรียน-สำเนา-ผู้ทบทวน-ผู้พิจารณาอนุมัติ-อ้างอิงอำนาจอนุมัติ ใช้ของบริษัทที่ลงทุน (ถ้าหลายบริษัท ใช้บริษัทที่ลงทุนมากที่สุด และแจ้งยอดแยกบริษัทใน Memo) · ผู้ลงนามเสนอใช้ของบริษัทเจ้าของงบ · ตั้งที่ ข้อมูลหลัก > ผู้ลงนาม Memo (ชื่อที่ใส่ไว้เป็นข้อความตัวอย่าง)'],
+      ['ใช้งบ', 'เรื่องสืบเนื่อง / อ้างอิงใน Memo', 'เรื่องสืบเนื่อง = ข้อความที่ผู้ขอกรอกในฟอร์มคำขอ (ไม่บังคับ) · อ้างอิง = มติที่ประชุม (CAPEX) / เอกสารอนุมัติผู้บริหาร (CBS) ของงบ ดึงจากข้อมูลตอนตั้งงบอัตโนมัติ · "ครั้งที่" นับจากคำขอก่อนหน้าของงบเดียวกัน'],
       ['ใช้งบ', 'ใครเลือกว่าทำ Memo', 'ผู้ขอเลือกเองด้วยปุ่ม "ทำ Memo" ข้างปุ่มส่ง · ถ้าเกณฑ์ของบริษัทบังคับ (ตั้งต้น: งบที่ไม่มี Item) จะมีแค่ปุ่มทำ Memo'],
       ['ใช้งบ', 'ขั้นตอน Memo', 'บันทึกคำขอ → ระบบออกเลขที่ Memo (MEMO-บริษัทปี-ลำดับ) และจองงบไว้ → ผู้ขอพิมพ์ไปให้ผู้บริหารเซ็น → แนบไฟล์ที่เซ็นแล้ว + ชื่อผู้บริหาร → ส่งให้ผู้คุมงบ · แก้ไขคำขอระหว่างรอได้ (ต้องเซ็นใหม่ ใช้เลขที่เดิม)'],
       ['ใช้งบ', 'บริษัทที่ลงทุน', 'งบที่มี Item: กำหนดที่ Item ตอนตั้งงบ (ค่าตั้งต้น = บริษัทเจ้าของงบ) ตอนขอใช้ไม่ต้องเลือก · งบที่ไม่มี Item: เลือกรายบรรทัดตอนขอดำเนินการใช้งบ (ค่าตั้งต้น = บริษัทเจ้าของงบ) · แสดงในใบดำเนินการใช้งบและ Memo'],
