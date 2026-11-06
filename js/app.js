@@ -68,7 +68,7 @@
     admin: ['budget.view_all', 'master.manage', 'log.view', 'user.manage']
   };
 
-  const COMPANIES = { PSL: 'บริษัท PSL (ตัวอย่าง)', PCC: 'บริษัท PCC (ตัวอย่าง)' };
+  const COMPANIES = { PBI: 'บริษัท PBI (ตัวอย่าง)', PCC: 'บริษัท PCC (ตัวอย่าง)' };
   /**
    * เกณฑ์ Memo ผู้บริหารเซ็นตอนขอดำเนินการใช้งบ (ตั้งรายบริษัทที่ข้อมูลหลัก)
    * '' = ไม่ต้องใช้ · 'project' = เฉพาะงบที่ไม่มี Item (งบรวมโครงการ) · 'all' = ทุกงบ
@@ -162,6 +162,12 @@
     return d;
   }
   const companyMap = () => Object.fromEntries(db.master.companies.map((c) => [c.code, c.name]));
+  /** บริษัทที่ลงทุน: Item กำหนดเอง (ค่าตั้งต้น = บริษัทเจ้าของงบ) · งบที่ไม่มี Item เลือกรายบรรทัดตอนขอดำเนินการใช้งบ */
+  const itemInvestor = (b, it) => (it && it.investor) || b.company;
+  const lineInvestor = (b, l) => l.investor || (b.structure === 'project' ? b.company : itemInvestor(b, itemById(b, l.itemId)));
+  const investorSelect = (name, selected, label) => '<div class="select-wrap"><select name="' + name + '" aria-label="' + (label || 'บริษัทที่ลงทุน') + '">' +
+    optList(db.master.companies, 'code', (c) => c.code, selected) + '</select></div>';
+  const investorCell = (code) => '<span class="nowrap">' + esc(code) + '</span>';
   const memoMode = (b) => (b ? (db.master.companies.find((c) => c.code === b.company) || {}).memo || '' : '');
   /** งบนี้ต้องแนบ Memo ที่ผู้บริหารเซ็นตอนขอดำเนินการใช้งบหรือไม่ (ตามเกณฑ์ของบริษัท) */
   const memoRequired = (b) => memoMode(b) === 'all' || (memoMode(b) === 'project' && b.structure === 'project');
@@ -176,28 +182,28 @@
     const prev = year - 1;
     const yy = String(year).slice(-2);
     const day = (m, d) => year + '-' + String(m).padStart(2, '0') + '-' + String(d).padStart(2, '0');
-    const item = (id, code, name, assetType, doa, amount) => ({ id, code, name, assetType, doa, amount });
+    const item = (id, code, name, assetType, doa, amount, investor) => Object.assign({ id, code, name, assetType, doa, amount }, investor ? { investor } : {});
     const cbs = (id, code, name, extra) => Object.assign({ id, code, name, qty: '', unit: '', amount: 0, vat: 0, glCode: '', glName: '' }, extra || {});
     const sampleFile = (name) => ({ id: 'f-' + name, slot: 'resolution', name, size: 0, sample: true, at: nowIso, by: 'req1' });
     const budgets = [
       {
-        id: 'b1', type: 'CAPEX', company: 'PSL', fiscalYear: year, group: '01', code: 'EN0001', structure: 'items',
+        id: 'b1', type: 'CAPEX', company: 'PBI', fiscalYear: year, group: '01', code: 'EN0001', structure: 'items',
         name: 'ปรับปรุงสายการผลิต Phase 1', department: 'ฝ่ายวิศวกรรม', ownerId: 'req1', note: 'งบตัวอย่าง',
         meeting: { date: day(1, 15), no: 'มติที่ 1/' + year, note: 'ประชุมคณะกรรมการบริหาร' },
         items: [
           item('c1', year + '-01-EN001', 'เครื่องตัดชิ้นงาน', 'เครื่องจักร', '2.4', 500000),
-          item('c2', year + '-01-EN002', 'เครื่องมือและอุปกรณ์ห้องปฏิบัติการ', 'เครื่องมือและอุปกรณ์', '2.5', 610000),
+          item('c2', year + '-01-EN002', 'เครื่องมือและอุปกรณ์ห้องปฏิบัติการ', 'เครื่องมือและอุปกรณ์', '2.5', 610000, 'PCC'),
           item('c3', year + '-01-EN003', 'ระบบลำเลียงวัตถุดิบ (Conveyor)', 'เครื่องจักร', '2.4', 1500000)
         ]
       },
       {
-        id: 'b2', type: 'CAPEX', company: 'PSL', fiscalYear: year, group: '01', code: 'IT0001', structure: 'items',
+        id: 'b2', type: 'CAPEX', company: 'PBI', fiscalYear: year, group: '01', code: 'IT0001', structure: 'items',
         name: 'อุปกรณ์ IT สำนักงาน', department: 'ฝ่ายวิศวกรรม', ownerId: 'req1', note: '',
         meeting: { date: day(1, 15), no: 'มติที่ 1/' + year, note: '' },
         items: [item('c4', year + '-01-IT001', 'คอมพิวเตอร์และอุปกรณ์ต่อพ่วง', 'อุปกรณ์สำนักงาน', '2.5', 450000)]
       },
       {
-        id: 'b3', type: 'CBS', company: 'PSL', fiscalYear: year, code: 'PJ0001-1', parentCode: 'PJ0001', structure: 'items',
+        id: 'b3', type: 'CBS', company: 'PBI', fiscalYear: year, code: 'PJ0001-1', parentCode: 'PJ0001', structure: 'items',
         name: 'ผลิตกล้าไม้ 10,000 กล้า', department: 'ฝ่ายโครงการ', ownerId: 'req2', note: '',
         meeting: { date: day(1, 3), no: 'อนุมัติผู้บริหาร MD-001/' + year, by: 'กรรมการผู้จัดการ', note: 'CBS ไม่ต้องเข้าบอร์ด' },
         status: 'On Progress', startDate: day(1, 5), endDate: day(3, 31),
@@ -219,7 +225,7 @@
         ]
       },
       {
-        id: 'b4', type: 'CAPEX', company: 'PSL', fiscalYear: prev, group: '02', code: 'EN0002', structure: 'items',
+        id: 'b4', type: 'CAPEX', company: 'PBI', fiscalYear: prev, group: '02', code: 'EN0002', structure: 'items',
         name: 'ระบบไอน้ำ (ยกมาจากปีก่อน)', department: 'ฝ่ายวิศวกรรม', ownerId: 'req1', note: 'งบปีก่อน ยกมาใช้ต่อ',
         meeting: { date: prev + '-02-10', no: 'มติที่ 2/' + prev, note: '' },
         items: [item('c5', prev + '-02-EN001', 'ชุดหม้อไอน้ำและท่อ', 'เครื่องจักร', '2.4', 800000)]
@@ -234,13 +240,13 @@
         ]
       },
       {
-        id: 'b6', type: 'CAPEX', company: 'PSL', fiscalYear: year, group: '01', code: 'BD0001', structure: 'project',
+        id: 'b6', type: 'CAPEX', company: 'PBI', fiscalYear: year, group: '01', code: 'BD0001', structure: 'project',
         name: 'ปรับปรุงอาคารสำนักงาน (งบรวมโครงการ)', department: 'ฝ่ายวิศวกรรม', ownerId: 'req1', note: 'ยังไม่แยกรายการย่อย เพราะรายละเอียดยังไม่ชัดเจน',
         meeting: { date: day(3, 10), no: 'มติที่ 3/' + year, note: '' },
         items: [item('c8', 'BD0001', 'งบรวมทั้งโครงการ', 'อาคารและสิ่งปลูกสร้าง', '2.5', 900000)]
       },
       {
-        id: 'b7', type: 'CAPEX', company: 'PSL', fiscalYear: year + 1, group: '01', code: 'EN0003', structure: 'project', state: 'draft',
+        id: 'b7', type: 'CAPEX', company: 'PBI', fiscalYear: year + 1, group: '01', code: 'EN0003', structure: 'project', state: 'draft',
         name: 'ระบบโซลาร์รูฟท็อป', department: 'ฝ่ายวิศวกรรม', ownerId: 'req1', note: 'เตรียมเข้าที่ประชุมรอบหน้า',
         items: [item('c10', 'EN0003', 'งบรวมทั้งโครงการ', 'เครื่องจักร', '2.4', 2500000)]
       },
@@ -297,21 +303,21 @@
     };
     const requests = [
       mk({ id: 'r1', no: 'REQ-' + year + '-0001', budgetId: 'b1', itemId: 'c1', useType: 'prpo', requesterId: 'req1', createdAt: iso(day(9, 1)),
-        status: 'approved', approvedAt: iso(day(9, 3)), docNo: 'PSL' + yy + '-001', purpose: 'ทดแทนเครื่องเดิมที่เสื่อมสภาพ',
+        status: 'approved', approvedAt: iso(day(9, 3)), docNo: 'PBI' + yy + '-001', purpose: 'ทดแทนเครื่องเดิมที่เสื่อมสภาพ',
         lines: [line('c1', 'เครื่องตัดชิ้นงาน CNC พร้อมติดตั้ง', 450000)] }),
       mk({ id: 'r2', no: 'REQ-' + year + '-0002', budgetId: 'b1', itemId: 'c2', useType: 'advance', requesterId: 'req1', createdAt: iso(day(9, 20)),
-        status: 'approved', approvedAt: iso(day(9, 22)), docNo: 'PSL' + yy + '-002', purpose: 'ซื้ออุปกรณ์ห้องแล็บหน้าร้าน', payee: 'สมชาย ใจดี (เงินทดรอง)',
+        status: 'approved', approvedAt: iso(day(9, 22)), docNo: 'PBI' + yy + '-002', purpose: 'ซื้ออุปกรณ์ห้องแล็บหน้าร้าน', payee: 'สมชาย ใจดี (เงินทดรอง)',
         advance: { at: iso(day(9, 25)), date: day(9, 25), amount: 32100, by: 'fin1' },
         lines: [line('c2', 'อุปกรณ์วัดและเครื่องมือห้องแล็บ', 30000)] }),
       mk({ id: 'r3', no: 'REQ-' + year + '-0003', budgetId: 'b2', itemId: 'c4', useType: 'reimburse', requesterId: 'req1', createdAt: iso(day(8, 5)),
-        status: 'closed', approvedAt: iso(day(8, 6)), docNo: 'PSL' + yy + '-003', purpose: 'ซื้อจอภาพด่วนสำหรับห้องประชุม', payee: 'สมชาย ใจดี (สำรองจ่าย)',
+        status: 'closed', approvedAt: iso(day(8, 6)), docNo: 'PBI' + yy + '-003', purpose: 'ซื้อจอภาพด่วนสำหรับห้องประชุม', payee: 'สมชาย ใจดี (สำรองจ่าย)',
         lines: [line('c4', 'จอภาพ 27 นิ้ว 4 เครื่อง', 20000)],
         cuts: [{ id: 'x1', kind: 'reimburse', date: day(8, 12), amount: 19260, ref: 'ใบเสร็จ INV-5521', note: '', by: 'fin1', at: iso(day(8, 12)), attachments: [] }],
         closed: { at: iso(day(8, 12)), by: 'fin1', actual: 19260, returned: 2140, note: 'ซื้อได้ถูกกว่าที่ขอ' } }),
       mk({ id: 'r4', no: 'REQ-' + year + '-0004', budgetId: 'b6', itemId: 'c8', useType: 'direct', requesterId: 'req1', createdAt: iso(day(10, 28)),
         status: 'pending', purpose: 'งานปรับปรุงพื้นที่ชั้น 2', payee: 'หจก. ก่อสร้างตัวอย่าง',
-        memo: { no: 'MEMO-PSL' + yy + '-001', by: 'กรรมการผู้จัดการ', at: iso(day(10, 29)), files: [Object.assign(sampleFile('Memo-ปรับปรุงชั้น2-ลงนามแล้ว.pdf'), { slot: 'memo', by: 'req1' })] },
-        lines: [line('c8', 'งานรื้อถอนและปรับพื้นชั้น 2', 150000, { category: 'ค่าจ้างเหมา' }), line('c8', 'กระเบื้องและวัสดุปูพื้น', 40000, { category: 'ค่าวัสดุ / อุปกรณ์' })] }),
+        memo: { no: 'MEMO-PBI' + yy + '-001', by: 'กรรมการผู้จัดการ', at: iso(day(10, 29)), files: [Object.assign(sampleFile('Memo-ปรับปรุงชั้น2-ลงนามแล้ว.pdf'), { slot: 'memo', by: 'req1' })] },
+        lines: [line('c8', 'งานรื้อถอนและปรับพื้นชั้น 2', 150000, { category: 'ค่าจ้างเหมา', investor: 'PBI' }), line('c8', 'กระเบื้องและวัสดุปูพื้น', 40000, { category: 'ค่าวัสดุ / อุปกรณ์', investor: 'PCC' })] }),
       mk({ id: 'r5', no: 'REQ-' + year + '-0005', budgetId: 'b5', itemId: 'c7', useType: 'prpo', requesterId: 'req2', createdAt: iso(day(10, 30)),
         status: 'pending', purpose: 'ขยายพื้นที่จัดเก็บสินค้า', requesterReason: 'ราคาเหล็กปรับขึ้นจากตอนตั้งงบ',
         lines: [line('c7', 'ชั้นวางสินค้าแบบ Heavy duty 12 ชุด', 327000)] }),
@@ -320,8 +326,8 @@
         lines: [{ itemId: 'i4', description: 'ดินผสม 100 กระสอบ', amountBeforeVat: 5000, vat: 0, amount: 5000, glCode: '510101', glName: 'ค่าวัตถุดิบ' }] }),
       mk({ id: 'r8', no: 'REQ-' + year + '-0008', budgetId: 'b6', itemId: 'c8', useType: 'prpo', requesterId: 'req1', createdAt: iso(day(11, 2)),
         status: 'memo', purpose: 'ติดตั้งระบบไฟส่องสว่างชั้น 2', payee: '',
-        memo: { no: 'MEMO-PSL' + yy + '-002', by: '', files: [], issuedAt: iso(day(11, 2)) },
-        lines: [line('c8', 'โคมไฟ LED พร้อมติดตั้ง 40 ชุด', 60000, { category: 'ค่าวัสดุ / อุปกรณ์' })] }),
+        memo: { no: 'MEMO-PBI' + yy + '-002', by: '', files: [], issuedAt: iso(day(11, 2)) },
+        lines: [line('c8', 'โคมไฟ LED พร้อมติดตั้ง 40 ชุด', 60000, { category: 'ค่าวัสดุ / อุปกรณ์', investor: 'PBI' })] }),
       mk({ id: 'r7', no: 'REQ-' + year + '-0007', budgetId: 'b3', type: 'CBS', itemId: 'i5', useType: 'prpo', requesterId: 'req2', createdAt: iso(day(10, 31)),
         status: 'pending', purpose: 'วัสดุเพาะกล้ารอบถัดไป', payee: '',
         lines: [{ itemId: 'i5', description: 'ถุงเพาะ 6x12 นิ้ว 5,000 ใบ', amountBeforeVat: 6000, vat: 420, amount: 6420, glCode: '510101', glName: 'ค่าวัตถุดิบ' },
@@ -343,9 +349,9 @@
     });
     log.sort((a, b) => a.at.localeCompare(b.at));
     const doc = {};
-    doc['PSL' + yy] = 3;
+    doc['PBI' + yy] = 3;
     doc['CBS' + yy] = 1;
-    return ensureMaster({ seq: { req: 8, id: 200, doc, chg: 1, memo: { ['PSL' + yy]: 2 } }, budgets, requests, changes, log });
+    return ensureMaster({ seq: { req: 8, id: 200, doc, chg: 1, memo: { ['PBI' + yy]: 2 } }, budgets, requests, changes, log });
   }
 
   function load() {
@@ -382,7 +388,21 @@
   }
 
   /** แปลงคำขอรูปแบบเดิม (1 ใบ = 1 บรรทัด) เป็นแบบหลายบรรทัด + งวดจ่าย โดยไม่ทำให้ข้อมูลหาย */
+  /** บริษัทเปลี่ยนรหัส (เช่น PSL → PBI): แก้ข้อมูลที่เก็บไว้ให้ตรง · เลขที่เอกสารที่ออกไปแล้วคงเดิม */
+  function renameCompany(d, from, to) {
+    const m = d.master || {};
+    const comps = m.companies || [];
+    if (!comps.some((c) => c.code === from) && !(d.budgets || []).some((b) => b.company === from)) return;
+    if (comps.some((c) => c.code === to)) m.companies = comps.filter((c) => c.code !== from);
+    else comps.forEach((c) => { if (c.code === from) { c.code = to; c.name = String(c.name || '').split(from).join(to); } });
+    const fix = (o, k) => { if (o && o[k] === from) o[k] = to; };
+    (d.budgets || []).forEach((b) => { fix(b, 'company'); (b.items || []).forEach((it) => fix(it, 'investor')); });
+    (d.requests || []).forEach((r) => (r.lines || []).forEach((l) => fix(l, 'investor')));
+    (d.changes || []).forEach((c) => (c.lines || []).forEach((l) => fix(l, 'investor')));
+  }
+
   function migrate(d) {
+    renameCompany(d, 'PSL', 'PBI');
     ensureMaster(d);
     d.changes = d.changes || [];
     d.log = d.log || [];
@@ -485,7 +505,7 @@
     return 'REQ-' + new Date().getFullYear() + '-' + String(db.seq.req).padStart(4, '0');
   }
 
-  /** เลขที่ Memo ที่ระบบออกให้: MEMO-<บริษัท><ปี 2 หลัก>-<ลำดับ> เช่น MEMO-PSL26-001 */
+  /** เลขที่ Memo ที่ระบบออกให้: MEMO-<บริษัท><ปี 2 หลัก>-<ลำดับ> เช่น MEMO-PBI26-001 */
   function nextMemoNo(b) {
     const key = b.company + String(new Date().getFullYear()).slice(-2);
     db.seq.memo = db.seq.memo || {};
@@ -493,7 +513,7 @@
     return 'MEMO-' + key + '-' + String(db.seq.memo[key]).padStart(3, '0');
   }
 
-  /** เลขที่เอกสาร: CAPEX ใช้รูปแบบใบเบิกเดิม <บริษัท><ปี 2 หลัก>-<ลำดับ> เช่น PSL26-001, CBS เป็น CBS26-0001 */
+  /** เลขที่เอกสาร: CAPEX ใช้รูปแบบใบเบิกเดิม <บริษัท><ปี 2 หลัก>-<ลำดับ> เช่น PBI26-001, CBS เป็น CBS26-0001 */
   function nextDocNo(r, b, at) {
     const yy = String(new Date(at).getFullYear()).slice(-2);
     const key = (r.type === 'CAPEX' ? b.company : 'CBS') + yy;
@@ -948,6 +968,7 @@
       optList(db.master.assetTypes, 'name', (t) => t.name, it.assetType || assetTypeList()[0]) + '</select></div></td>' +
       '<td><div class="select-wrap"><select name="itDoa" aria-label="หมวด DOA">' + opt('2.4', '2.4 สินทรัพย์ลงทุน', it.doa) +
       opt('2.5', '2.5 ดำเนินงานทั่วไป', it.doa || '2.5') + '</select></div></td>' +
+      '<td>' + investorSelect('itInv', it.investor) + '</td>' +
       '<td><input name="itAmount" type="number" min="0" step="0.01" class="right" value="' + esc(it.amount) + '" aria-label="วงเงิน"></td>' +
       '<td>' + (locked ? '<span class="muted" title="มีการเบิกใช้แล้ว ลบไม่ได้">🔒</span>' : '<button type="button" class="btn small bad" data-remove-item title="ลบ">×</button>') + '</td></tr>';
   }
@@ -962,6 +983,7 @@
       '<td class="center"><input name="itVat" type="checkbox"' + (Number(it.vat) > 0 ? ' checked' : '') + ' aria-label="VAT 7%"></td>' +
       '<td><input name="itGl" list="glList" value="' + esc(it.glCode) + '" aria-label="GL Code"></td>' +
       '<td><input name="itGlName" value="' + esc(it.glName) + '" aria-label="GL Name"></td>' +
+      '<td>' + investorSelect('itInv', it.investor) + '</td>' +
       '<td>' + (locked ? '<span class="muted" title="มีการเบิกใช้แล้ว ลบไม่ได้">🔒</span>' : '<button type="button" class="btn small bad" data-remove-item title="ลบ">×</button>') + '</td></tr>';
   }
 
@@ -1063,18 +1085,18 @@
       '</div></fieldset>' +
 
       '<fieldset data-for="CAPEX" data-structure="items"><legend>รายการย่อย (Item No.)</legend>' +
-      '<div class="table-wrap"><table class="edit-table"><thead><tr><th style="width:13rem">รหัสรายการย่อย</th><th>ชื่อรายการ</th>' +
-      '<th style="width:11rem">ประเภทสินทรัพย์</th><th style="width:11rem">หมวด DOA</th><th class="num" style="width:10rem">วงเงิน (รวม VAT)</th><th style="width:3rem"></th></tr></thead>' +
-      '<tbody id="capexRows">' + capexItems.map((it) => capexRow(it, false)).join('') + '</tbody></table></div>' +
+      '<div class="table-wrap"><table class="edit-table"><thead><tr><th style="width:11rem">รหัสรายการย่อย</th><th style="min-width:14rem">ชื่อรายการ</th>' +
+      '<th style="width:10rem">ประเภทสินทรัพย์</th><th style="width:10rem">หมวด DOA</th><th style="width:7rem">บริษัทที่ลงทุน</th><th class="num" style="width:10rem">วงเงิน (รวม VAT)</th><th style="width:3rem"></th></tr></thead>' +
+      '<tbody id="capexRows">' + capexItems.map((it) => capexRow(Object.assign({}, it, { investor: it.investor || v.company }), false)).join('') + '</tbody></table></div>' +
       '<div class="actions table-actions"><button type="button" class="btn small" data-add-row="capex">+ เพิ่มรายการย่อย</button>' +
       '<span class="muted">รวม <strong data-total="capex">0.00</strong> บาท</span></div></fieldset>' +
 
       '<fieldset data-for="CBS" data-structure="items"><legend>Cost Breakdown Structure (CBS)</legend>' +
       '<p class="muted small-note">ใช้รหัสแบบ 1 → 1.1 → 1.1.1 รายการที่มีรายการลูกจะรวมยอดจากรายการลูกให้อัตโนมัติ และเบิกได้เฉพาะรายการล่างสุด</p>' +
-      '<div class="table-wrap"><table class="edit-table"><thead><tr><th style="width:5.5rem">รหัส</th><th>รายการ</th><th style="width:6rem">จำนวน</th>' +
+      '<div class="table-wrap"><table class="edit-table"><thead><tr><th style="width:5.5rem">รหัส</th><th style="min-width:12rem">รายการ</th><th style="width:6rem">จำนวน</th>' +
       '<th style="width:5.5rem">หน่วย</th><th class="num" style="width:9rem">ก่อน VAT</th><th style="width:4rem">VAT 7%</th>' +
-      '<th style="width:7rem">GL Code</th><th style="width:10rem">GL Name</th><th style="width:3rem"></th></tr></thead>' +
-      '<tbody id="cbsRows">' + cbsItems.map((it) => cbsRow(it, false)).join('') + '</tbody></table></div>' +
+      '<th style="width:7rem">GL Code</th><th style="width:10rem">GL Name</th><th style="width:7rem">บริษัทที่ลงทุน</th><th style="width:3rem"></th></tr></thead>' +
+      '<tbody id="cbsRows">' + cbsItems.map((it) => cbsRow(Object.assign({}, it, { investor: it.investor || v.company }), false)).join('') + '</tbody></table></div>' +
       '<div class="actions table-actions"><button type="button" class="btn small" data-add-row="cbs">+ เพิ่มรายการ</button>' +
       '<span class="muted">รวม (รวม VAT) <strong data-total="cbs">0.00</strong> บาท</span></div></fieldset>' +
 
@@ -1135,6 +1157,13 @@
       recalc();
     };
     typeSel.addEventListener('change', sync);
+    // เปลี่ยนบริษัทเจ้าของงบ: แถวที่ยังใช้บริษัทเดิมเป็นผู้ลงทุน เปลี่ยนตามให้
+    let prevCompany = form.elements.company.value;
+    form.elements.company.addEventListener('change', () => {
+      const now = form.elements.company.value;
+      form.querySelectorAll('[name="itInv"]').forEach((sel) => { if (sel.value === prevCompany) sel.value = now; });
+      prevCompany = now;
+    });
     form.querySelectorAll('[name="structure"]').forEach((el) => el.addEventListener('change', sync));
     form.addEventListener('input', recalc);
     form.addEventListener('change', (e) => {
@@ -1164,8 +1193,8 @@
           if (!isNaN(n)) { last[last.length - 1] = String(n + 1); code = last.join('.'); }
         }
         tbody.insertAdjacentHTML('beforeend', kind === 'cbs'
-          ? cbsRow({ code, name: '', amount: '' }, false)
-          : capexRow({ code: '', name: '', amount: '' }, false));
+          ? cbsRow({ code, name: '', amount: '', investor: form.elements.company.value }, false)
+          : capexRow({ code: '', name: '', amount: '', investor: form.elements.company.value }, false));
         recalc();
       }
     });
@@ -1191,7 +1220,8 @@
           id: tr.dataset.itemId || '',
           code: val(tr, 'itCode').value.trim(),
           name: val(tr, 'itName').value.trim(),
-          amount: round2(val(tr, 'itAmount').value)
+          amount: round2(val(tr, 'itAmount').value),
+          investor: val(tr, 'itInv') ? val(tr, 'itInv').value : f.company.value
         };
         if (type === 'CAPEX') {
           it.assetType = val(tr, 'itAsset').value;
@@ -1406,7 +1436,7 @@
           const origNote = !active ? '' : !orig ? '<div class="muted">เพิ่มภายหลัง</div>'
             : orig.total !== iu.approved ? '<div class="muted">เดิม ' + money(orig.total) + '</div>' : '';
           return '<tr><td class="nowrap">' + esc(i.code) + '</td><td>' + esc(i.name) +
-            '<div class="muted">' + esc(i.assetType) + ' · DOA ' + esc(i.doa) + '</div></td>' +
+            '<div class="muted">' + esc(i.assetType) + ' · DOA ' + esc(i.doa) + ' · ลงทุนโดย ' + esc(itemInvestor(b, i)) + '</div></td>' +
             '<td class="num">' + money(itemTotal(i)) + origNote + '</td>' +
             (active ? '<td class="num">' + money(iu.used) + '</td><td class="num">' + money(iu.reserved) +
               '</td><td class="num nowrap"><strong>' + moneyCell(iu.remaining) + '</strong>' + (iu.remaining < 0 ? ' <span class="badge rejected">เกินงบรายการ</span>' : '') + '</td>' : '') +
@@ -1421,7 +1451,7 @@
           const leaf = isLeaf(b, i);
           const qty = leaf && (i.qty || i.unit) ? '<div class="muted">' + esc((i.qty ? Number(i.qty).toLocaleString('th-TH') : '') + ' ' + (i.unit || '')) + '</div>' : '';
           return '<tr class="' + (leaf ? '' : 'parent-row') + '"><td class="nowrap">' + esc(i.code) + '</td>' +
-            '<td style="padding-left:' + (0.75 + depth(i) * 1.1) + 'rem">' + esc(i.name) + qty + '</td>' +
+            '<td style="padding-left:' + (0.75 + depth(i) * 1.1) + 'rem">' + esc(i.name) + qty + (leaf ? '<div class="muted">ลงทุนโดย ' + esc(itemInvestor(b, i)) + '</div>' : '') + '</td>' +
             '<td>' + (leaf && i.glCode ? esc(i.glCode) + '<div class="muted">' + esc(i.glName) + '</div>' : '') + '</td>' +
             '<td class="num">' + money(iu.approved) + '</td>' +
             (active ? '<td class="num">' + money(iu.used) + '</td><td class="num">' + money(iu.reserved) + '</td>' +
@@ -1635,7 +1665,8 @@
     return '<tr class="line-row">' +
       '<td class="line-no"></td>' +
       (withCat ? '<td><div class="select-wrap"><select name="lnCat" aria-label="หมวดค่าใช้จ่าย"><option value="">— เลือกหมวด —</option>' +
-        optList(db.master.expenseCategories, 'name', (c) => c.name, line.category || '') + '</select></div></td>' : '') +
+        optList(db.master.expenseCategories, 'name', (c) => c.name, line.category || '') + '</select></div></td>' +
+        '<td>' + investorSelect('lnInv', line.investor || b.company) + '</td>' : '') +
       (single ? '' : '<td><div class="select-wrap"><select name="lnItem" aria-label="รายการต้นทุน"><option value="">— เลือก —</option>' +
         itemOptions(b, existing, line.itemId, false) + '</select></div></td>') +
       '<td><input name="lnDesc" value="' + esc(line.description || '') + '" aria-label="รายการ" placeholder="' +
@@ -1689,11 +1720,11 @@
     const linesCard = '<section class="card form-section">' +
       step(3, 'รายการที่ขอใช้', '<button type="button" class="btn" id="addLine">+ เพิ่มบรรทัด</button>') +
       '<div class="table-wrap"><table class="edit-table lines-table"><thead><tr><th style="width:2.5rem">#</th>' +
-      (perLine ? '<th style="width:30%">รายการต้นทุน (CBS)</th>' : isProject ? '<th style="width:24%">หมวดค่าใช้จ่าย</th>' : '') +
+      (perLine ? '<th style="width:30%">รายการต้นทุน (CBS)</th>' : isProject ? '<th style="width:20%">หมวดค่าใช้จ่าย</th><th style="width:7rem">บริษัทที่ลงทุน</th>' : '') +
       '<th>' + (perLine ? 'รายละเอียด (ถ้ามีจำนวน โปรดระบุ)' : 'รายละเอียดสิ่งที่ซื้อ / จ่าย') + '</th>' +
       '<th class="num" style="width:9.5rem">ก่อน VAT</th><th class="center" style="width:4.5rem">VAT 7%</th><th class="num" style="width:9rem">รวม</th><th style="width:3rem"></th></tr></thead>' +
       '<tbody id="lineRows">' + lines.map((l) => lineRow(b, l, single, existing)).join('') + '</tbody>' +
-      '<tfoot><tr><td colspan="' + (single && !isProject ? 2 : 3) + '" class="right muted">รวมทั้งหมด</td>' +
+      '<tfoot><tr><td colspan="' + (single && !isProject ? 2 : isProject ? 4 : 3) + '" class="right muted">รวมทั้งหมด</td>' +
       '<td class="num" id="sumBefore">0.00</td><td class="num" id="sumVat">0.00</td><td class="num"><strong id="sumTotal">0.00</strong></td><td></td></tr></tfoot>' +
       '</table></div>' +
       '<template id="lineTpl">' + lineRow(b, {}, single, existing) + '</template>' +
@@ -1779,6 +1810,7 @@
         tr,
         itemId: isCapex ? form.elements.itemId.value : tr.querySelector('[name="lnItem"]').value,
         category: tr.querySelector('[name="lnCat"]') ? tr.querySelector('[name="lnCat"]').value : undefined,
+        investor: tr.querySelector('[name="lnInv"]') ? tr.querySelector('[name="lnInv"]').value : undefined,
         description: tr.querySelector('[name="lnDesc"]').value.trim(),
         amountBeforeVat: before, vat, amount: round2(before + vat)
       };
@@ -1956,7 +1988,7 @@
 
       const now = new Date().toISOString();
       const clean = lines.map((l) => Object.assign({ itemId: l.itemId, description: l.description, amountBeforeVat: l.amountBeforeVat, vat: l.vat, amount: l.amount },
-        l.category !== undefined ? { category: l.category } : {}));
+        l.category !== undefined ? { category: l.category } : {}, l.investor !== undefined ? { investor: l.investor } : {}));
       const fields = {
         itemId: isCapex ? f.itemId.value : (clean[0] || {}).itemId,
         lines: clean,
@@ -2071,15 +2103,16 @@
     const withCat = r.lines.some((l) => l.category !== undefined);
     return '<div class="table-wrap"><table><thead><tr><th style="width:2.5rem">#</th>' +
       (isCapex ? (withCat ? '<th>หมวดค่าใช้จ่าย</th>' : '') : '<th>รายการต้นทุน</th>') + (withGl ? '<th>GL</th>' : '') +
-      '<th>' + (isCapex ? 'รายการที่ซื้อ / จ่าย' : 'รายละเอียด') + '</th><th class="num">ก่อน VAT</th><th class="num">VAT 7%</th><th class="num">รวม</th></tr></thead><tbody>' +
+      '<th>บริษัทที่ลงทุน</th><th>' + (isCapex ? 'รายการที่ซื้อ / จ่าย' : 'รายละเอียด') + '</th><th class="num">ก่อน VAT</th><th class="num">VAT 7%</th><th class="num">รวม</th></tr></thead><tbody>' +
       r.lines.map((l, i) => {
         const it = itemById(b, l.itemId) || {};
         return '<tr><td>' + (i + 1) + '</td>' +
           (isCapex ? (withCat ? '<td>' + esc(l.category || '-') + '</td>' : '') : '<td>' + esc(it.code) + '<div class="muted">' + esc(it.name) + '</div></td>') +
           (withGl ? '<td>' + esc(l.glCode || '-') + '<div class="muted">' + esc(l.glName || '') + '</div></td>' : '') +
+          '<td>' + investorCell(lineInvestor(b, l)) + '</td>' +
           '<td>' + esc(l.description) + '</td><td class="num">' + money(l.amountBeforeVat) + '</td><td class="num">' + money(l.vat) +
           '</td><td class="num">' + money(l.amount) + '</td></tr>';
-      }).join('') + '</tbody><tfoot><tr><td colspan="' + (2 + (isCapex ? (withCat ? 1 : 0) : 1) + (withGl ? 1 : 0)) + '" class="right"><strong>รวม</strong></td>' +
+      }).join('') + '</tbody><tfoot><tr><td colspan="' + (3 + (isCapex ? (withCat ? 1 : 0) : 1) + (withGl ? 1 : 0)) + '" class="right"><strong>รวม</strong></td>' +
       '<td class="num">' + money(r.amountBeforeVat) + '</td><td class="num">' + money(r.vat) + '</td><td class="num"><strong>' + money(r.amount) + '</strong></td></tr></tfoot></table></div>';
   }
 
@@ -2521,14 +2554,14 @@
       tr('งบคงเหลือของโครงการ (ก่อนขอครั้งนี้)', money(d.remaining) + ' บาท') +
       '</tbody></table></div>' +
       '<div class="section"><h2>รายการที่ขอใช้</h2><table><thead><tr><th style="width:2rem">#</th>' + (perLine ? '<th>รายการต้นทุน</th>' : '') +
-      '<th>รายละเอียด</th><th class="num">ก่อน VAT</th><th class="num">VAT</th><th class="num">รวม</th></tr></thead><tbody>' +
+      '<th>บริษัทที่ลงทุน</th><th>รายละเอียด</th><th class="num">ก่อน VAT</th><th class="num">VAT</th><th class="num">รวม</th></tr></thead><tbody>' +
       (lines.length ? lines.map((l, i) => {
         const it = itemById(b, l.itemId) || {};
         return '<tr><td>' + (i + 1) + '</td>' + (perLine ? '<td>' + esc((it.code || '') + ' ' + (it.name || '')) + '</td>' : '') +
-          '<td>' + esc((l.category ? l.category + ' · ' : '') + (l.description || '')) + '</td><td class="num">' + money(l.amountBeforeVat) + '</td>' +
+          '<td>' + esc(lineInvestor(b, l)) + '</td><td>' + esc((l.category ? l.category + ' · ' : '') + (l.description || '')) + '</td><td class="num">' + money(l.amountBeforeVat) + '</td>' +
           '<td class="num">' + money(l.vat) + '</td><td class="num">' + money(l.amount) + '</td></tr>';
-      }).join('') : '<tr><td colspan="' + (perLine ? 6 : 5) + '" class="muted">ยังไม่ได้ใส่รายการ</td></tr>') +
-      '<tr><th colspan="' + (perLine ? 3 : 2) + '" class="right">รวมทั้งสิ้น</th><td class="num">' + money(d.amountBeforeVat) + '</td><td class="num">' + money(d.vat) +
+      }).join('') : '<tr><td colspan="' + (perLine ? 7 : 6) + '" class="muted">ยังไม่ได้ใส่รายการ</td></tr>') +
+      '<tr><th colspan="' + (perLine ? 4 : 3) + '" class="right">รวมทั้งสิ้น</th><td class="num">' + money(d.amountBeforeVat) + '</td><td class="num">' + money(d.vat) +
       '</td><td class="num"><strong>' + money(d.amount) + '</strong></td></tr></tbody></table></div>' +
       '<div class="section"><h2>ความเห็น / การอนุมัติของผู้บริหาร</h2><table><tbody>' +
       tr('ผลการพิจารณา', '☐ อนุมัติ &nbsp; ☐ อนุมัติโดยมีเงื่อนไข &nbsp; ☐ ไม่อนุมัติ') + tr('ความเห็น', '<br><br>') + '</tbody></table></div>' +
@@ -2629,15 +2662,15 @@
 
     const withCat = isCapex && r.lines.some((l) => l.category);
     const lines = '<div class="section"><h2>รายการที่ขอใช้ครั้งนี้</h2><table><thead><tr><th style="width:2rem">#</th>' +
-      (isCapex ? (withCat ? '<th>หมวดค่าใช้จ่าย</th>' : '') : '<th>รายการต้นทุน / GL</th>') + '<th>' + (isCapex ? 'รายการที่ซื้อ / จ่าย' : 'รายละเอียด') + '</th>' +
+      (isCapex ? (withCat ? '<th>หมวดค่าใช้จ่าย</th>' : '') : '<th>รายการต้นทุน / GL</th>') + '<th>บริษัทที่ลงทุน</th><th>' + (isCapex ? 'รายการที่ซื้อ / จ่าย' : 'รายละเอียด') + '</th>' +
       '<th class="num">ก่อน VAT</th><th class="num">VAT 7%</th><th class="num">รวม</th></tr></thead><tbody>' +
       r.lines.map((l, i) => {
         const it = itemById(b, l.itemId) || {};
         return '<tr><td>' + (i + 1) + '</td>' +
           (isCapex ? (withCat ? '<td>' + esc(l.category || '-') + '</td>' : '') : '<td>' + esc(it.code + ' ' + it.name) + (l.glCode ? '<br><small>GL ' + esc(l.glCode + ' ' + (l.glName || '')) + '</small>' : '') + '</td>') +
-          '<td>' + esc(l.description) + '</td><td class="num">' + money(l.amountBeforeVat) + '</td><td class="num">' + money(l.vat) + '</td><td class="num">' + money(l.amount) + '</td></tr>';
+          '<td>' + esc(lineInvestor(b, l)) + '</td><td>' + esc(l.description) + '</td><td class="num">' + money(l.amountBeforeVat) + '</td><td class="num">' + money(l.vat) + '</td><td class="num">' + money(l.amount) + '</td></tr>';
       }).join('') +
-      '<tr><th colspan="' + (isCapex && !withCat ? 2 : 3) + '" class="right">รวมทั้งสิ้น</th><td class="num">' + money(r.amountBeforeVat) + '</td><td class="num">' + money(r.vat) +
+      '<tr><th colspan="' + (isCapex && !withCat ? 3 : 4) + '" class="right">รวมทั้งสิ้น</th><td class="num">' + money(r.amountBeforeVat) + '</td><td class="num">' + money(r.vat) +
       '</td><td class="num"><strong>' + money(r.amount) + '</strong></td></tr></tbody></table></div>';
 
     const signs = '<div class="signs"><div><div class="line"></div>ผู้ขอใช้งบประมาณ<br>' + esc(userName(r.requesterId)) + '</div>' +
@@ -2822,7 +2855,7 @@
 
   /** รายการข้อมูลหลัก: cols[0] เป็นรหัส/ชื่อที่ใช้อ้างอิง — รหัส (lock) แก้ไม่ได้หลังสร้าง, ชื่อที่ใช้อ้างอิง (เช่น หน่วยงาน) เปลี่ยนแล้วระบบแก้ให้ทุกงบ */
   const MASTER_SECTIONS = [
-    { key: 'companies', title: 'บริษัท', hint: 'ใช้กับงบทุกประเภท และเป็นส่วนหน้าของเลขที่ใบดำเนินการใช้งบ CAPEX (เช่น PSL26-001) · เกณฑ์ Memo = เมื่อไรต้องให้ผู้บริหารเซ็น Memo ก่อนส่งขอดำเนินการใช้งบ (ตั้งต้น: เฉพาะงบที่ไม่มี Item)', lock: true,
+    { key: 'companies', title: 'บริษัท', hint: 'ใช้กับงบทุกประเภท และเป็นส่วนหน้าของเลขที่ใบดำเนินการใช้งบ CAPEX (เช่น PBI26-001) · เกณฑ์ Memo = เมื่อไรต้องให้ผู้บริหารเซ็น Memo ก่อนส่งขอดำเนินการใช้งบ (ตั้งต้น: เฉพาะงบที่ไม่มี Item)', lock: true,
       cols: [{ k: 'code', label: 'รหัสบริษัท', w: '10rem' }, { k: 'name', label: 'ชื่อบริษัท' }, { k: 'memo', label: 'เกณฑ์ Memo ผู้บริหารเซ็น', type: 'select', options: MEMO_MODES, w: '15rem' }],
       inUse: (it) => db.budgets.some((b) => b.company === it.code) },
     { key: 'departments', title: 'หน่วยงาน', hint: 'ตัวเลือกหน่วยงานของงบ และตัวกรองในหน้ารายการงบ', lock: false,
@@ -3082,7 +3115,7 @@
     const opts = leaves(b).map((i) => opt(i.id, i.code + ' ' + i.name + ' — งบ ' + money(itemTotal(i)), l.itemId || '')).join('');
     const isNew = l.itemId === 'new';
     return '<tr><td><div class="select-wrap"><select name="chItem" aria-label="รายการ">' + opts + opt('new', '+ เพิ่มรายการใหม่', l.itemId || '') + '</select></div>' +
-      '<div class="new-item"' + (isNew ? '' : ' hidden') + '><input name="chCode" placeholder="รหัสรายการ" value="' + esc(l.code || '') + '"><input name="chName" placeholder="ชื่อรายการ" value="' + esc(l.name || '') + '"></div></td>' +
+      '<div class="new-item"' + (isNew ? '' : ' hidden') + '>' + investorSelect('chInv', l.investor || b.company) + '<input name="chCode" placeholder="รหัสรายการ" value="' + esc(l.code || '') + '"><input name="chName" placeholder="ชื่อรายการ" value="' + esc(l.name || '') + '"></div></td>' +
       '<td><input name="chAmount" type="number" min="0.01" step="0.01" class="right" value="' + esc(l.amount || '') + '" aria-label="ขอเพิ่ม"></td>' +
       '<td><button type="button" class="btn small bad" data-remove-ch title="ลบ">×</button></td></tr>';
   }
@@ -3144,7 +3177,7 @@
         lines = Array.from(rows.rows).map((tr) => {
           const itemId = tr.querySelector('[name="chItem"]').value;
           const l = { itemId, amount: round2(tr.querySelector('[name="chAmount"]').value) };
-          if (itemId === 'new') Object.assign(l, { code: tr.querySelector('[name="chCode"]').value.trim(), name: tr.querySelector('[name="chName"]').value.trim() });
+          if (itemId === 'new') Object.assign(l, { code: tr.querySelector('[name="chCode"]').value.trim(), name: tr.querySelector('[name="chName"]').value.trim(), investor: tr.querySelector('[name="chInv"]').value });
           return l;
         });
         lines.filter((l) => l.itemId === 'new').forEach((l) => {
@@ -3282,7 +3315,7 @@
         } else {
           c.lines.forEach((l) => {
             if (l.itemId === 'new') {
-              const it = { id: nextId('i'), code: l.code, name: l.name, amount: l.amount, vat: 0, qty: '', unit: '', glCode: '', glName: '' };
+              const it = { id: nextId('i'), code: l.code, name: l.name, amount: l.amount, vat: 0, qty: '', unit: '', glCode: '', glName: '', investor: l.investor || b.company };
               if (b.type === 'CAPEX') Object.assign(it, { assetType: assetTypeList()[0], doa: '2.5' });
               b.items.push(it);
               l.itemId = it.id;
@@ -3623,6 +3656,7 @@
       ['ใช้งบ', 'แบบฟอร์ม Memo', 'ใช้แบบชั่วคราว (รอแบบฟอร์มจริงของบริษัท)'],
       ['ใช้งบ', 'ใครเลือกว่าทำ Memo', 'ผู้ขอเลือกเองด้วยปุ่ม "ทำ Memo" ข้างปุ่มส่ง · ถ้าเกณฑ์ของบริษัทบังคับ (ตั้งต้น: งบที่ไม่มี Item) จะมีแค่ปุ่มทำ Memo'],
       ['ใช้งบ', 'ขั้นตอน Memo', 'บันทึกคำขอ → ระบบออกเลขที่ Memo (MEMO-บริษัทปี-ลำดับ) และจองงบไว้ → ผู้ขอพิมพ์ไปให้ผู้บริหารเซ็น → แนบไฟล์ที่เซ็นแล้ว + ชื่อผู้บริหาร → ส่งให้ผู้คุมงบ · แก้ไขคำขอระหว่างรอได้ (ต้องเซ็นใหม่ ใช้เลขที่เดิม)'],
+      ['ใช้งบ', 'บริษัทที่ลงทุน', 'งบที่มี Item: กำหนดที่ Item ตอนตั้งงบ (ค่าตั้งต้น = บริษัทเจ้าของงบ) ตอนขอใช้ไม่ต้องเลือก · งบที่ไม่มี Item: เลือกรายบรรทัดตอนขอดำเนินการใช้งบ (ค่าตั้งต้น = บริษัทเจ้าของงบ) · แสดงในใบดำเนินการใช้งบและ Memo'],
       ['ใช้งบ', 'หมวดค่าใช้จ่าย', 'ใช้กับงบรวมโครงการ · แก้รายการหมวดได้ที่ข้อมูลหลัก'],
       ['CBS', 'ขั้นตอนการใช้งบ CBS', 'เหมือน CAPEX ทุกขั้น: ขอดำเนินการใช้งบ (4 ประเภท) → ผู้คุมงบตรวจสอบ → ตัดงบตามประเภท → ปิดยอดคืนส่วนต่าง · ขอเกินงบรายการต้องมี Note'],
       ['CBS', 'การอนุมัติงบ CBS (ตั้งงบ / เพิ่มงบ)', 'ไม่เข้าบอร์ด — ให้ผู้บริหารอนุมัติ: แนบเอกสารอนุมัติ + เลขที่เอกสาร + ชื่อผู้บริหารที่อนุมัติ แล้วผู้คุมงบตรวจสอบและยืนยัน (ต้นแบบนี้ผู้บริหารอนุมัตินอกระบบ แล้วแนบหลักฐาน)'],

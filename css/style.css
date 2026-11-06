@@ -662,3 +662,6 @@ th.req::after, .section-title.req::after, legend.req::after { content: " *"; col
 .guard-hint { margin: var(--s-2) 0 0; font-size: var(--fs-xs); line-height: 1.6; color: var(--warn); }
 .guard-hint[hidden] { display: none; }
 .btn:disabled, .btn[disabled] { opacity: .5; cursor: not-allowed; }
+@media (max-width: 600px) {
+  .doc { overflow-x: auto; }
+}
