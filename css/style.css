@@ -707,3 +707,8 @@ th.req::after, .section-title.req::after, legend.req::after { content: " *"; col
 .memo-people > summary::after { content: "▾"; margin-left: auto; color: var(--muted); }
 .memo-people:not([open]) > summary::after { content: "▸"; }
 .memo-people[open] > summary { margin-bottom: var(--s-3); padding-bottom: var(--s-3); border-bottom: 1px solid var(--border); }
+
+/* จัดการ Item ย่อย (CBS) */
+.sub-sec .small-note { margin-top: .75rem; }
+.sub-sec .neg { color: var(--bad, #c62828); }
+input.locked { background: var(--surface-2, #f3f4f6); color: var(--muted, #6b7280); }
