@@ -1910,10 +1910,10 @@
       (withCat ? '<td><div class="select-wrap"><select name="lnCat" aria-label="หมวดค่าใช้จ่าย"><option value="">— เลือกหมวด —</option>' +
         optList(db.master.expenseCategories, 'name', (c) => c.name, line.category || '') + '</select></div></td>' +
         '<td>' + investorSelect('lnInv', line.investor || b.company) + '</td>' : '') +
-      (single ? '' : '<td><div class="select-wrap"><select name="lnItem" aria-label="รายการต้นทุน"><option value="">— เลือก —</option>' +
+      (single ? '' : '<td><div class="select-wrap"><select name="lnItem" aria-label="' + (b.type === 'CAPEX' ? 'รายการย่อย (Item No.)' : 'รายการต้นทุน') + '"><option value="">— เลือก —</option>' +
         itemOptions(b, existing, line.itemId, false) + '</select></div></td>') +
       '<td><input name="lnDesc" value="' + esc(line.description || '') + '" aria-label="รายการ" placeholder="' +
-      (single ? 'เช่น เครื่องชั่งดิจิตอล ละเอียด 1 mg' : 'เช่น ค่าแรงดูแลกล้า 3 วัน @349') + '"></td>' +
+      (b.type === 'CAPEX' ? 'เช่น เครื่องชั่งดิจิตอล ละเอียด 1 mg' : 'เช่น ค่าแรงดูแลกล้า 3 วัน @349') + '"></td>' +
       '<td><input name="lnAmount" type="number" min="0" step="0.01" class="right" value="' + esc(line.amountBeforeVat || '') + '" aria-label="ก่อน VAT"></td>' +
       '<td class="center"><input name="lnVat" type="checkbox"' + (vat ? ' checked' : '') + ' aria-label="VAT 7%"></td>' +
       '<td class="num ln-total">0.00</td>' +
@@ -1930,8 +1930,8 @@
     if (!isActive(b)) return '<div class="alert error">งบนี้ยังไม่เปิดใช้งาน (สถานะ: ' + esc(BUDGET_STATE[b.state]) + ') — ต้องให้ผู้คุมงบยืนยันเปิดใช้ก่อน</div>';
     if (existing && existing.status !== 'rejected' && existing.status !== 'memo') return '<div class="alert error">แก้ไขได้เฉพาะคำขอที่ถูกส่งกลับเท่านั้น</div>';
     const isProject = b.structure === 'project';
-    // OPEX แบบแยกรายการต้นทุน: เลือกรายการต้นทุนทีละบรรทัด · นอกนั้น (CAPEX / งบรวมโครงการ) เลือกรายการเดียวทั้งใบ
-    const perLine = b.type === 'CBS' && !isProject;
+    // งบที่แยก Item (CAPEX / OPEX): เลือก Item ทีละบรรทัด ใบเดียวใช้ได้หลาย Item · งบรวมโครงการ: เลือกหมวดค่าใช้จ่ายแทน
+    const perLine = !isProject;
     const single = !perLine;
     const v = existing || { itemId: params.get('item') || (isProject ? b.items[0].id : ''), useType: 'prpo' };
     const lines = existing ? existing.lines : [{ itemId: perLine ? params.get('item') || '' : '' }];
@@ -1951,11 +1951,9 @@
     const general = '<section class="card form-section">' + step(1, 'ประเภทการดำเนินการใช้งบ') +
         '<div class="choice choice-4">' + Object.keys(USE_TYPES).map(typeCard).join('') + '</div></section>' +
       '<section class="card form-section">' + step(2, 'ข้อมูลการดำเนินการ') + '<div class="form-grid">' +
-      (perLine ? '' : '<div class="full">' + (isProject
-            ? '<input type="hidden" name="itemId" value="' + esc(b.items[0].id) + '" data-remaining="' + round2(usage(b).remaining + projOwn) + '">' +
-              '<div class="field"><span>งบที่ใช้</span><div class="out left">งบรวมทั้งโครงการ ' + esc(b.code) + ' — คงเหลือ ' + money(round2(usage(b).remaining + projOwn)) + ' บาท</div></div>'
-            : field('รหัสรายการย่อย (Item No.)', '<div class="select-wrap"><select name="itemId" required><option value="">— เลือกรายการย่อย —</option>' +
-                itemOptions(b, existing, v.itemId, true) + '</select></div>') + '<div id="itemHint" class="item-hint"></div>') + '</div>') +
+      (perLine ? '' : '<div class="full">' +
+            '<input type="hidden" name="itemId" value="' + esc(b.items[0].id) + '" data-remaining="' + round2(usage(b).remaining + projOwn) + '">' +
+              '<div class="field"><span>งบที่ใช้</span><div class="out left">งบรวมทั้งโครงการ ' + esc(b.code) + ' — คงเหลือ ' + money(round2(usage(b).remaining + projOwn)) + ' บาท</div></div></div>') +
           '<div class="full">' + field('วัตถุประสงค์ในการใช้งบ', '<textarea name="purpose" rows="3" required placeholder="เช่น จัดซื้อเครื่องชั่งสำหรับห้องปฏิบัติการ">' + esc(v.purpose || '') + '</textarea>') + '</div>' +
           '<div class="full">' + field('เรื่องสืบเนื่อง / ความเป็นมา (ใช้ใน Memo — ไม่บังคับ)', '<textarea name="memoBackground" rows="3" placeholder="เช่น ที่มาของงบ เหตุผลความจำเป็น ที่ทำให้ต้องขอใช้งบครั้งนี้">' + esc(v.memoBackground || '') + '</textarea>') + '</div>' +
           field('<span id="payeeLabel">Supplier / ผู้รับเงิน</span>', '<input name="payee" required' + val('payee') + '>') +
@@ -1966,11 +1964,11 @@
     const linesCard = '<section class="card form-section">' +
       step(3, 'รายการที่ขอใช้', '<button type="button" class="btn" id="addLine">+ เพิ่มบรรทัด</button>') +
       '<div class="table-wrap"><table class="edit-table lines-table"><thead><tr><th style="width:2.5rem">#</th>' +
-      (perLine ? '<th style="width:30%">รายการต้นทุน (OPEX)</th>' : isProject ? '<th style="width:20%">หมวดค่าใช้จ่าย</th><th style="width:7rem">บริษัทที่ลงทุน</th>' : '') +
-      '<th>' + (perLine ? 'รายละเอียด (ถ้ามีจำนวน โปรดระบุ)' : 'รายละเอียดสิ่งที่ซื้อ / จ่าย') + '</th>' +
+      (perLine ? '<th style="width:30%">' + (b.type === 'CAPEX' ? 'รายการย่อย (Item No.)' : 'รายการต้นทุน (OPEX)') + '</th>' : isProject ? '<th style="width:20%">หมวดค่าใช้จ่าย</th><th style="width:7rem">บริษัทที่ลงทุน</th>' : '') +
+      '<th>' + (b.type === 'CBS' ? 'รายละเอียด (ถ้ามีจำนวน โปรดระบุ)' : 'รายละเอียดสิ่งที่ซื้อ / จ่าย') + '</th>' +
       '<th class="num" style="width:9.5rem">ก่อน VAT</th><th class="center" style="width:4.5rem">VAT 7%</th><th class="num" style="width:9rem">รวม</th><th style="width:3rem"></th></tr></thead>' +
       '<tbody id="lineRows">' + lines.map((l) => lineRow(b, l, single, existing)).join('') + '</tbody>' +
-      '<tfoot><tr><td colspan="' + (single && !isProject ? 2 : isProject ? 4 : 3) + '" class="right muted">รวมทั้งหมด</td>' +
+      '<tfoot><tr><td colspan="' + (isProject ? 4 : 3) + '" class="right muted">รวมทั้งหมด</td>' +
       '<td class="num" id="sumBefore">0.00</td><td class="num" id="sumVat">0.00</td><td class="num"><strong id="sumTotal">0.00</strong></td><td></td></tr></tfoot>' +
       '</table></div>' +
       '<template id="lineTpl">' + lineRow(b, {}, single, existing) + '</template>' +
@@ -1991,8 +1989,8 @@
         '<strong>ทำ Memo:</strong> ระบบบันทึกคำขอ ออกเลขที่ Memo และจองงบไว้ → พิมพ์ Memo ไปให้ผู้บริหารเซ็น → กลับมาแนบไฟล์ที่เซ็นแล้วที่หน้าคำขอ จึงส่งให้ผู้คุมงบได้' +
         (existing && existing.memo && existing.memo.no ? '<br>Memo เดิมเลขที่ ' + esc(existing.memo.no) + ' — แก้ไขแล้วต้องให้ผู้บริหารเซ็นใหม่' : '') + '</p></div>' : '</div>') +
       '<div class="card form-tip"><h3 class="side-title">คำแนะนำ</h3><p class="muted">' +
-      (perLine ? 'ใส่ได้หลายบรรทัด แต่ละบรรทัดเลือกรายการต้นทุนเองได้'
-        : isProject ? 'งบรวมโครงการ: แต่ละบรรทัดเลือกหมวดค่าใช้จ่ายและพิมพ์รายละเอียด' : 'ใบดำเนินการใช้งบ 1 ใบ ใช้กับรายการย่อยเดียว ใส่ได้หลายบรรทัด') +
+      (perLine ? 'ใบเดียวใช้ได้หลาย Item — ใส่ได้หลายบรรทัด แต่ละบรรทัดเลือก Item เอง (บรรทัดใหม่ใช้ Item เดียวกับบรรทัดก่อนหน้าเป็นค่าเริ่มต้น)'
+        : 'งบรวมโครงการ: แต่ละบรรทัดเลือกหมวดค่าใช้จ่ายและพิมพ์รายละเอียด') +
           ' · ขอเกินงบรายการได้ถ้าไม่เกินงบรวมของโครงการ (ผู้คุมงบต้องใส่ Note) · ถ้าเกินงบโครงการ ผู้คุมงบจะพิจารณาโยกงบให้ หรือให้ขอเพิ่มงบ' +
           '</p></div>';
 
@@ -2092,8 +2090,8 @@
     if (!form) return;
     const f = form.elements;
     const b = budgetById(form.dataset.budget);
-    const perLine = b.type === 'CBS' && b.structure !== 'project'; // เลือกรายการต้นทุนทีละบรรทัด
-    const isCapex = !perLine; // ชื่อเดิม: = เลือกรายการเดียวทั้งใบ (มี f.itemId)
+    const perLine = b.structure !== 'project'; // เลือก Item ทีละบรรทัด (ใบเดียวหลาย Item)
+    const isCapex = !perLine; // ชื่อเดิม: = งบรวมโครงการ (ใช้ f.itemId ที่ซ่อนไว้)
     const existing = form.dataset.request ? requestById(form.dataset.request) : null;
     const tbody = document.getElementById('lineRows');
     let files = existing ? (existing.attachments || []).slice() : [];
@@ -2169,12 +2167,6 @@
       const after = round2(Number(form.dataset.remaining) - (sb + sv));
       const afterEl = document.getElementById('sideAfter');
       afterEl.innerHTML = moneyCell(after);
-      if (isCapex && f.itemId.tagName === 'SELECT') {
-        const it = itemById(b, f.itemId.value);
-        const o = f.itemId.selectedOptions[0];
-        document.getElementById('itemHint').textContent = it
-          ? 'ประเภทสินทรัพย์: ' + it.assetType + ' · หมวด DOA ' + it.doa + ' · คงเหลือของรายการ ' + money(o.dataset.remaining) + ' บาท' : '';
-      }
       const over = overItems(form, b, readLines(form, isCapex), isCapex);
       const total = round2(sb + sv);
       const overProject = round2(total - Number(form.dataset.remaining));
@@ -2228,7 +2220,7 @@
     updatePlan();
     document.getElementById('addLine').addEventListener('click', () => {
       tbody.insertAdjacentHTML('beforeend', document.getElementById('lineTpl').innerHTML);
-      // บรรทัดใหม่ของ OPEX ใช้รายการต้นทุนเดียวกับบรรทัดก่อนหน้าเป็นค่าเริ่มต้น
+      // บรรทัดใหม่ใช้ Item เดียวกับบรรทัดก่อนหน้าเป็นค่าเริ่มต้น
       if (perLine && tbody.rows.length > 1) {
         tbody.rows[tbody.rows.length - 1].querySelector('[name="lnItem"]').value = tbody.rows[tbody.rows.length - 2].querySelector('[name="lnItem"]').value;
       }
@@ -2250,12 +2242,11 @@
       const lines = readLines(form, isCapex);
       const errors = [];
       if (!useType()) errors.push('กรุณาเลือกประเภทการดำเนินการใช้งบ');
-      if (isCapex && !f.itemId.value) errors.push('กรุณาเลือกรายการย่อย');
       if (f.payee.required && !f.payee.value.trim()) errors.push('กรุณาระบุผู้รับเงิน');
       if (!lines.length) errors.push('กรุณาใส่รายการที่ขอเบิกอย่างน้อย 1 บรรทัด');
       lines.forEach((l, i) => {
         const no = 'บรรทัดที่ ' + (Array.from(tbody.rows).indexOf(l.tr) + 1) + ': ';
-        if (perLine && !l.itemId) errors.push(no + 'กรุณาเลือกรายการต้นทุน');
+        if (perLine && !l.itemId) errors.push(no + (b.type === 'CAPEX' ? 'กรุณาเลือกรายการย่อย (Item No.)' : 'กรุณาเลือกรายการต้นทุน'));
         if (l.category === '') errors.push(no + 'กรุณาเลือกหมวดค่าใช้จ่าย');
         if (!l.description) errors.push(no + 'กรุณาระบุรายการ');
         if (!(l.amountBeforeVat > 0)) errors.push(no + 'จำนวนเงินต้องมากกว่า 0');
@@ -2346,11 +2337,18 @@
 
   // ---------------------------------------------------------------- request lists
 
+  /** Item ที่คำขอนี้ใช้ (ใบเดียวใช้ได้หลาย Item ทั้ง CAPEX และ OPEX) */
+  const reqItems = (b, r) => reqItemIds(r).map((id) => itemById(b, id)).filter(Boolean);
+  /** Item ที่ใช้อ้างอิงหมวด DOA (CAPEX): Item ที่ขอใช้ยอดมากที่สุดในใบ */
+  function reqDoaItem(b, r) {
+    const items = reqItems(b, r);
+    return items.sort((x, y) => linesAmount(r, [y.id]) - linesAmount(r, [x.id]))[0] || null;
+  }
   function itemCodesCell(b, r) {
-    const items = reqItemIds(r).map((id) => itemById(b, id)).filter(Boolean);
+    const items = reqItems(b, r);
     if (!items.length) return '-';
     if (items.length === 1) return '<span class="nowrap">' + esc(items[0].code) + '</span><div class="muted">' + esc(items[0].name) + '</div>';
-    return esc(items.map((i) => i.code).join(', ')) + '<div class="muted">' + items.length + ' รายการต้นทุน</div>';
+    return esc(items.map((i) => i.code).join(', ')) + '<div class="muted">' + items.length + ' รายการ</div>';
   }
 
   function requestTable(list, showBudget) {
@@ -2388,18 +2386,19 @@
   function linesTable(b, r, withGl) {
     const isCapex = r.type === 'CAPEX';
     const withCat = r.lines.some((l) => l.category !== undefined);
+    const withItem = !withCat && b.structure !== 'project';
     return '<div class="table-wrap"><table><thead><tr><th style="width:2.5rem">#</th>' +
-      (isCapex ? (withCat ? '<th>หมวดค่าใช้จ่าย</th>' : '') : '<th>รายการต้นทุน</th>') + (withGl ? '<th>GL</th>' : '') +
+      (withCat ? '<th>หมวดค่าใช้จ่าย</th>' : withItem ? '<th>' + (isCapex ? 'รายการย่อย (Item No.)' : 'รายการต้นทุน') + '</th>' : '') + (withGl ? '<th>GL</th>' : '') +
       '<th>บริษัทที่ลงทุน</th><th>' + (isCapex ? 'รายการที่ซื้อ / จ่าย' : 'รายละเอียด') + '</th><th class="num">ก่อน VAT</th><th class="num">VAT 7%</th><th class="num">รวม</th></tr></thead><tbody>' +
       r.lines.map((l, i) => {
         const it = itemById(b, l.itemId) || {};
         return '<tr><td>' + (i + 1) + '</td>' +
-          (isCapex ? (withCat ? '<td>' + esc(l.category || '-') + '</td>' : '') : '<td>' + esc(it.code) + '<div class="muted">' + esc(it.name) + '</div></td>') +
+          (withCat ? '<td>' + esc(l.category || '-') + '</td>' : withItem ? '<td>' + esc(it.code) + '<div class="muted">' + esc(it.name) + '</div></td>' : '') +
           (withGl ? '<td>' + esc(l.glCode || '-') + '<div class="muted">' + esc(l.glName || '') + '</div></td>' : '') +
           '<td>' + investorCell(lineInvestor(b, l)) + '</td>' +
           '<td>' + esc(l.description) + '</td><td class="num">' + money(l.amountBeforeVat) + '</td><td class="num">' + money(l.vat) +
           '</td><td class="num">' + money(l.amount) + '</td></tr>';
-      }).join('') + '</tbody><tfoot><tr><td colspan="' + (3 + (isCapex ? (withCat ? 1 : 0) : 1) + (withGl ? 1 : 0)) + '" class="right"><strong>รวม</strong></td>' +
+      }).join('') + '</tbody><tfoot><tr><td colspan="' + (3 + (withCat || withItem ? 1 : 0) + (withGl ? 1 : 0)) + '" class="right"><strong>รวม</strong></td>' +
       '<td class="num">' + money(r.amountBeforeVat) + '</td><td class="num">' + money(r.vat) + '</td><td class="num"><strong>' + money(r.amount) + '</strong></td></tr></tfoot></table></div>';
   }
 
@@ -2588,7 +2587,6 @@
     const u = me();
     const step = currentStep(r);
     const isCapex = true; // ชื่อเดิม: OPEX ใช้ขั้นตอนเดียวกับ CAPEX จึงเป็น true เสมอ
-    const item = itemById(b, r.itemId);
     const isOwner = r.requesterId === u.id;
 
     // ---- ปุ่มคำสั่งของหน้า (อยู่บนหัวหน้า เห็นได้ทันที)
@@ -2626,7 +2624,7 @@
     const facts = '<section class="card"><div class="facts">' +
       (isCapex ? fact('ประเภท', esc(USE_TYPES[r.useType || 'direct'].label) + '<small>' + esc(USE_TYPES[r.useType || 'direct'].cut) + '</small>') : '') +
       fact(b.structure === 'project' ? 'งบที่ใช้' : b.type === 'CBS' ? 'รายการต้นทุน' : 'รายการย่อย', b.structure === 'project' ? 'งบรวมทั้งโครงการ'
-        : b.type === 'CBS' ? itemCodesCell(b, r) : item ? esc(item.code) + '<small>' + esc(item.name) + '</small>' : '-') +
+        : itemCodesCell(b, r)) +
       fact('ผู้ขอ', esc(userName(r.requesterId)) + '<small>' + esc(b.department) + '</small>') +
       fact(isCapex ? 'วันที่ขอ' : 'วันที่เบิก', isCapex ? fmtDate(r.createdAt) : fmtDay(r.expenseDate)) +
       fact(isCapex ? (r.useType === 'advance' || r.useType === 'reimburse' ? 'ผู้รับเงิน (พนักงาน)' : 'Supplier (ผู้รับเงิน)') : 'ผู้รับเงิน', esc(r.payee)) +
@@ -2869,9 +2867,13 @@
     const party = (c) => (db.master.memoParties || []).find((x) => x.code === c) || {};
     const cname = (c) => companyMap()[c] || c;
     const t = USE_TYPES[r.useType] || {};
-    const perLine = b.type === 'CBS' && b.structure !== 'project';
-    const single = b.type === 'CAPEX' && b.structure !== 'project' ? itemById(b, r.itemId) : null;
-    const ids = single ? leafIdsUnder(b, single) : null;
+    const perLine = b.structure !== 'project';
+    // CAPEX: กรอบวงเงินใน Memo = Item ที่ขอใช้ (ใบเดียวมีได้หลาย Item) · OPEX / งบรวมโครงการ = ทั้งโครงการ
+    const capexItems = b.type === 'CAPEX' && perLine ? reqItems(b, r) : [];
+    const ids = capexItems.length ? uniq([].concat(...capexItems.map((x) => leafIdsUnder(b, x)))) : null;
+    const scopeCodes = capexItems.map((x) => x.code).join(', ');
+    const scopeNames = capexItems.map((x) => x.code + ' ' + x.name).join(', ');
+    const doaItem = b.type === 'CAPEX' && perLine ? reqDoaItem(b, r) : null;
 
     // บริษัทที่ลงทุน (ถ้ามีหลายบริษัท ใช้บริษัทที่ลงทุนมากที่สุดเป็นผู้พิจารณา)
     const byInv = {};
@@ -2898,7 +2900,7 @@
     const groups = [];
     r.lines.forEach((l) => {
       const it = itemById(b, l.itemId) || {};
-      const key = l.category || (perLine ? ((it.code || '') + ' ' + (it.name || '')).trim() : single ? single.code + ' ' + single.name : b.name);
+      const key = l.category || (perLine ? ((it.code || '') + ' ' + (it.name || '')).trim() : b.name);
       let g = groups.find((x) => x.key === key);
       if (!g) { g = { key, amount: 0, descs: [] }; groups.push(g); }
       g.amount = round2(g.amount + l.amount);
@@ -2914,8 +2916,8 @@
 
     // อำนาจอนุมัติ: ของบริษัทที่ลงทุน (ข้อมูลหลัก) หรือคำนวณจากตาราง DOA (CAPEX แยกรายการ)
     let doaText = approver.doa || '';
-    if (!doaText && single && DOA[single.doa]) {
-      const tbl = DOA[single.doa];
+    if (!doaText && doaItem && DOA[doaItem.doa]) {
+      const tbl = DOA[doaItem.doa];
       const row = tbl.rows.find((x) => x.match(r.amount / 1e6));
       doaText = 'ตาม' + tbl.title + (row ? ' — ' + row.code + ' ' + row.label + ' · ผู้อนุมัติ: ' + row.approver : '');
     }
@@ -2936,7 +2938,7 @@
       '<span class="lbl">อ้างอิง</span>: ' + esc(refText) + '</td></tr></tbody></table>' +
 
       '<h2 class="memo-h">1. เรื่องสืบเนื่อง</h2>' +
-      '<p>สืบเนื่องจาก' + esc(refText) + ' ได้อนุมัติงบ ' + esc(b.code + ' ' + b.name) + ' กรอบวงเงิน' + (single ? 'ของรายการ ' + esc(single.code + ' ' + single.name) + ' ' : 'รวมทั้งสิ้น ') +
+      '<p>สืบเนื่องจาก' + esc(refText) + ' ได้อนุมัติงบ ' + esc(b.code + ' ' + b.name) + ' กรอบวงเงิน' + (capexItems.length ? 'ของรายการ ' + esc(scopeNames) + ' ' : 'รวมทั้งสิ้น ') +
       esc(amt(approved)) + '</p>' +
       (r.memoBackground ? '<p>' + esc(r.memoBackground).replace(/\n/g, '<br>') + '</p>' : '') +
       (items.length ? '<p>โดยมีกรอบวงเงินแยกตามรายการ ดังนี้:</p><ol class="memo-list">' + items.map((it, i) => '<li>1.' + (i + 1) + ' ' + esc(it.code + ' ' + it.name) + ' จำนวน ' +
@@ -2951,7 +2953,7 @@
       (invCodes.length > 1 ? '<p class="memo-inv">บริษัทที่ลงทุน: ' + invCodes.map((c) => esc(c) + ' ' + money(byInv[c]) + ' บาท').join(' · ') + '</p>' : '') +
 
       '<table class="memo-sum"><thead><tr><th style="width:3rem">ลำดับ</th><th>รายการงบประมาณ</th><th class="num" style="width:9rem">จำนวนเงิน (บาท)</th></tr></thead><tbody>' +
-      '<tr><td class="center">1</td><td>กรอบวงเงินงบที่ได้รับอนุมัติ' + (single ? ' (' + esc(single.code) + ')' : ' (' + esc(b.code) + ')') + '</td>' + cell(money(approved)) + '</tr>' +
+      '<tr><td class="center">1</td><td>กรอบวงเงินงบที่ได้รับอนุมัติ' + (capexItems.length ? ' (' + esc(scopeCodes) + ')' : ' (' + esc(b.code) + ')') + '</td>' + cell(money(approved)) + '</tr>' +
       '<tr><td class="center">2</td><td>หัก : เบิกใช้งบไปแล้ว' + (priorRows.length ? priorRows.map((x) => '<br><small>- ' + esc(x.label) + '</small>').join('') : '<br><small>- ยังไม่มี</small>') + '</td>' +
       cell(priorRows.length ? priorRows.map((x) => paren(x.amount)).join('<br><br>') : '-') + '</tr>' +
       '<tr><td class="center">3</td><td>ขอเบิกใช้ ครั้งที่ ' + seq + ' :' + groups.map((g) => '<br><small>- ' + esc(g.key) + '</small>').join('') + '</td>' +
@@ -3011,7 +3013,8 @@
     if (r.status !== 'approved' && r.status !== 'closed') return '<div class="alert error">คำขอนี้ยังไม่ผ่านการตรวจสอบของผู้คุมงบ จึงยังไม่มีเอกสาร</div>';
     const b = budgetById(r.budgetId);
     const isCapex = r.type === 'CAPEX';
-    const item = isCapex ? itemById(b, r.itemId) || {} : null;
+    const perItem = b.structure !== 'project';
+    const doaItem = isCapex && perItem ? reqDoaItem(b, r) || {} : {};
     const proj = balanceAt(r, b, null);
     const tr = (k, v) => '<tr><th style="width:34%">' + k + '</th><td>' + v + '</td></tr>';
     const balanceTable = (title, bal) => '<table><thead><tr><th colspan="2">' + title + '</th></tr></thead><tbody>' +
@@ -3030,7 +3033,7 @@
 
     const info = '<div class="section"><table><tbody>' +
       tr('รหัสโครงการ (Project No.)', esc(b.code + ' ' + b.name)) +
-      (isCapex && b.structure !== 'project' ? tr('รหัสรายการย่อย (Item No.)', esc(item.code + ' ' + item.name)) : '') +
+      (isCapex && perItem ? tr('รหัสรายการย่อย (Item No.)', reqItems(b, r).map((x) => esc(x.code + ' ' + x.name)).join('<br>')) : '') +
       tr('ประเภทการใช้งบ', esc((USE_TYPES[r.useType] || {}).label || '-') + '<br><small>' + esc((USE_TYPES[r.useType] || {}).cut || '') + '</small>') +
       tr('วันที่ขอใช้งบ', fmtDay(r.createdAt)) +
       tr('ชื่อผู้ขอใช้งบประมาณ', esc(userName(r.requesterId) + ' · ' + b.department)) +
@@ -3045,12 +3048,11 @@
       '</tbody></table></div>';
 
     let detail = '<div class="section"><h2>รายละเอียดการใช้งบประมาณ</h2>';
-    if (isCapex) {
-      detail += b.structure === 'project' ? balanceTable('ระดับโครงการ: ' + esc(b.code), proj) : '<div class="doc-two">' + balanceTable('ระดับโครงการ: ' + esc(b.code), proj) +
-        balanceTable('ระดับรายการย่อย: ' + esc(item.code), balanceAt(r, b, leafIdsUnder(b, item))) + '</div>';
+    if (!perItem) {
+      detail += balanceTable('ระดับโครงการ: ' + esc(b.code), proj);
     } else {
       detail += balanceTable('ระดับโครงการ: ' + esc(b.code), proj) +
-        '<table style="margin-top:.75rem"><thead><tr><th>รายการต้นทุน</th><th class="num">งบ</th><th class="num">ใช้ก่อนหน้า</th><th class="num">ครั้งนี้</th><th class="num">คงเหลือ</th></tr></thead><tbody>' +
+        '<table style="margin-top:.75rem"><thead><tr><th>' + (isCapex ? 'ระดับรายการย่อย (Item No.)' : 'รายการต้นทุน') + '</th><th class="num">งบ</th><th class="num">ใช้ก่อนหน้า</th><th class="num">ครั้งนี้</th><th class="num">คงเหลือ</th></tr></thead><tbody>' +
         uniq(reqItemIds(r).map((iid) => (budgetNodeOf(b, itemById(b, iid) || {}) || {}).id)).map((nid) => {
           const it = itemById(b, nid) || {};
           const bal = balanceAt(r, b, leafIdsUnder(b, it), itemTotal(it));
@@ -3062,15 +3064,15 @@
 
     const withCat = isCapex && r.lines.some((l) => l.category);
     const lines = '<div class="section"><h2>รายการที่ขอใช้ครั้งนี้</h2><table><thead><tr><th style="width:2rem">#</th>' +
-      (isCapex ? (withCat ? '<th>หมวดค่าใช้จ่าย</th>' : '') : '<th>รายการต้นทุน / GL</th>') + '<th>บริษัทที่ลงทุน</th><th>' + (isCapex ? 'รายการที่ซื้อ / จ่าย' : 'รายละเอียด') + '</th>' +
+      (withCat ? '<th>หมวดค่าใช้จ่าย</th>' : isCapex ? (perItem ? '<th>รายการย่อย (Item No.)</th>' : '') : '<th>รายการต้นทุน / GL</th>') + '<th>บริษัทที่ลงทุน</th><th>' + (isCapex ? 'รายการที่ซื้อ / จ่าย' : 'รายละเอียด') + '</th>' +
       '<th class="num">ก่อน VAT</th><th class="num">VAT 7%</th><th class="num">รวม</th></tr></thead><tbody>' +
       r.lines.map((l, i) => {
         const it = itemById(b, l.itemId) || {};
         return '<tr><td>' + (i + 1) + '</td>' +
-          (isCapex ? (withCat ? '<td>' + esc(l.category || '-') + '</td>' : '') : '<td>' + esc(it.code + ' ' + it.name) + (l.glCode ? '<br><small>GL ' + esc(l.glCode + ' ' + (l.glName || '')) + '</small>' : '') + '</td>') +
+          (withCat ? '<td>' + esc(l.category || '-') + '</td>' : isCapex ? (perItem ? '<td>' + esc(it.code + ' ' + it.name) + '</td>' : '') : '<td>' + esc(it.code + ' ' + it.name) + (l.glCode ? '<br><small>GL ' + esc(l.glCode + ' ' + (l.glName || '')) + '</small>' : '') + '</td>') +
           '<td>' + esc(lineInvestor(b, l)) + '</td><td>' + esc(l.description) + '</td><td class="num">' + money(l.amountBeforeVat) + '</td><td class="num">' + money(l.vat) + '</td><td class="num">' + money(l.amount) + '</td></tr>';
       }).join('') +
-      '<tr><th colspan="' + (isCapex && !withCat ? 3 : 4) + '" class="right">รวมทั้งสิ้น</th><td class="num">' + money(r.amountBeforeVat) + '</td><td class="num">' + money(r.vat) +
+      '<tr><th colspan="' + (isCapex && !withCat && !perItem ? 3 : 4) + '" class="right">รวมทั้งสิ้น</th><td class="num">' + money(r.amountBeforeVat) + '</td><td class="num">' + money(r.vat) +
       '</td><td class="num"><strong>' + money(r.amount) + '</strong></td></tr></tbody></table></div>';
 
     const signs = '<div class="signs"><div><div class="line"></div>ผู้ขอใช้งบประมาณ<br>' + esc(userName(r.requesterId)) + '</div>' +
@@ -3080,7 +3082,7 @@
     return '<div class="actions no-print" style="margin:0 0 1rem">' +
       '<button class="btn primary" onclick="window.print()">พิมพ์ / บันทึกเป็น PDF</button></div>' +
       '<article class="doc">' + head + info + detail + lines +
-      (isCapex ? doaTable(item.doa, r.amount) : '') + signs +
+      (isCapex ? doaTable(doaItem.doa, r.amount) : '') + signs +
       '<p class="note">' + (r.useType !== 'prpo'
         ? 'ใช้เลขที่ ' + esc(r.docNo) + ' อ้างอิงในเอกสารการจ่าย / เคลียร์เงิน · ' + esc((USE_TYPES[r.useType] || {}).cut || '')
         : 'โปรดแนบเอกสารฉบับนี้ และระบุเลขที่ ' + esc(r.docNo) + ' ในใบขอซื้อ (PR) ที่เกี่ยวข้อง · ยอดขอซื้อรวมต้องไม่เกิน ' + money(r.amount) + ' บาท') + '</p>' +
@@ -4104,6 +4106,7 @@
       ['ปรับงบ', 'ปิดปีงบ: งบเหลือหมดสิทธิ์หรือยกไป', 'ยังไม่ได้ทำ — งบปีก่อนยังใช้ต่อได้เหมือนเดิม'],
       ['ปรับงบ', 'มีงบกลาง/งบสำรองไหม', 'ไม่มี — โยกตรงจากรายการ/โครงการหนึ่งไปอีกที่'],
       ['ปรับงบ', 'โยก/ลดงบแล้วแจ้งเจ้าของงบไหม', 'บันทึกในประวัติของงบทั้งสองฝั่ง (ยังไม่มีแจ้งเตือน)'],
+      ['ใช้งบ', 'ใบดำเนินการใช้งบ 1 ใบใช้ได้หลาย Item ไหม', 'ได้ ทั้ง CAPEX และ OPEX — เลือก Item ทีละบรรทัด · ตรวจเกินงบทีละ Item และทั้งโครงการ · ตัดงบแบ่งตามสัดส่วนยอดของแต่ละ Item · DOA ของ CAPEX อ้างอิงหมวดของ Item ที่ขอใช้ยอดมากที่สุดในใบ'],
       ['ใช้งบ', 'ขอเกินงบรายการย่อยแต่ไม่เกินงบโครงการ', 'ขอได้ ระบบเตือน ผู้คุมงบต้องใส่ Note'],
       ['ใช้งบ', 'ขอเกินงบโครงการ', 'อนุมัติไม่ได้จนกว่าผู้คุมงบโยกงบเข้า หรือส่งกลับให้ขอเพิ่มงบ'],
       ['ใช้งบ', 'ผู้ขอต้องใส่เหตุผลที่ขอเกินไหม', 'ไม่บังคับ (มีช่องให้ใส่)'],
@@ -4254,13 +4257,13 @@
     if (rf) {
       markReq(rf, ['itemId', 'purpose']);
       markReqText(rf, '.section-title', /ประเภทการดำเนินการใช้งบ/);
-      markReqText(rf, '.lines-table thead th', /^(รายการต้นทุน \(OPEX\)|หมวดค่าใช้จ่าย|รายละเอียด|ก่อน VAT)/);
+      markReqText(rf, '.lines-table thead th', /^(รายการต้นทุน \(OPEX\)|รายการย่อย \(Item No\.\)|หมวดค่าใช้จ่าย|รายละเอียด|ก่อน VAT)/);
       markReq(rf, ['memoTo', 'memoApprovers']);
       guard(rf, [{ btn: 'button[type="submit"]', missing: (f) => {
         const e = f.elements;
         const m = [];
         if (!f.querySelector('[name="useType"]:checked')) m.push('ประเภทการดำเนินการใช้งบ');
-        if (e.itemId && e.itemId.tagName === 'SELECT' && !e.itemId.value) m.push('รายการย่อย');
+
         if (!filled(e.purpose)) m.push('วัตถุประสงค์');
         if (e.payee && e.payee.required && !filled(e.payee)) m.push('ผู้รับเงิน');
         const rows = Array.from(f.querySelectorAll('#lineRows tr')).map((tr) => ({
@@ -4271,7 +4274,8 @@
         if (!used.length) m.push('รายการที่ขอใช้อย่างน้อย 1 บรรทัด');
         if (used.some((r) => !r.desc)) m.push('รายละเอียดทุกบรรทัด');
         if (used.some((r) => !(r.amt > 0))) m.push('จำนวนเงินทุกบรรทัด');
-        if (used.some((r) => r.item && !r.item.value)) m.push('รายการต้นทุนทุกบรรทัด');
+        const rb = budgetById(f.dataset.budget) || {};
+        if ((used.length ? used : rows).some((r) => r.item && !r.item.value)) m.push(rb.type === 'CAPEX' ? 'รายการย่อย (Item No.) ทุกบรรทัด' : 'รายการต้นทุนทุกบรรทัด');
         if (used.some((r) => r.cat && !r.cat.value)) m.push('หมวดค่าใช้จ่ายทุกบรรทัด');
         const wrap = document.getElementById('planWrap');
         const mode = f.querySelector('[name="payMode"]:checked');
