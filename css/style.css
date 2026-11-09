@@ -712,3 +712,27 @@ th.req::after, .section-title.req::after, legend.req::after { content: " *"; col
 .sub-sec .small-note { margin-top: .75rem; }
 .sub-sec .neg { color: var(--bad, #c62828); }
 input.locked { background: var(--surface-2, #f3f4f6); color: var(--muted, #6b7280); }
+
+/* Memo: แถวหัวเอกสาร (เรียน / สำเนาถึง / เรื่อง / อ้างอิง) */
+.memo-doc .mh-row { display: flex; gap: .25rem; align-items: flex-start; }
+.memo-doc .mh-row .lbl { flex: 0 0 4.5rem; }
+.memo-doc .mh-row .sep { flex: 0 0 .75rem; }
+.memo-doc .mh-val { flex: 1; min-width: 0; }
+.memo-doc .memo-text p { text-indent: 2.5rem; }
+
+/* Memo แบบกรอก: ช่องกรอกอยู่ในตำแหน่งเดียวกับเอกสารจริง */
+.memo-toolbar { margin: 0 0 var(--s-4); flex-wrap: wrap; }
+.memo-edit .mf {
+  width: 100%; font: inherit; line-height: 1.7; color: #000; padding: 2px 6px; margin: 0;
+  border: 0; border-bottom: 1px dashed #8aa4c8; border-radius: 0; background: #f5f9ff; box-shadow: none;
+}
+.memo-edit textarea.mf { display: block; resize: vertical; min-height: 2.4rem; border: 1px dashed #8aa4c8; border-radius: 4px; padding: 6px 8px; margin: 0 0 var(--s-3); }
+.memo-edit .mf:focus { outline: 2px solid var(--primary, #2563eb); outline-offset: 1px; background: #fff; }
+.memo-edit .mf-date { width: 8.5rem; }
+.memo-edit .mf-center { text-align: center; }
+.memo-edit .memo-signoff .mf { display: inline-block; width: calc(100% - 1.2rem); }
+.memo-edit .mf-row { display: flex; gap: .4rem; align-items: center; }
+.memo-edit .mf-add { margin: calc(-1 * var(--s-2)) 0 var(--s-3); }
+.memo-edit .memo-doa textarea.mf { margin-top: var(--s-1); }
+.memo-edit .mf-note { font-size: 12px; color: #6b7280; text-indent: 0; margin-top: calc(-1 * var(--s-2)); }
+@media print { .memo-edit .mf { border: 0; background: none; } }
