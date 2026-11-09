@@ -2683,13 +2683,12 @@
           '<li class="current"><a href="#/request/' + r.id + '/memo">กรอก / พิมพ์ Memo</a>' + (r.memoDoc ? ' (กรอกแล้ว)' : '') + ' แล้วนำไปให้ผู้บริหารเซ็น</li>' +
           '<li>แนบไฟล์ Memo ที่เซ็นแล้วด้านล่าง แล้วส่งให้ผู้คุมงบตรวจสอบ</li></ol>' +
           '<form id="memoSubmit" data-id="' + r.id + '"><div class="form-grid">' +
-          '<label class="field"><span>ผู้บริหารที่เซ็น</span><input name="memoBy" placeholder="ชื่อ / ตำแหน่ง" value="' + esc(r.memo.by || '') + '"></label>' +
-          '<div class="field"><span>ไฟล์ Memo ที่เซ็นแล้ว (PDF หรือรูปภาพ)</span>' + attachList(r.memo.files, { del: true, empty: 'ยังไม่ได้แนบ Memo' }) +
+          '<div class="field full"><span>ไฟล์ Memo ที่เซ็นแล้ว (PDF หรือรูปภาพ)</span>' + attachList(r.memo.files, { del: true, empty: 'ยังไม่ได้แนบ Memo' }) +
           '<label class="btn small file-btn">+ แนบไฟล์ Memo<input type="file" id="memoFileInput" accept="application/pdf,image/png,image/jpeg" multiple hidden></label></div></div>' +
           '<div class="actions"><button class="btn primary" type="submit">ส่งให้ผู้คุมงบตรวจสอบ</button></div></form></section>'
         : '<div class="alert info">รอผู้ขอนำ Memo เลขที่ ' + esc(r.memo.no) + ' ไปให้ผู้บริหารเซ็นและแนบกลับเข้าระบบ — ผู้คุมงบจะตรวจสอบได้เมื่อแนบแล้ว</div>') + main;
     } else if (r.memo && (r.memo.files || []).length) {
-      main += '<h2>Memo ผู้บริหารเซ็น</h2><section class="card"><p class="memo-meta">เลขที่ <strong>' + esc(r.memo.no) + '</strong> · เซ็นโดย <strong>' + esc(r.memo.by) + '</strong></p>' +
+      main += '<h2>Memo ผู้บริหารเซ็น</h2><section class="card"><p class="memo-meta">เลขที่ <strong>' + esc(r.memo.no) + '</strong>' + (r.memo.by ? ' · เซ็นโดย <strong>' + esc(r.memo.by) + '</strong>' : '') + '</p>' +
         attachList(r.memo.files, { empty: 'ยังไม่ได้แนบ Memo' }) + '</section>';
     } else if (memoRequired(b) && (r.status === 'pending' || r.status === 'rejected')) {
       main += '<div class="alert warn">' + esc(memoReason(b)) + ' — คำขอนี้ยังไม่มี Memo (ส่งก่อนเปิดใช้เงื่อนไขนี้)</div>';
@@ -2704,7 +2703,8 @@
     const ms = document.getElementById('memoSubmit');
     if (ms) {
       const r = requestById(ms.dataset.id);
-      const keepBy = () => { r.memo.by = ms.elements.memoBy.value.trim(); };
+      // ผู้บริหารที่เซ็น = ผู้พิจารณาอนุมัติที่กรอกไว้ใน Memo (ไม่ต้องพิมพ์ซ้ำ)
+      const keepBy = () => { r.memo.by = memoSigners(r); };
       document.getElementById('memoFileInput').addEventListener('change', async (e) => {
         const files = await readFiles(e.target, 'memo');
         if (!files.length) return;
@@ -2725,12 +2725,11 @@
         e.preventDefault();
         keepBy();
         const errors = [];
-        if (!r.memo.by) errors.push('กรุณาระบุผู้บริหารที่เซ็น Memo');
         if (!(r.memo.files || []).length) errors.push('กรุณาแนบไฟล์ Memo ที่ผู้บริหารเซ็นแล้ว');
         if (errors.length) { alert(errors.join('\n')); return; }
         r.memo.at = new Date().toISOString();
         r.status = 'pending';
-        addEvent(r, 'แนบ Memo ที่เซ็นแล้วและส่งให้ผู้คุมงบตรวจสอบ', r.memo.no + ' · ' + r.memo.by);
+        addEvent(r, 'แนบ Memo ที่เซ็นแล้วและส่งให้ผู้คุมงบตรวจสอบ', r.memo.no + (r.memo.by ? ' · ' + r.memo.by : ''));
         save();
         setFlash('success', 'ส่งคำขอ ' + r.no + ' พร้อม Memo ที่เซ็นแล้วให้ผู้คุมงบตรวจสอบแล้ว');
         go('#/request/' + r.id);
@@ -3012,6 +3011,8 @@
       '</article>';
   }
 
+  /** ผู้บริหารที่ลงนามอนุมัติ Memo = รายชื่อผู้พิจารณาอนุมัติใน Memo */
+  const memoSigners = (r) => memoDocOf(memoModel(budgetById(r.budgetId), r)).approvers.join(' / ');
   /** ผู้ขอแก้ไข Memo ได้ระหว่างรอแนบ Memo ที่เซ็นแล้ว */
   const canEditMemo = (r) => r.status === 'memo' && r.requesterId === me().id && can('request.create');
 
@@ -3143,7 +3144,7 @@
       tr(r.useType === 'advance' || r.useType === 'reimburse' ? 'ผู้รับเงิน (พนักงาน)' : 'Supplier (ผู้รับเงิน)', esc(r.payee || '-')) +
       tr('PR / PO No.', poText) +
       (r.overItem > 0 ? tr('หมายเหตุ: ใช้เกินงบรายการ', money(r.overItem) + ' บาท (อยู่ในงบรวมของโครงการ)' + (r.requesterReason ? '<br>เหตุผลผู้ขอ: ' + esc(r.requesterReason) : '')) : '') +
-      (r.memo ? tr('Memo ผู้บริหาร', 'เลขที่ ' + esc(r.memo.no) + ' · เซ็นโดย ' + esc(r.memo.by)) : '') +
+      (r.memo ? tr('Memo ผู้บริหาร', 'เลขที่ ' + esc(r.memo.no) + (r.memo.by ? ' · เซ็นโดย ' + esc(r.memo.by) : '')) : '') +
       (r.approverNote ? tr('Note ผู้คุมงบ', esc(r.approverNote)) : '') +
       (r.status === 'closed' && r.closed ? tr('ปิดยอด', 'ใช้จริง ' + money(r.closed.actual) + ' บาท' + (r.closed.returned > 0 ? ' · คืนเข้างบ ' + money(r.closed.returned) + ' บาท' : '') + (r.closed.over > 0 ? ' · เกินที่ขอ ' + money(r.closed.over) + ' บาท' : '')) : '') +
       (planText(r) ? tr('เงื่อนไขการจ่าย', planDetailHtml(r)) : '') +
@@ -4405,11 +4406,10 @@
     // ---- แนบ Memo ที่เซ็นแล้ว
     const ms = document.getElementById('memoSubmit');
     if (ms) {
-      markReq(ms, ['memoBy']);
       const fi = ms.querySelector('input[type="file"]');
       if (fi && fi.closest('.field')) fi.closest('.field').classList.add('req');
       guard(ms, [{ btn: 'button[type="submit"]', missing: (form) => [
-        !filled(form.elements.memoBy) && 'ผู้บริหารที่เซ็น', !fileCount(form) && 'ไฟล์ Memo ที่เซ็นแล้ว'] }]);
+        !fileCount(form) && 'ไฟล์ Memo ที่เซ็นแล้ว'] }]);
     }
 
     // ---- การตัดงบ
