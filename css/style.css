@@ -411,12 +411,18 @@ button.link { background: none; border: 0; padding: 0; color: var(--primary); cu
 .doc .signs small { color: #444; }
 .doc .neg { color: #b00; }
 
+/* พิมพ์: margin 0 ทำให้เบราว์เซอร์ไม่พิมพ์วันที่ / ชื่อหน้า / URL (header-footer) — เว้นขอบด้วย padding ของเอกสาร ซ้ำทุกหน้าด้วย box-decoration-break */
+@page { size: A4; margin: 0; }
 @media print {
-  .no-print { display: none !important; }
+  .no-print, .alert { display: none !important; }
   body { background: #fff; }
   .layout { display: block; }
   main { padding: 0; }
-  .doc { border: 0; padding: 0; max-width: none; }
+  .doc {
+    border: 0; max-width: none; border-radius: 0; margin: 0;
+    padding: 14mm 18mm;
+    -webkit-box-decoration-break: clone; box-decoration-break: clone;
+  }
 }
 
 /* ---------- request form ---------- */
