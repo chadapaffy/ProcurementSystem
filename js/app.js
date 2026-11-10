@@ -396,12 +396,35 @@
     return ensureMaster({ seq: { req: 8, id: 200, doc: {}, no }, budgets, requests, changes, log });
   }
 
+  /**
+   * รอบข้อมูล: เปลี่ยนค่านี้เมื่อต้องการล้างข้อมูลในทุกเบราว์เซอร์ (ครั้งเดียว) — เช่น ก่อนให้ผู้ใช้ทดสอบ
+   * ข้อมูลหลัก (บริษัท หน่วยงาน กลุ่มงบ GL ผู้ลงนาม Memo โลโก้ ฯลฯ) เก็บไว้ ส่วนงบ / คำขอ / เอกสาร / Log ล้างทั้งหมด
+   */
+  const DATA_EPOCH = '2026-11-10-test';
+  const EPOCH_KEY = DB_KEY + '.epoch';
+  /** ฐานข้อมูลว่าง (ไม่มีงบ / คำขอ) ใช้ข้อมูลหลักจากข้อมูลตัวอย่าง หรือของเดิมถ้ามี */
+  function emptyDb(master) {
+    return ensureMaster({ seq: { req: 0, id: 0, doc: {}, no: {} }, master: master || seed().master, budgets: [], requests: [], changes: [], log: [] });
+  }
   function load() {
+    let sample = false;
+    try { sample = localStorage.getItem(DB_KEY + '.sample') === '1'; } catch (e) { /* ignore */ }
     try {
       const raw = localStorage.getItem(DB_KEY);
-      if (raw) return migrate(JSON.parse(raw));
-    } catch (e) { /* ใช้ข้อมูลตัวอย่างแทน */ }
-    return seed();
+      const epoch = localStorage.getItem(EPOCH_KEY);
+      if (raw && (epoch === DATA_EPOCH || sample)) return migrate(JSON.parse(raw));
+      localStorage.setItem(EPOCH_KEY, DATA_EPOCH);
+      if (raw && !sample) {
+        // เปิดรอบข้อมูลใหม่: ล้างข้อมูลเดิมครั้งเดียว เก็บเฉพาะข้อมูลหลัก
+        const old = migrate(JSON.parse(raw));
+        const fresh = emptyDb(old.master);
+        localStorage.setItem(DB_KEY, JSON.stringify(fresh));
+        return fresh;
+      }
+    } catch (e) { /* ใช้ข้อมูลตั้งต้นแทน */ }
+    const d = sample ? seed() : emptyDb();
+    try { localStorage.setItem(DB_KEY, JSON.stringify(d)); } catch (e) { /* ignore */ }
+    return d;
   }
 
   /** คำขอ OPEX แบบเดิม (ออกเอกสารทันที + บัญชีจ่าย) → ขั้นตอนเดียวกับ CAPEX: จ่ายตรง Supplier ตัดงบเมื่อจ่ายแล้ว */
@@ -511,7 +534,7 @@
       localStorage.setItem(DB_KEY, JSON.stringify(db));
       return true;
     } catch (e) {
-      alert('พื้นที่เก็บข้อมูลในเบราว์เซอร์เต็ม (โหมดทดลองเก็บไฟล์แนบในเบราว์เซอร์) — ลบไฟล์แนบบางไฟล์ หรือรีเซ็ตข้อมูลตัวอย่างที่เมนูมุมขวาบน');
+      alert('พื้นที่เก็บข้อมูลในเบราว์เซอร์เต็ม (โหมดทดลองเก็บไฟล์แนบในเบราว์เซอร์) — ลบไฟล์แนบบางไฟล์ หรือล้างข้อมูลที่เมนูมุมขวาบน');
       return false;
     }
   }
@@ -5193,7 +5216,8 @@
       menu.innerHTML = '<div class="menu-label">เข้าใช้งานในฐานะ (ทดสอบ)</div>' +
         USERS.map((x) => '<button type="button" role="menuitemradio" data-user="' + x.id + '" aria-checked="' + (x.id === me().id) + '">' +
           esc(x.name) + '<small>' + esc(x.title + ' · ' + roleLabel(x)) + '</small></button>').join('') +
-        '<hr><button type="button" role="menuitem" class="danger" data-reset>รีเซ็ตข้อมูลตัวอย่าง</button>';
+        '<hr><button type="button" role="menuitem" class="danger" data-clear-all>ล้างข้อมูลทั้งหมด (เริ่มทดสอบ)</button>' +
+        '<button type="button" role="menuitem" data-reset>โหลดข้อมูลตัวอย่าง</button>';
     };
     renderUserButton();
     btn.addEventListener('click', (e) => {
@@ -5209,8 +5233,13 @@
       e.stopPropagation();
       close();
       if (item.hasAttribute('data-logout')) { logout(); return; }
-      if (item.hasAttribute('data-reset')) {
-        if (!confirm('ล้างข้อมูลทั้งหมดและกลับไปใช้ข้อมูลตัวอย่าง?')) return;
+      if (item.hasAttribute('data-clear-all')) {
+        if (!confirm('ล้างข้อมูลทั้งหมด (งบ คำขอ เอกสาร ไฟล์แนบ Log) เพื่อเริ่มทดสอบใหม่? — ข้อมูลหลักยังอยู่')) return;
+        db = emptyDb(db.master);
+        navStack = [];
+        save();
+      } else if (item.hasAttribute('data-reset')) {
+        if (!confirm('แทนที่ข้อมูลทั้งหมดด้วยข้อมูลตัวอย่าง?')) return;
         db = seed();
         navStack = [];
         save();
