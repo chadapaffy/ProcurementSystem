@@ -1468,6 +1468,7 @@
     if (editable) actions.push('<a class="btn" href="#/budget/' + b.id + '/edit">แก้ไขร่าง</a>');
     if (own || canViewAll()) actions.push('<a class="btn" href="#/budget/' + b.id + '/form">พิมพ์แบบฟอร์มขออนุมัติ</a>');
     if (manageSub) actions.push('<a class="btn" href="#/budget/' + b.id + '/items">จัดการ Item ย่อย</a>');
+    if (canPlanCashflow(b)) actions.push('<a class="btn" href="#/budget/' + b.id + '/cashflow">' + (hasCashflow(b) ? 'แก้ไข Plan Cashflow' : 'วาง Plan Cashflow') + '</a>');
     if (active && can('budget.adjust')) actions.push('<a class="btn" href="#/adjust?budget=' + b.id + '">โยก / ลดงบ</a>');
     if (editable) actions.push('<button type="button" class="btn bad" id="cancelBudget">ยกเลิกคำขอ</button>');
     let html = '<div class="page-head detail-head"><div>' +
@@ -1559,6 +1560,14 @@
               '<td class="num nowrap">' + (own ? moneyCell(iu.remaining) + (iu.remaining < 0 ? ' <span class="badge rejected">เกินงบ</span>' : '') : '<span class="muted">ใช้วงเงิน Item ' + esc(node.code) + '</span>') + '</td>' : '') +
             (canRequest ? reqBtn(i) : '') + '</tr>';
         }).join('') + '</tbody></table></div>';
+    }
+
+    // ---- Plan Cashflow (CAPEX ที่เปิดใช้แล้ว)
+    if (isCapex && active) {
+      items += '<h2>Plan Cashflow (ประมาณการใช้เงินรายเดือน)</h2>' + (hasCashflow(b)
+        ? '<section class="card">' + cashflowSummary(b) + '</section>'
+        : '<div class="alert ' + (canPlanCashflow(b) && b.ownerId === me().id ? 'warn' : 'info') + '">ยังไม่ได้วาง Plan Cashflow' +
+          (canPlanCashflow(b) ? ' — <a href="#/budget/' + b.id + '/cashflow">วางแผนว่าแต่ละ Item จะใช้เงินเดือนไหนเท่าไร</a>' : '') + '</div>');
     }
 
     // ---- หลักฐานการอนุมัติ (CAPEX: มติที่ประชุม · CBS: เอกสารอนุมัติผู้บริหาร)
@@ -1911,6 +1920,146 @@
       addHistory(b, 'จัดการ Item ย่อย', 'เพิ่ม ' + added + ' · แก้ไข ' + edited + ' · ลบ ' + removed + ' รายการ (งบรวมไม่เปลี่ยน)', 'งบ ' + b.code);
       save();
       setFlash('success', 'บันทึก Item ย่อยของ ' + b.code + ' แล้ว (เพิ่ม ' + added + ' · แก้ไข ' + edited + ' · ลบ ' + removed + ')');
+      go('#/budget/' + b.id);
+    });
+  }
+
+  // ---------------------------------------------------------------- Plan Cashflow (CAPEX): ประมาณการใช้เงินรายเดือนหลังงบอนุมัติแล้ว
+
+  /** เดือนของปีงบประมาณ: ['2026-01', … '2026-12'] */
+  const fyMonths = (b) => Array.from({ length: 12 }, (_, i) => b.fiscalYear + '-' + String(i + 1).padStart(2, '0'));
+  /** วาง Plan Cashflow ได้: งบ CAPEX ที่เปิดใช้แล้ว โดย Business เจ้าของงบ หรือผู้คุมงบ */
+  const canPlanCashflow = (b) => b.type === 'CAPEX' && isActive(b) && ((b.ownerId === me().id && can('request.create')) || can('budget.manage'));
+  const planOf = (b, itemId, ym) => Number(((b.cashflow || {})[itemId] || {})[ym] || 0);
+  const planItemTotal = (b, itemId) => round2(Object.values((b.cashflow || {})[itemId] || {}).reduce((s, v) => s + Number(v || 0), 0));
+  const hasCashflow = (b) => Object.values(b.cashflow || {}).some((m) => Object.values(m).some((v) => Number(v) > 0));
+  /** ยอดตัดงบจริงรายเดือนของงบ (แยก Item ได้): ใบที่มีหลาย Item แบ่งตามสัดส่วนยอดของบรรทัด */
+  function actualByMonth(b, itemId) {
+    const out = {};
+    db.requests.forEach((r) => {
+      if (r.budgetId !== b.id || !['approved', 'closed'].includes(r.status) || !(r.amount > 0)) return;
+      const share = itemId ? linesAmount(r, leafIdsUnder(b, itemById(b, itemId) || { code: '' })) / r.amount : 1;
+      if (!share) return;
+      (r.cuts || []).forEach((c) => {
+        const ym = String(c.date || c.at || '').slice(0, 7);
+        if (ym) out[ym] = round2((out[ym] || 0) + Number(c.amount || 0) * share);
+      });
+    });
+    return out;
+  }
+
+  /** ตารางสรุป Plan Cashflow ในหน้ารายละเอียดงบ */
+  function cashflowSummary(b) {
+    const months = fyMonths(b);
+    const items = ledgerItems(b);
+    const actual = actualByMonth(b);
+    const planM = (ym) => round2(items.reduce((s, it) => s + planOf(b, it.id, ym), 0));
+    const totalPlan = round2(items.reduce((s, it) => s + planItemTotal(b, it.id), 0));
+    const totalActual = round2(months.reduce((s, ym) => s + (actual[ym] || 0), 0));
+    return '<div class="table-wrap"><table class="cf-table"><thead><tr><th>เดือน</th>' + months.map((ym) => '<th class="num">' + monthLabel(ym) + '</th>').join('') + '<th class="num">รวม</th></tr></thead><tbody>' +
+      '<tr><td class="nowrap">ประมาณการ (Plan)</td>' + months.map((ym) => '<td class="num">' + (planM(ym) ? money(planM(ym)) : '<span class="muted">-</span>') + '</td>').join('') + '<td class="num"><strong>' + money(totalPlan) + '</strong></td></tr>' +
+      '<tr><td class="nowrap">ใช้จริง (ตัดงบ)</td>' + months.map((ym) => '<td class="num">' + (actual[ym] ? money(actual[ym]) : '<span class="muted">-</span>') + '</td>').join('') + '<td class="num"><strong>' + money(totalActual) + '</strong></td></tr>' +
+      '</tbody></table></div>' +
+      '<p class="muted small-note">วางแผนแล้ว ' + money(totalPlan) + ' จากงบ ' + money(budgetTotal(b)) + ' บาท' +
+      (round2(budgetTotal(b) - totalPlan) > 0.005 ? ' · ยังไม่ได้วางแผน ' + money(round2(budgetTotal(b) - totalPlan)) + ' บาท' : '') +
+      (b.cashflowAt ? ' · ปรับปรุงล่าสุด ' + fmtDate(b.cashflowAt) + ' โดย ' + esc(userName(b.cashflowBy)) : '') + '</p>';
+  }
+
+  function viewCashflow(id) {
+    const b = budgetById(id);
+    if (!b) return notFound();
+    if (b.type !== 'CAPEX') return '<div class="alert error">Plan Cashflow ใช้กับงบ CAPEX</div>';
+    if (!canPlanCashflow(b)) return '<div class="alert error">วาง Plan Cashflow ได้เมื่องบได้รับอนุมัติและเปิดใช้งานแล้ว โดย Business เจ้าของงบหรือผู้คุมงบ</div>';
+    const months = fyMonths(b);
+    const items = ledgerItems(b);
+    const rows = items.map((it) => '<tr data-item="' + esc(it.id) + '" data-total="' + itemTotal(it) + '"><td class="cf-item"><strong>' + esc(it.code) + '</strong><div class="muted">' + esc(it.name) + '</div>' +
+        '<div class="muted">งบ ' + money(itemTotal(it)) + '</div></td>' +
+      months.map((ym) => '<td><input name="cf" data-ym="' + ym + '" type="number" min="0" step="0.01" class="right" value="' + (planOf(b, it.id, ym) || '') + '" aria-label="' + esc(it.code + ' ' + monthLabel(ym)) + '"></td>').join('') +
+      '<td class="num" data-row-total>0.00</td><td class="num" data-row-left>0.00</td></tr>').join('');
+    return '<div class="page-head"><div><h1>Plan Cashflow · ' + esc(b.code) + '</h1><div class="page-sub">' + esc(b.name) +
+      ' — ประมาณการว่าแต่ละ Item จะใช้เงินเดือนไหนเท่าไร (รวม VAT) ในปีงบประมาณ ' + esc(b.fiscalYear) + ' · รวมของแต่ละ Item ต้องไม่เกินวงเงินของ Item</div></div></div>' +
+      '<div id="formError"></div>' +
+      '<form id="cashflowForm" data-id="' + b.id + '"><section class="card form-section">' +
+      '<div class="table-wrap"><table class="edit-table cf-edit"><thead><tr><th style="min-width:12rem">Item</th>' +
+      months.map((ym) => '<th class="num">' + monthLabel(ym) + '</th>').join('') + '<th class="num">รวมแผน</th><th class="num">ยังไม่วางแผน</th></tr></thead>' +
+      '<tbody>' + rows + '</tbody><tfoot><tr><td><strong>รวมทุก Item</strong></td>' + months.map((ym) => '<td class="num" data-col="' + ym + '">0.00</td>').join('') +
+      '<td class="num" data-sum>0.00</td><td class="num" data-left>0.00</td></tr></tfoot></table></div>' +
+      '<div class="actions"><button type="button" class="btn small" data-spread title="แบ่งยอดที่ยังไม่วางแผนของแต่ละ Item เท่า ๆ กันในเดือนที่เหลือของปี">เกลี่ยยอดที่เหลือเท่า ๆ กัน</button>' +
+      '<button type="button" class="btn small" data-clear>ล้างทั้งหมด</button></div></section>' +
+      '<div class="actions"><button class="btn primary" type="submit">บันทึก Plan Cashflow</button><a class="btn" data-back href="#/budget/' + b.id + '">ยกเลิก</a></div></form>';
+  }
+
+  function bindCashflow() {
+    const form = document.getElementById('cashflowForm');
+    if (!form) return;
+    const b = budgetById(form.dataset.id);
+    const months = fyMonths(b);
+    const rows = () => Array.from(form.querySelectorAll('tbody tr'));
+    const rowSum = (tr) => round2(Array.from(tr.querySelectorAll('[name="cf"]')).reduce((s, i) => s + Number(i.value || 0), 0));
+    const over = () => rows().filter((tr) => rowSum(tr) > Number(tr.dataset.total) + 0.005).map((tr) => tr.querySelector('strong').textContent);
+    const recalc = () => {
+      let sum = 0;
+      let left = 0;
+      rows().forEach((tr) => {
+        const s = rowSum(tr);
+        const l = round2(Number(tr.dataset.total) - s);
+        sum += s;
+        left += l;
+        tr.querySelector('[data-row-total]').textContent = money(s);
+        const lc = tr.querySelector('[data-row-left]');
+        lc.innerHTML = moneyCell(l);
+      });
+      months.forEach((ym) => {
+        const v = round2(Array.from(form.querySelectorAll('[name="cf"][data-ym="' + ym + '"]')).reduce((s, i) => s + Number(i.value || 0), 0));
+        form.querySelector('[data-col="' + ym + '"]').textContent = money(v);
+      });
+      form.querySelector('[data-sum]').textContent = money(sum);
+      form.querySelector('[data-left]').innerHTML = moneyCell(round2(left));
+    };
+    form.addEventListener('input', recalc);
+    form.addEventListener('click', (e) => {
+      if (e.target.matches('[data-clear]')) {
+        form.querySelectorAll('[name="cf"]').forEach((i) => { i.value = ''; });
+        recalc();
+      }
+      if (e.target.matches('[data-spread]')) {
+        // เดือนที่เหลือของปี (ถ้าปีงบผ่านไปแล้ว/ยังไม่ถึง ใช้ทั้ง 12 เดือน)
+        const now = new Date().toISOString().slice(0, 7);
+        const rest = months.filter((ym) => ym >= now);
+        const use = rest.length ? rest : months;
+        rows().forEach((tr) => {
+          const left = round2(Number(tr.dataset.total) - rowSum(tr));
+          if (left <= 0) return;
+          const per = Math.floor((left / use.length) * 100) / 100;
+          use.forEach((ym, i) => {
+            const inp = tr.querySelector('[name="cf"][data-ym="' + ym + '"]');
+            const add = i === use.length - 1 ? round2(left - per * (use.length - 1)) : per;
+            inp.value = round2(Number(inp.value || 0) + add) || '';
+          });
+        });
+        recalc();
+      }
+    });
+    guard(form, [{ btn: 'button[type="submit"]', missing: () => over().map((c) => 'แผนของ ' + c + ' เกินวงเงิน Item') }]);
+    recalc();
+    form.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const bad = over();
+      if (bad.length) { showErrors(bad.map((c) => 'แผนของ ' + c + ' เกินวงเงิน Item')); return; }
+      const plan = {};
+      rows().forEach((tr) => {
+        const m = {};
+        tr.querySelectorAll('[name="cf"]').forEach((i) => { const v = round2(i.value); if (v > 0) m[i.dataset.ym] = v; });
+        if (Object.keys(m).length) plan[tr.dataset.item] = m;
+      });
+      const first = !hasCashflow(b);
+      b.cashflow = plan;
+      b.cashflowAt = new Date().toISOString();
+      b.cashflowBy = me().id;
+      const total = round2(Object.values(plan).reduce((s, m) => s + Object.values(m).reduce((x, v) => x + v, 0), 0));
+      addHistory(b, first ? 'วาง Plan Cashflow' : 'ปรับ Plan Cashflow', 'รวมแผน ' + money(total) + ' จากงบ ' + money(budgetTotal(b)) + ' บาท', 'งบ ' + b.code);
+      save();
+      setFlash('success', 'บันทึก Plan Cashflow ของ ' + b.code + ' แล้ว');
       go('#/budget/' + b.id);
     });
   }
@@ -4315,6 +4464,7 @@
       ['ปรับงบ', 'ปิดปีงบ: งบเหลือหมดสิทธิ์หรือยกไป', 'ยังไม่ได้ทำ — งบปีก่อนยังใช้ต่อได้เหมือนเดิม'],
       ['ปรับงบ', 'มีงบกลาง/งบสำรองไหม', 'ไม่มี — โยกตรงจากรายการ/โครงการหนึ่งไปอีกที่'],
       ['ปรับงบ', 'โยก/ลดงบแล้วแจ้งเจ้าของงบไหม', 'บันทึกในประวัติของงบทั้งสองฝั่ง (ยังไม่มีแจ้งเตือน)'],
+      ['CAPEX', 'Plan Cashflow', 'หลังงบอนุมัติ (เปิดใช้แล้ว) Business เจ้าของงบหรือผู้คุมงบ ประมาณการว่าแต่ละ Item จะใช้เงินเดือนไหนเท่าไร (รวม VAT) ตามเดือนของปีงบประมาณ · รวมของแต่ละ Item ต้องไม่เกินวงเงิน Item · ไม่บังคับก่อนขอใช้งบ (แจ้งเตือนในหน้างบ) · แสดงเทียบกับยอดตัดงบจริงรายเดือน · แก้ได้ตลอด เก็บประวัติ'],
       ['ใช้งบ', 'ใบดำเนินการใช้งบ 1 ใบใช้ได้หลาย Item ไหม', 'ได้ ทั้ง CAPEX และ OPEX — เลือก Item ทีละบรรทัด · ตรวจเกินงบทีละ Item และทั้งโครงการ · ตัดงบแบ่งตามสัดส่วนยอดของแต่ละ Item · DOA ของ CAPEX อ้างอิงหมวดของ Item ที่ขอใช้ยอดมากที่สุดในใบ'],
       ['ใช้งบ', 'ขอเกินงบรายการย่อยแต่ไม่เกินงบโครงการ', 'ขอได้ ระบบเตือน ผู้คุมงบต้องใส่ Note'],
       ['ใช้งบ', 'ขอเกินงบโครงการ', 'อนุมัติไม่ได้จนกว่าผู้คุมงบโยกงบเข้า หรือส่งกลับให้ขอเพิ่มงบ'],
@@ -4593,7 +4743,7 @@
   /** หน้าฟอร์ม (สร้าง/แก้ไข) ไม่ใช่ที่ที่ควรย้อนกลับมา — หลังส่งหรือยกเลิกแล้วจะถูกตัดออกจาก stack */
   function isFormHash(hash) {
     const p = navPath(hash).slice(2).split('/');
-    return (p[0] === 'budget' && (p[1] === 'new' || p[2] === 'edit' || p[2] === 'items')) || (p[0] === 'request' && (p[1] === 'new' || p[2] === 'edit')) ||
+    return (p[0] === 'budget' && (p[1] === 'new' || p[2] === 'edit' || p[2] === 'items' || p[2] === 'cashflow')) || (p[0] === 'request' && (p[1] === 'new' || p[2] === 'edit')) ||
       (p[0] === 'change' && (p[1] === 'new' || p[2] === 'edit')) || p[0] === 'adjust';
   }
   /** หน้าที่อ้างถึงข้อมูลที่ถูกลบไปแล้วไม่ใช้เป็นปลายทางย้อนกลับ */
@@ -4661,7 +4811,7 @@
   function backTarget(parts) {
     const budgetList = lastBudgetList || (canViewAll() ? '#/budgets' : '#/my-budgets');
     if (parts[0] === 'budget' && parts[1] === 'new') return budgetList;
-    if (parts[0] === 'budget' && (parts[2] === 'edit' || parts[2] === 'form' || parts[2] === 'items')) return '#/budget/' + parts[1];
+    if (parts[0] === 'budget' && (parts[2] === 'edit' || parts[2] === 'form' || parts[2] === 'items' || parts[2] === 'cashflow')) return '#/budget/' + parts[1];
     if (parts[0] === 'budget') return budgetList;
     if (parts[0] === 'request' && parts[1] === 'new') return '#/budget/' + parts[2];
     if (parts[0] === 'request' && (parts[2] === 'edit' || parts[2] === 'memo')) return '#/request/' + parts[1];
@@ -4696,6 +4846,7 @@
     else if (parts[0] === 'budget' && parts[2] === 'edit') html = viewBudgetForm(parts[1]);
     else if (parts[0] === 'budget' && parts[2] === 'form') html = viewBudgetRequestForm(parts[1]);
     else if (parts[0] === 'budget' && parts[2] === 'items') html = viewSubItems(parts[1]);
+    else if (parts[0] === 'budget' && parts[2] === 'cashflow') html = viewCashflow(parts[1]);
     else if (parts[0] === 'budget') html = viewBudgetDetail(parts[1]);
     else if (parts[0] === 'request' && parts[1] === 'new') html = viewRequestForm(parts[2], null, params);
     else if (parts[0] === 'request' && parts[2] === 'edit') html = viewRequestForm(null, parts[1], params);
@@ -4733,6 +4884,7 @@
     bindChangeForm();
     bindSubItems();
     bindMemoDoc();
+    bindCashflow();
     bindChangeDetail();
     bindAdjust();
     bindLog();

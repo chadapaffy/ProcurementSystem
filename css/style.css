@@ -776,3 +776,11 @@ input.locked { background: var(--surface-2, #f3f4f6); color: var(--muted, #6b728
 .sub-sec tr.lv2 .si-code { padding-left: 1.4rem; position: relative; }
 .sub-sec tr.lv2 .si-code::before { content: '└'; position: absolute; left: .35rem; top: 50%; transform: translateY(-50%); color: var(--text-3, #9ca3af); }
 .sub-sec tr.lv2 td { background: #fafbfc; }
+
+/* Plan Cashflow */
+.cf-edit input[name="cf"] { min-width: 6.5rem; }
+.cf-edit .cf-item { min-width: 12rem; }
+.cf-edit tfoot td { font-weight: 600; }
+.cf-table td, .cf-table th { white-space: nowrap; }
+.cf-edit tr > :first-child, .cf-table tr > :first-child { position: sticky; left: 0; background: var(--surface, #fff); z-index: 1; }
+.cf-edit thead tr > :first-child, .cf-table thead tr > :first-child { background: var(--surface-2, #f8fafc); }
