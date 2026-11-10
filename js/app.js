@@ -1108,8 +1108,6 @@
     return '<tr data-item-id="' + esc(it.id || '') + '">' +
       '<td><input name="itCode" value="' + esc(it.code) + '" placeholder="1.1" aria-label="รหัส"></td>' +
       '<td><input name="itName" value="' + esc(it.name) + '" aria-label="รายการ"></td>' +
-      '<td><input name="itQty" type="number" min="0" step="any" value="' + esc(it.qty) + '" aria-label="จำนวน"></td>' +
-      '<td><input name="itUnit" value="' + esc(it.unit) + '" aria-label="หน่วย"></td>' +
       '<td><input name="itAmount" type="number" min="0" step="0.01" class="right" value="' + esc(it.amount || '') + '" aria-label="ก่อน VAT"></td>' +
       '<td class="center"><input name="itVat" type="checkbox"' + (Number(it.vat) > 0 ? ' checked' : '') + ' aria-label="VAT 7%"></td>' +
       '<td><input name="itGl" list="glList" value="' + esc(it.glCode) + '" aria-label="GL Code"></td>' +
@@ -1209,9 +1207,9 @@
       '<span class="muted">รวม <strong data-total="capex">0.00</strong> บาท</span></div></fieldset>' +
 
       '<fieldset data-for="CBS" data-structure="items"><legend>Item ของงบ OPEX</legend>' +
-      '<p class="muted small-note">งบ OPEX ต้องมี Item — กรอก <strong>Item หลัก</strong> (รหัส 1, 2, 3 …) พร้อมวงเงินของแต่ละ Item · <strong>Item ย่อย</strong> (1.1, 2.1 …) เพิ่มได้ภายหลังเมื่องบเปิดใช้แล้ว ที่หน้ารายละเอียดงบ (วงเงินรวมไม่เกิน Item หลัก และจะกำหนดวงเงินหรือไม่ก็ได้)</p>' +
-      '<div class="table-wrap"><table class="edit-table"><thead><tr><th style="width:5.5rem">รหัส</th><th style="min-width:12rem">รายการ</th><th style="width:6rem">จำนวน</th>' +
-      '<th style="width:5.5rem">หน่วย</th><th class="num" style="width:9rem">ก่อน VAT</th><th style="width:4rem">VAT 7%</th>' +
+      '<p class="muted small-note">งบ OPEX ต้องมี Item — กรอก <strong>Item หลัก</strong> (รหัส 1, 2, 3 …) พร้อมวงเงินของแต่ละ Item (ไม่ต้องกรอกจำนวน/หน่วย) · <strong>Item ย่อย</strong> 2 ระดับ (1.1 และ 1.1.1) พร้อมจำนวน/หน่วย เพิ่มได้เรื่อย ๆ ภายหลังเมื่องบเปิดใช้แล้ว ที่หน้ารายละเอียดงบ (วงเงินรวมไม่เกิน Item หลัก และจะกำหนดวงเงินหรือไม่ก็ได้)</p>' +
+      '<div class="table-wrap"><table class="edit-table"><thead><tr><th style="width:5.5rem">รหัส</th><th style="min-width:12rem">รายการ</th>' +
+      '<th class="num" style="width:9rem">ก่อน VAT</th><th style="width:4rem">VAT 7%</th>' +
       '<th style="width:7rem">GL Code</th><th style="width:10rem">GL Name</th><th style="width:7rem">บริษัทที่ลงทุน</th><th style="width:3rem"></th></tr></thead>' +
       '<tbody id="cbsRows">' + cbsItems.map((it) => cbsRow(Object.assign({}, it, { investor: it.investor || v.company }), false)).join('') + '</tbody></table></div>' +
       '<div class="actions table-actions"><button type="button" class="btn small" data-add-row="cbs">+ เพิ่มรายการ</button>' +
@@ -1325,8 +1323,9 @@
           it.assetType = val(tr, 'itAsset').value;
           it.doa = val(tr, 'itDoa').value;
         } else {
-          it.qty = val(tr, 'itQty').value === '' ? '' : Number(val(tr, 'itQty').value);
-          it.unit = val(tr, 'itUnit').value.trim();
+          // Item หลักไม่มีจำนวน / หน่วย (กรอกที่ Item ย่อย)
+          it.qty = '';
+          it.unit = '';
           it.vat = val(tr, 'itVat').checked ? round2(it.amount * VAT_RATE) : 0;
           it.glCode = val(tr, 'itGl').value.trim();
           it.glName = val(tr, 'itGlName').value.trim();
@@ -1540,7 +1539,7 @@
         }).join('') + '</tbody></table></div>';
     } else {
       items = '<h2>Item ของงบ (Item หลัก / Item ย่อย)</h2>' +
-        '<p class="muted small-note">Item หลักกำหนดตอนตั้งงบ · Item ย่อย (1.1, 2.1) เพิ่มได้ภายหลังเมื่องบเปิดใช้แล้ว วงเงินรวมไม่เกิน Item หลัก และจะกำหนดวงเงินหรือไม่ก็ได้' +
+        '<p class="muted small-note">Item หลักกำหนดตอนตั้งงบ (ไม่มีจำนวน/หน่วย) · Item ย่อย 2 ระดับ (1.1 และ 1.1.1) เพิ่มได้เรื่อย ๆ หลังงบเปิดใช้แล้ว วงเงินรวมไม่เกิน Item หลัก และจะกำหนดวงเงินหรือไม่ก็ได้' +
         (manageSub ? ' — <a href="#/budget/' + b.id + '/items">จัดการ Item ย่อย</a>' : '') + '</p>' +
         '<div class="table-wrap"><table><thead><tr>' +
         '<th>รหัส</th><th style="min-width:14rem">รายการ</th><th>GL</th><th class="num">งบ (รวม VAT)</th>' + (active ? '<th class="num">ตัดงบแล้ว</th><th class="num">จองไว้</th><th class="num">คงเหลือ</th>' : '') +
@@ -1730,18 +1729,22 @@
   /** มีคำขอใช้ Item นี้ (หรือ Item ย่อยใต้ Item นี้) แล้ว: แก้รหัส / ลบไม่ได้ */
   const itemInUse = (b, it) => db.requests.some((r) => r.budgetId === b.id && r.lines.some((l) => leafIdsUnder(b, it).includes(l.itemId)));
 
+  /** แถว Item ย่อย (ระดับ 2 = 1.1, ระดับ 3 = 1.1.1) */
   function subItemRow(b, it, locked) {
-    return '<tr data-item-id="' + esc(it.id || '') + '">' +
-      '<td><input name="siCode" value="' + esc(it.code || '') + '" placeholder="1.1" aria-label="รหัส Item ย่อย"' + (locked ? ' readonly class="locked" title="มีการขอใช้แล้ว แก้รหัสไม่ได้"' : '') + '></td>' +
+    const lv = it.code ? depth(it) : 1;
+    return '<tr data-item-id="' + esc(it.id || '') + '" data-level="' + lv + '" class="lv' + lv + '">' +
+      '<td><div class="si-code"><input name="siCode" value="' + esc(it.code || '') + '" placeholder="1.1" aria-label="รหัส Item ย่อย"' +
+        (locked ? ' readonly class="locked" title="มีการขอใช้แล้ว แก้รหัสไม่ได้"' : '') + '></div></td>' +
       '<td><input name="siName" value="' + esc(it.name || '') + '" aria-label="ชื่อรายการ"></td>' +
       '<td><input name="siQty" type="number" min="0" step="any" value="' + esc(it.qty || '') + '" aria-label="จำนวน"></td>' +
       '<td><input name="siUnit" value="' + esc(it.unit || '') + '" aria-label="หน่วย"></td>' +
       '<td><input name="siAmount" type="number" min="0" step="0.01" class="right" value="' + esc(it.amount || '') + '" placeholder="ไม่กำหนด" aria-label="วงเงินก่อน VAT เว้นว่าง = ไม่กำหนด"></td>' +
       '<td class="center"><input name="siVat" type="checkbox"' + (Number(it.vat) > 0 ? ' checked' : '') + ' aria-label="VAT 7%"></td>' +
       '<td><input name="siGl" list="glList" value="' + esc(it.glCode || '') + '" aria-label="GL Code"></td>' +
-      '<td><div class="select-wrap"><select name="siInv" aria-label="บริษัทที่ลงทุน"><option value="">ตาม Item หลัก</option>' +
+      '<td><div class="select-wrap"><select name="siInv" aria-label="บริษัทที่ลงทุน"><option value="">ตาม Item แม่</option>' +
       optList(db.master.companies, 'code', (c) => c.code, it.investor || '') + '</select></div></td>' +
-      '<td>' + (locked ? '<span class="muted" title="มีการขอใช้แล้ว ลบไม่ได้">🔒</span>' : '<button type="button" class="btn small bad" data-remove-sub title="ลบ">×</button>') + '</td></tr>';
+      '<td class="nowrap">' + (lv === 1 ? '<button type="button" class="btn small" data-add-child title="เพิ่ม Item ย่อยระดับถัดไป (เช่น 1.1.1)">+ ย่อย</button> ' : '') +
+      (locked ? '<span class="muted" title="มีการขอใช้แล้ว ลบไม่ได้">🔒</span>' : '<button type="button" class="btn small bad" data-remove-sub title="ลบ">×</button>') + '</td></tr>';
   }
 
   function viewSubItems(id) {
@@ -1751,20 +1754,18 @@
     if (!canManageSubItems(b)) return '<div class="alert error">เพิ่ม Item ย่อยได้เมื่องบเปิดใช้งานแล้ว โดย Business เจ้าของงบหรือผู้คุมงบ</div>';
     const mains = sortedItems(b).filter((x) => depth(x) === 0);
     const sections = mains.map((m) => {
-      const subs = sortedItems(b).filter((x) => depth(x) === 1 && parentOf(b, x) === m);
-      const deeper = sortedItems(b).filter((x) => depth(x) >= 2 && rootOf(b, x) === m);
+      const subs = sortedItems(b).filter((x) => depth(x) >= 1 && depth(x) <= 2 && rootOf(b, x) === m);
       return '<section class="card form-section sub-sec" data-main="' + esc(m.id) + '" data-code="' + esc(m.code) + '" data-total="' + itemTotal(m) + '">' +
         '<div class="section-head"><div><h2 class="section-title">' + esc(m.code + ' ' + m.name) + '</h2>' +
         '<div class="muted section-hint">วงเงิน Item หลัก <strong>' + money(itemTotal(m)) + '</strong> บาท · จัดสรรให้ Item ย่อยแล้ว <strong data-alloc>0.00</strong> · ยังไม่จัดสรร <strong data-free>0.00</strong></div></div>' +
         '<button type="button" class="btn" data-add-sub="' + esc(m.id) + '">+ เพิ่ม Item ย่อย</button></div>' +
-        '<div class="table-wrap"><table class="edit-table"><thead><tr><th style="width:7rem">รหัส</th><th style="min-width:12rem">รายการ</th><th style="width:6rem">จำนวน</th><th style="width:5.5rem">หน่วย</th>' +
-        '<th class="num" style="width:9rem">วงเงินก่อน VAT</th><th style="width:4rem">VAT 7%</th><th style="width:7rem">GL Code</th><th style="width:8rem">บริษัทที่ลงทุน</th><th style="width:3rem"></th></tr></thead>' +
+        '<div class="table-wrap"><table class="edit-table"><thead><tr><th style="width:8.5rem">รหัส</th><th style="min-width:12rem">รายการ</th><th style="width:6rem">จำนวน</th><th style="width:5.5rem">หน่วย</th>' +
+        '<th class="num" style="width:9rem">วงเงินก่อน VAT</th><th style="width:4rem">VAT 7%</th><th style="width:7rem">GL Code</th><th style="width:8rem">บริษัทที่ลงทุน</th><th style="width:6.5rem"></th></tr></thead>' +
         '<tbody>' + subs.map((x) => subItemRow(b, x, itemInUse(b, x))).join('') + '</tbody></table></div>' +
-        (deeper.length ? '<p class="muted small-note">Item ระดับถัดไป (แก้ไม่ได้ในหน้านี้): ' + deeper.map((x) => esc(x.code + ' ' + x.name + (hasOwnBudget(b, x) ? ' ' + money(itemTotal(x)) : ''))).join(' · ') + '</p>' : '') +
         '</section>';
     }).join('');
     return '<div class="page-head"><div><h1>จัดการ Item ย่อย · ' + esc(b.code) + '</h1><div class="page-sub">' + esc(b.name) +
-      ' — เพิ่ม Item ย่อย (1.1, 2.1) ใต้ Item หลักได้ วงเงินรวมของ Item ย่อยต้องไม่เกิน Item หลัก และจะกำหนดวงเงินของ Item ย่อยหรือไม่ก็ได้ (เว้นว่าง = ไม่กำหนด ใช้วงเงินของ Item หลัก)</div></div></div>' +
+      ' — เพิ่ม Item ย่อยได้ 2 ระดับใต้ Item หลัก (1 → 1.1 → 1.1.1) และเพิ่มได้เรื่อย ๆ · เงื่อนไข: วงเงินรวมของ Item ย่อยต้องไม่เกิน Item หลัก · จะกำหนดวงเงินของ Item ย่อยหรือไม่ก็ได้ (เว้นว่าง = ใช้วงเงินของ Item แม่) · จำนวน / หน่วย กรอกที่ Item ย่อย</div></div></div>' +
       '<div id="formError"></div>' +
       '<datalist id="glList">' + db.master.glCodes.map((g) => '<option value="' + esc(g.code) + '">' + esc(g.name) + '</option>').join('') + '</datalist>' +
       '<form id="subItemsForm" data-id="' + b.id + '"><div class="form-main">' + sections +
@@ -1785,33 +1786,30 @@
       return { tr, id: tr.dataset.itemId || '', code: q('siCode').value.trim(), name: q('siName').value.trim(), qty: q('siQty').value === '' ? '' : Number(q('siQty').value),
         unit: q('siUnit').value.trim(), amount, vat: q('siVat').checked ? round2(amount * VAT_RATE) : 0, glCode: q('siGl').value.trim(), investor: q('siInv').value };
     }).filter((r) => r.code || r.name || r.amount);
-    /** งบทั้งหมดหลังแก้: Item หลัก + Item ย่อยจากฟอร์ม + Item ระดับถัดไปที่ยังคงอยู่ */
+    /** งบทั้งหมดหลังแก้: Item หลัก + Item ย่อยทุกระดับจากฟอร์ม */
     const draftItems = () => {
       const out = b.items.filter((x) => depth(x) === 0).map((x) => Object.assign({}, x));
-      sections().forEach((sec) => {
-        const m = mainOf(sec);
-        const rows = readRows(sec);
-        rows.forEach((r) => out.push({ id: r.id || '(new)' + r.code, code: r.code, name: r.name, amount: r.amount, vat: r.vat }));
-        const keep = new Set(rows.map((r) => r.code));
-        b.items.filter((x) => depth(x) >= 2 && rootOf(b, x) === m && keep.has(x.code.split('.').slice(0, 2).join('.'))).forEach((x) => out.push(Object.assign({}, x)));
-      });
+      sections().forEach((sec) => readRows(sec).forEach((r) => out.push({ id: r.id || '(new)' + r.code, code: r.code, name: r.name, amount: r.amount, vat: r.vat })));
       return out;
     };
     const errorsNow = () => {
       const out = [];
       const all = draftItems();
-      const tmp = { type: 'CBS', items: all };
       sections().forEach((sec) => {
         const m = mainOf(sec);
-        readRows(sec).forEach((r) => {
+        const rows = readRows(sec);
+        const codes = new Set(rows.map((r) => r.code));
+        rows.forEach((r) => {
           const parts = r.code.split('.');
-          if (!r.code || parts.length !== depth(m) + 2 || !r.code.startsWith(m.code + '.') || !parts[parts.length - 1]) out.push('รหัส Item ย่อยของ ' + m.code + ' ต้องเป็นรูปแบบ ' + m.code + '.1, ' + m.code + '.2 …');
+          const okFmt = r.code.startsWith(m.code + '.') && /^\d+(\.\d+){1,2}$/.test(r.code) && parts.length <= 3;
+          if (!okFmt) out.push('รหัส ' + (r.code || '(ว่าง)') + ' ต้องเป็น ' + m.code + '.1 หรือ ' + m.code + '.1.1 (ไม่เกิน 3 ระดับ)');
+          else if (parts.length === 3 && !codes.has(parts.slice(0, 2).join('.'))) out.push('ยังไม่มี Item ' + parts.slice(0, 2).join('.') + ' สำหรับ ' + r.code);
           if (!r.name) out.push('กรุณากรอกชื่อรายการของ ' + (r.code || 'Item ย่อย'));
         });
       });
       const dup = all.map((x) => x.code).filter((c, i, arr) => c && arr.indexOf(c) !== i);
       if (dup.length) out.push('รหัสซ้ำ: ' + uniq(dup).join(', '));
-      return out.concat(treeErrors(tmp));
+      return uniq(out.concat(treeErrors({ type: 'CBS', items: all })));
     };
     const recalc = () => {
       const tmp = { type: 'CBS', items: draftItems() };
@@ -1823,28 +1821,61 @@
         const free = sec.querySelector('[data-free]');
         free.textContent = money(round2(total - alloc));
         free.classList.toggle('neg', alloc > total + 0.005);
+        // ระดับของแถวตามรหัส (เยื้องให้เห็นลำดับชั้น)
+        sec.querySelectorAll('tbody tr').forEach((tr) => {
+          const lv = Math.min(2, Math.max(1, tr.querySelector('[name="siCode"]').value.split('.').length - 1));
+          tr.className = 'lv' + lv;
+          tr.dataset.level = lv;
+        });
       });
+    };
+    const nextChildCode = (sec, parentCode) => {
+      const nums = readRows(sec).map((r) => r.code).filter((c) => c.startsWith(parentCode + '.') && c.split('.').length === parentCode.split('.').length + 1)
+        .map((c) => Number(c.split('.').pop())).filter((x) => !isNaN(x));
+      return parentCode + '.' + ((nums.length ? Math.max.apply(null, nums) : 0) + 1);
     };
     form.addEventListener('click', (e) => {
       const add = e.target.closest('[data-add-sub]');
       if (add) {
         const sec = form.querySelector('[data-main="' + add.dataset.addSub + '"]');
-        const m = mainOf(sec);
-        const nums = readRows(sec).map((r) => Number(r.code.split('.').pop())).filter((x) => !isNaN(x));
         const tbody = sec.querySelector('tbody');
         tbody.insertAdjacentHTML('beforeend', tpl);
         const row = tbody.lastElementChild;
-        row.querySelector('[name="siCode"]').value = m.code + '.' + ((nums.length ? Math.max.apply(null, nums) : 0) + 1);
+        row.querySelector('[name="siCode"]').value = nextChildCode(sec, mainOf(sec).code);
         row.querySelector('[name="siName"]').focus();
         recalc();
+        return;
       }
-      if (e.target.matches('[data-remove-sub]')) { e.target.closest('tr').remove(); recalc(); }
+      const child = e.target.closest('[data-add-child]');
+      if (child) {
+        const tr = child.closest('tr');
+        const sec = tr.closest('[data-main]');
+        const pcode = tr.querySelector('[name="siCode"]').value.trim();
+        if (!pcode) return;
+        // แทรกต่อจากแถวสุดท้ายที่อยู่ใต้ Item นี้
+        let after = tr;
+        Array.from(sec.querySelectorAll('tbody tr')).forEach((x) => { if (x.querySelector('[name="siCode"]').value.trim().startsWith(pcode + '.')) after = x; });
+        after.insertAdjacentHTML('afterend', tpl);
+        const row = after.nextElementSibling;
+        row.querySelector('[name="siCode"]').value = nextChildCode(sec, pcode);
+        row.querySelector('[name="siName"]').focus();
+        recalc();
+        return;
+      }
+      if (e.target.matches('[data-remove-sub]')) {
+        const tr = e.target.closest('tr');
+        const code = tr.querySelector('[name="siCode"]').value.trim();
+        const sec = tr.closest('[data-main]');
+        const kids = code ? Array.from(sec.querySelectorAll('tbody tr')).filter((x) => x !== tr && x.querySelector('[name="siCode"]').value.trim().startsWith(code + '.')) : [];
+        if (kids.some((x) => x.querySelector('.locked'))) { alert('ลบไม่ได้ — มี Item ย่อยใต้ ' + code + ' ที่มีการขอใช้แล้ว'); return; }
+        if (kids.length && !confirm('ลบ ' + code + ' พร้อม Item ย่อยข้างใต้อีก ' + kids.length + ' รายการ?')) return;
+        kids.forEach((x) => x.remove());
+        tr.remove();
+        recalc();
+      }
     });
     form.addEventListener('input', recalc);
-    form.addEventListener('change', (e) => {
-      if (e.target.matches('[name="siGl"]')) { recalc(); }
-      recalc();
-    });
+    form.addEventListener('change', recalc);
     guard(form, [{ btn: 'button[type="submit"]', missing: () => errorsNow() }], '.actions');
     recalc();
     form.addEventListener('submit', (e) => {
@@ -1854,7 +1885,7 @@
       let added = 0;
       let edited = 0;
       let removed = 0;
-      const keepIds = new Set();
+      const keepIds = new Set(b.items.filter((x) => depth(x) === 0).map((x) => x.id));
       const apply = (target, r) => {
         Object.assign(target, { code: r.code, name: r.name, qty: r.qty, unit: r.unit, amount: r.amount, vat: r.vat, glCode: r.glCode });
         const g = db.master.glCodes.find((x) => x.code === r.glCode);
@@ -1862,7 +1893,6 @@
         if (r.investor) target.investor = r.investor; else delete target.investor;
       };
       sections().forEach((sec) => {
-        const m = mainOf(sec);
         readRows(sec).forEach((r) => {
           const ex = r.id ? itemById(b, r.id) : null;
           if (ex) { apply(ex, r); edited += 1; keepIds.add(ex.id); } else {
@@ -1873,12 +1903,11 @@
             added += 1;
           }
         });
-        // ลบ Item ย่อยที่เอาออกจากฟอร์ม (พร้อมรายการระดับถัดไปใต้ Item นั้น)
-        b.items.filter((x) => depth(x) === 1 && rootOf(b, x) === m && !keepIds.has(x.id)).forEach((x) => {
-          b.items = b.items.filter((y) => y !== x && !y.code.startsWith(x.code + '.'));
-          removed += 1;
-        });
       });
+      // ลบ Item ย่อยที่เอาออกจากฟอร์ม (ที่ยังไม่มีการขอใช้)
+      const before = b.items.length;
+      b.items = b.items.filter((x) => keepIds.has(x.id) || itemInUse(b, x));
+      removed = before - b.items.length;
       addHistory(b, 'จัดการ Item ย่อย', 'เพิ่ม ' + added + ' · แก้ไข ' + edited + ' · ลบ ' + removed + ' รายการ (งบรวมไม่เปลี่ยน)', 'งบ ' + b.code);
       save();
       setFlash('success', 'บันทึก Item ย่อยของ ' + b.code + ' แล้ว (เพิ่ม ' + added + ' · แก้ไข ' + edited + ' · ลบ ' + removed + ')');
@@ -4304,8 +4333,8 @@
       ['ใช้งบ', 'ขั้นตอน Memo', 'บันทึกคำขอ → ระบบออกเลขที่ Memo (MEMO-บริษัทปี-ลำดับ) และจองงบไว้ → ผู้ขอพิมพ์ไปให้ผู้บริหารเซ็น → แนบไฟล์ที่เซ็นแล้ว + ชื่อผู้บริหาร → ส่งให้ผู้คุมงบ · แก้ไขคำขอระหว่างรอได้ (ต้องเซ็นใหม่ ใช้เลขที่เดิม)'],
       ['ใช้งบ', 'บริษัทที่ลงทุน', 'งบที่มี Item: กำหนดที่ Item ตอนตั้งงบ (ค่าตั้งต้น = บริษัทเจ้าของงบ) ตอนขอใช้ไม่ต้องเลือก · งบที่ไม่มี Item: เลือกรายบรรทัดตอนขอดำเนินการใช้งบ (ค่าตั้งต้น = บริษัทเจ้าของงบ) · แสดงในใบดำเนินการใช้งบและ Memo'],
       ['ใช้งบ', 'หมวดค่าใช้จ่าย', 'ใช้กับงบรวมโครงการ · แก้รายการหมวดได้ที่ข้อมูลหลัก'],
-      ['OPEX', 'Item ของงบ OPEX', 'ต้องมี Item เสมอ (ไม่มีงบรวมทั้งโครงการ) · Item หลัก (1, 2, 3) กำหนดตอนตั้งงบพร้อมวงเงิน · Item ย่อย (1.1, 2.1) เพิ่มได้หลังงบเปิดใช้แล้ว โดย Business เจ้าของงบหรือผู้คุมงบ (ไม่ต้องอนุมัติซ้ำ ยอดงบรวมไม่เปลี่ยน)'],
-      ['OPEX', 'วงเงินของ Item ย่อย', 'รวมกันต้องไม่เกินวงเงิน Item หลัก · จะกำหนดหรือไม่กำหนดวงเงินของ Item ย่อยก็ได้ (ไม่กำหนด = ใช้วงเงินของ Item หลัก) · Item ย่อยที่กำหนดวงเงินถูกตรวจทั้งวงเงินตัวเองและวงเงิน Item หลัก · Item ย่อยที่มีการขอใช้แล้ว แก้รหัส/ลบไม่ได้'],
+      ['OPEX', 'Item ของงบ OPEX', 'ต้องมี Item เสมอ (ไม่มีงบรวมทั้งโครงการ) · Item หลัก (1, 2, 3) กำหนดตอนตั้งงบพร้อมวงเงิน ไม่มีจำนวน/หน่วย · Item ย่อยได้ 3 ระดับ (1 → 1.1 → 1.1.1) เพิ่มได้เรื่อย ๆ หลังงบเปิดใช้แล้ว · รหัสโครงการและรหัส Item ผู้สร้างงบตั้งเอง โดย Business เจ้าของงบหรือผู้คุมงบ (ไม่ต้องอนุมัติซ้ำ ยอดงบรวมไม่เปลี่ยน)'],
+      ['OPEX', 'วงเงินของ Item ย่อย', 'เงื่อนไขเดียว: รวมกันต้องไม่เกินวงเงิน Item หลัก (ถ้า 1.1 กำหนดวงเงินไว้ 1.1.x ต้องรวมไม่เกิน 1.1 ด้วย เพื่อให้ยอดคงเหลือสอดคล้องกัน) · จะกำหนดหรือไม่กำหนดวงเงินของ Item ย่อยก็ได้ (ไม่กำหนด = ใช้วงเงินของ Item แม่) · จำนวน/หน่วย กรอกที่ Item ย่อย · Item ย่อยที่กำหนดวงเงินถูกตรวจทั้งวงเงินตัวเองและวงเงิน Item หลัก · Item ย่อยที่มีการขอใช้แล้ว แก้รหัส/ลบไม่ได้'],
       ['OPEX', 'ขั้นตอนการใช้งบ OPEX', 'เหมือน CAPEX ทุกขั้น: ขอดำเนินการใช้งบ (4 ประเภท) → ผู้คุมงบตรวจสอบ → ตัดงบตามประเภท → ปิดยอดคืนส่วนต่าง · ขอเกินงบรายการต้องมี Note · ไม่ใช้ Memo'],
       ['OPEX', 'การอนุมัติงบ OPEX (ตั้งงบ / เพิ่มงบ)', 'ไม่เข้าบอร์ด — ให้ผู้บริหารอนุมัติ: แนบเอกสารอนุมัติ + เลขที่เอกสาร + ชื่อผู้บริหารที่อนุมัติ แล้วผู้คุมงบตรวจสอบและยืนยัน (ต้นแบบนี้ผู้บริหารอนุมัตินอกระบบ แล้วแนบหลักฐาน)'],
       ['OPEX', 'ผู้บริหารที่อนุมัติ ต้องเป็นผู้ใช้ในระบบไหม', 'ไม่ — พิมพ์ชื่อ/ตำแหน่งและแนบหลักฐาน (ถ้าต้องการให้ผู้บริหารกดอนุมัติในระบบ จะเพิ่มบทบาท "ผู้บริหาร" ภายหลัง)'],
