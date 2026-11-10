@@ -368,8 +368,8 @@
       mk({ id: 'r8', no: 'REQ-' + year + '-0008', budgetId: 'b6', itemId: 'c8', useType: 'prpo', requesterId: 'req1', createdAt: iso(day(11, 2)),
         status: 'memo', purpose: 'ติดตั้งระบบไฟส่องสว่างชั้น 2', payee: '',
         memo: { no: 'MEMO-PBI' + yy + '-002', by: '', files: [], issuedAt: iso(day(11, 2)) },
-        memoParties: { to: ['ผู้บริหารสูงสุด PBI (ตัวอย่าง)', 'ผู้บริหารอาวุโส PBI (ตัวอย่าง)'], cc: ['บัญชี / การเงิน PBI (ตัวอย่าง)'], reviewers: ['ผู้บริหารฝ่ายการเงิน PBI (ตัวอย่าง)'],
-          approvers: ['ผู้บริหารสูงสุด PBI (ตัวอย่าง)', 'ผู้บริหารอาวุโส PBI (ตัวอย่าง)'], proposer: 'กรรมการผู้จัดการ PBI (ตัวอย่าง)' },
+        memoParties: { to: ['ผู้บริหารสูงสุด PCC (ตัวอย่าง)', 'ผู้บริหารอาวุโส PCC (ตัวอย่าง)'], cc: ['บัญชี / การเงิน PCC (ตัวอย่าง)'], reviewers: ['ผู้บริหารฝ่ายการเงิน PCC (ตัวอย่าง)'],
+          approvers: ['ผู้บริหารสูงสุด PCC (ตัวอย่าง)', 'ผู้บริหารอาวุโส PCC (ตัวอย่าง)'], proposer: 'กรรมการผู้จัดการ PBI (ตัวอย่าง)' },
         lines: [line('c8', 'โคมไฟ LED พร้อมติดตั้ง 40 ชุด', 60000, { category: 'ค่าวัสดุ / อุปกรณ์', investor: 'PCC' })] }),
       mk({ id: 'r7', no: 'REQ-' + year + '-0007', budgetId: 'b3', type: 'CBS', itemId: 'i5', useType: 'prpo', requesterId: 'req2', createdAt: iso(day(10, 31)),
         status: 'pending', purpose: 'วัสดุเพาะกล้ารอบถัดไป', payee: '',
@@ -3002,14 +3002,16 @@
     const g = M.groups;
 
     return '<article class="doc memo-doc' + (edit ? ' memo-edit' : '') + '">' +
+      memoLetterhead(b.company) +
       '<table class="memo-head"><tbody>' +
-      '<tr><td colspan="2" class="memo-title">บันทึกข้อความ (Memo) — ' + esc(M.cname(b.company)) + '</td></tr>' +
-      '<tr><td><div class="mh-row"><span class="lbl">เรียน</span><span class="sep">:</span><div class="mh-val">' +
+      '<tr><td><div class="mh-row"><span class="lbl">เรียน</span><div class="mh-val">' +
         (edit ? area('to', 2, 'ชื่อ (ตำแหน่ง) และบริษัท — บรรทัดละรายการ') : toLines.map(esc).join('<br>')) + '</div></div></td>' +
-      '<td class="memo-date">วันที่ ' + inp('date', 'วันที่', 'mf-date') + '<br><small>เลขที่ Memo ' + esc((r.memo || {}).no || '........') + '</small><br><small>คำขอเลขที่ ' + esc(r.no) + '</small></td></tr>' +
-      '<tr><td colspan="2"><div class="mh-row"><span class="lbl">สำเนาถึง</span><span class="sep">:</span><div class="mh-val">' + inp('cc', 'ผู้รับสำเนา (คั่นด้วย ,)') + '</div></div></td></tr>' +
-      '<tr><td colspan="2"><div class="mh-row"><span class="lbl">เรื่อง</span><span class="sep">:</span><div class="mh-val">' + inp('subject', 'เรื่อง') + '</div></div>' +
-      '<div class="mh-row"><span class="lbl">อ้างอิง</span><span class="sep">:</span><div class="mh-val">' + (edit ? area('ref', 2, 'มติ / เอกสารอนุมัติที่อ้างอิง') : text(d.ref)) + '</div></div></td></tr>' +
+      '<td class="memo-date"><div class="mh-row"><span class="lbl lbl-s">วันที่</span><div class="mh-val">' + inp('date', 'วันที่', 'mf-date') + '</div></div>' +
+        '<div class="mh-row"><span class="lbl lbl-s">เลขที่</span><div class="mh-val">' + esc((r.memo || {}).no || '........') + '</div></div>' +
+        '<div class="mh-row mh-sub"><span class="lbl lbl-s">คำขอ</span><div class="mh-val">' + esc(r.no) + '</div></div></td></tr>' +
+      '<tr><td colspan="2"><div class="mh-row"><span class="lbl">เรื่อง</span><div class="mh-val">' + inp('subject', 'เรื่อง') + '</div></div></td></tr>' +
+      '<tr><td colspan="2"><div class="mh-row"><span class="lbl">สำเนาถึง</span><div class="mh-val">' + inp('cc', 'ผู้รับสำเนา (คั่นด้วย ,)') + '</div></div></td></tr>' +
+      '<tr><td colspan="2"><div class="mh-row"><span class="lbl">อ้างอิง</span><div class="mh-val">' + (edit ? area('ref', 1, 'มติ / เอกสารอนุมัติที่อ้างอิง') : text(d.ref)) + '</div></div></td></tr>' +
       '</tbody></table>' +
 
       '<h2 class="memo-h">1. เรื่องสืบเนื่อง</h2>' +
@@ -3044,6 +3046,14 @@
       '</article>';
   }
 
+  /** หัวกระดาษ Memo: โลโก้ของบริษัท (ตั้งที่ ข้อมูลหลัก > บริษัท) หรือชื่อบริษัท และคำว่า Memo ชิดขวา */
+  function memoLetterhead(code) {
+    const c = db.master.companies.find((x) => x.code === code) || { code };
+    const logo = c.logo && /^data:image\//.test(c.logo)
+      ? '<img class="lh-img" src="' + esc(c.logo) + '" alt="' + esc(c.name || c.code) + '">'
+      : '<span class="lh-text">' + esc(c.code || '') + '</span><span class="lh-name">' + esc(c.name || '') + '</span>';
+    return '<div class="memo-letterhead"><div class="lh-logo">' + logo + '</div><div class="lh-title">Memo</div></div>';
+  }
   /** ผู้บริหารที่ลงนามอนุมัติ Memo = รายชื่อผู้พิจารณาอนุมัติใน Memo */
   const memoSigners = (r) => memoDocOf(memoModel(budgetById(r.budgetId), r)).approvers.join(' / ');
   /** ผู้ขอแก้ไข Memo ได้ระหว่างรอแนบ Memo ที่เซ็นแล้ว */
@@ -3436,7 +3446,8 @@
   /** รายการข้อมูลหลัก: cols[0] เป็นรหัส/ชื่อที่ใช้อ้างอิง — รหัส (lock) แก้ไม่ได้หลังสร้าง, ชื่อที่ใช้อ้างอิง (เช่น หน่วยงาน) เปลี่ยนแล้วระบบแก้ให้ทุกงบ */
   const MASTER_SECTIONS = [
     { key: 'companies', title: 'บริษัท', hint: 'ใช้กับงบทุกประเภท และเป็นส่วนหน้าของเลขที่ใบดำเนินการใช้งบ CAPEX (เช่น PBI26-001) · เกณฑ์ Memo (ใช้กับ CAPEX เท่านั้น) = "ใช้เงินข้ามบริษัทกับบริษัทนี้" ต้องให้ผู้บริหารเซ็น Memo ก่อนส่ง เมื่อบริษัทอื่นมาใช้งบของบริษัทนี้ หรือบริษัทนี้ออกเงินให้งบของบริษัทอื่น (ตั้งต้น: PCC)', lock: true,
-      cols: [{ k: 'code', label: 'รหัสบริษัท', w: '10rem' }, { k: 'name', label: 'ชื่อบริษัท' }, { k: 'memo', label: 'เกณฑ์ Memo ผู้บริหารเซ็น', type: 'select', options: MEMO_MODES, w: '15rem' }],
+      cols: [{ k: 'code', label: 'รหัสบริษัท', w: '10rem' }, { k: 'name', label: 'ชื่อบริษัท' }, { k: 'memo', label: 'เกณฑ์ Memo ผู้บริหารเซ็น', type: 'select', options: MEMO_MODES, w: '15rem' },
+        { k: 'logo', label: 'โลโก้หัวกระดาษ Memo', type: 'image', w: '14rem' }],
       inUse: (it) => db.budgets.some((b) => b.company === it.code) },
     { key: 'departments', title: 'หน่วยงาน', hint: 'ตัวเลือกหน่วยงานของงบ และตัวกรองในหน้ารายการงบ', lock: false,
       cols: [{ k: 'name', label: 'ชื่อหน่วยงาน' }],
@@ -3470,7 +3481,12 @@
     ['expenseCategories', 'หมวดค่าใช้จ่าย'], ['glCodes', 'GL Code'], ['memoParties', 'ผู้ลงนาม Memo'], ['doa', 'ตารางอำนาจอนุมัติ (DOA)']];
 
   function masterRow(sec, it, isNew) {
-    return '<tr data-orig="' + (isNew ? '' : esc(it[sec.cols[0].k])) + '">' + sec.cols.map((c, i) => (c.type === 'select'
+    return '<tr data-orig="' + (isNew ? '' : esc(it[sec.cols[0].k])) + '">' + sec.cols.map((c, i) => (c.type === 'image'
+      ? '<td' + (c.w ? ' style="width:' + c.w + '"' : '') + '><div class="logo-cell"><input type="hidden" data-k="' + c.k + '" value="' + esc(isNew ? '' : it[c.k] || '') + '">' +
+        '<span class="logo-prev">' + (!isNew && it[c.k] ? '<img src="' + esc(it[c.k]) + '" alt="">' : '<span class="muted">ไม่มี</span>') + '</span>' +
+        '<label class="btn small file-btn">เลือกรูป<input type="file" accept="image/png,image/jpeg,image/svg+xml" data-logo-file hidden></label>' +
+        '<button type="button" class="btn small" data-logo-clear title="ลบโลโก้">ลบ</button></div></td>'
+      : c.type === 'select'
       ? '<td' + (c.w ? ' style="width:' + c.w + '"' : '') + '><div class="select-wrap"><select data-k="' + c.k + '" aria-label="' + esc(c.label) + '">' +
         c.options.map(([v, t]) => opt(v, t, isNew ? '' : it[c.k] || '')).join('') + '</select></div></td>'
       : '<td' + (c.w ? ' style="width:' + c.w + '"' : '') + '><input data-k="' + c.k + '" value="' + esc(it[c.k] || '') + '" aria-label="' + esc(c.label) + '"' +
@@ -3502,10 +3518,31 @@
     document.querySelectorAll('.master-form').forEach((form) => {
       const sec = MASTER_SECTIONS.find((x) => x.key === form.dataset.key);
       const tbody = form.querySelector('tbody');
+      // โลโก้: อ่านรูปเป็น data URL (ไม่เกิน 300 KB)
+      form.addEventListener('change', (e) => {
+        if (!e.target.matches('[data-logo-file]')) return;
+        const file = e.target.files[0];
+        const cell = e.target.closest('.logo-cell');
+        e.target.value = '';
+        if (!file) return;
+        if (file.size > 300 * 1024) { alert('รูปโลโก้ต้องไม่เกิน 300 KB'); return; }
+        const rd = new FileReader();
+        rd.onload = () => {
+          cell.querySelector('input[type="hidden"]').value = rd.result;
+          cell.querySelector('.logo-prev').innerHTML = '<img src="' + esc(rd.result) + '" alt="">';
+        };
+        rd.readAsDataURL(file);
+      });
       form.addEventListener('click', (e) => {
+        if (e.target.matches('[data-logo-clear]')) {
+          const cell = e.target.closest('.logo-cell');
+          cell.querySelector('input[type="hidden"]').value = '';
+          cell.querySelector('.logo-prev').innerHTML = '<span class="muted">ไม่มี</span>';
+          return;
+        }
         if (e.target.matches('[data-m-add]')) {
           tbody.insertAdjacentHTML('beforeend', form.querySelector('template').innerHTML);
-          tbody.lastElementChild.querySelector('input').focus();
+          tbody.lastElementChild.querySelector('input:not([type="hidden"])').focus();
         } else if (e.target.matches('[data-m-remove]')) {
           const tr = e.target.closest('tr');
           const orig = tr.dataset.orig;
@@ -4253,7 +4290,7 @@
       ['ใช้งบ', 'จ่ายหลายงวด', 'ใช้ได้กับ PR/PO และจ่ายตรง — บันทึกจ่ายหลายครั้งแล้วปิดยอด'],
       ['ใช้งบ', 'เงื่อนไขการทำ Memo', 'ทำ Memo เฉพาะงบ CAPEX ที่ใช้เงินข้ามบริษัทกับ PCC: งบของ PCC ที่มีบรรทัดซึ่งบริษัทอื่นเป็นบริษัทที่ลงทุน หรืองบของบริษัทอื่นที่มีบรรทัดซึ่ง PCC เป็นบริษัทที่ลงทุน · นอกนั้นไม่ต้องทำ Memo (ส่งตรงให้ผู้คุมงบ) · OPEX ไม่ใช้ Memo · ปุ่มในฟอร์มเปลี่ยนตามบริษัทที่ลงทุนของแต่ละบรรทัด'],
       ['ใช้งบ', 'ตั้งเกณฑ์ Memo รายบริษัท', 'ข้อมูลหลัก > บริษัท > เกณฑ์ Memo: "ใช้เงินข้ามบริษัทกับบริษัทนี้" (ตั้งต้นเฉพาะ PCC) หรือ "ไม่ต้องใช้" · ต้องแนบไฟล์ Memo ที่เซ็นแล้วก่อนส่ง · ทุกประเภทการใช้งบและทุกยอดเงิน · ผู้บริหารเซ็นนอกระบบ'],
-      ['ใช้งบ', 'แบบฟอร์ม Memo', 'ออกตามแบบฟอร์ม Memo จริงของบริษัท: เรียน/สำเนาถึง/เรื่อง/อ้างอิง → 1. เรื่องสืบเนื่อง → 2. เรื่องเพื่อพิจารณาลงนาม (ยอดเงินเป็นตัวอักษร) → ตารางสรุปงบ (กรอบงบ − เบิกไปแล้ว − ขอครั้งนี้ = คงเหลือ) → อ้างอิงอำนาจอนุมัติ → ตารางทบทวน/ผู้พิจารณาอนุมัติ · ยังไม่ทำหัวกระดาษและเลขหน้าของบริษัท'],
+      ['ใช้งบ', 'แบบฟอร์ม Memo', 'ออกตามแบบฟอร์ม Memo จริงของบริษัท: เรียน/สำเนาถึง/เรื่อง/อ้างอิง → 1. เรื่องสืบเนื่อง → 2. เรื่องเพื่อพิจารณาลงนาม (ยอดเงินเป็นตัวอักษร) → ตารางสรุปงบ (กรอบงบ − เบิกไปแล้ว − ขอครั้งนี้ = คงเหลือ) → อ้างอิงอำนาจอนุมัติ → ตารางทบทวน/ผู้พิจารณาอนุมัติ · หัวกระดาษ: โลโก้ของบริษัท (อัปโหลดที่ ข้อมูลหลัก > บริษัท — ไม่มีโลโก้แสดงชื่อบริษัทแทน) และคำว่า Memo ชิดขวา · ตารางหัว (เรียน/วันที่-เลขที่, เรื่อง, สำเนาถึง, อ้างอิง) กว้างกว่าเนื้อความ มีแต่เส้นแนวนอน · ยังไม่ทำเลขหน้าและแถบสีท้ายกระดาษ'],
       ['ใช้งบ', 'กรอก Memo อย่างไร', 'กด "ทำ Memo" ในฟอร์มคำขอ → ระบบออกเลขที่ Memo แล้วเปิดหน้า Memo ที่เป็นโครงแบบฟอร์มจริง มีช่องกรอกในตำแหน่งเดียวกับเอกสาร: เรียน · วันที่ · สำเนาถึง · เรื่อง · อ้างอิง · 1. เรื่องสืบเนื่อง · 2. เรื่องเพื่อพิจารณาลงนาม · อ้างอิงอำนาจอนุมัติ · ผู้ลงนามเสนอ (ชื่อ/ตำแหน่ง) · ผู้ทบทวน · ผู้พิจารณาอนุมัติ (เพิ่ม/ลบแถวได้) · ค่าเริ่มต้นดึงจากคำขอและ ข้อมูลหลัก > ผู้ลงนาม Memo ของบริษัทที่ลงทุน · ยอดเงิน รายการ และตารางสรุปงบ ระบบคำนวณจากคำขอ (แก้ที่คำขอ) · แก้ Memo ได้จนกว่าจะแนบฉบับที่เซ็นแล้วและส่งให้ผู้คุมงบ'],
       ['ใช้งบ', 'ค่าเริ่มต้นของเรื่องสืบเนื่อง / อ้างอิง', 'เรื่องสืบเนื่อง = ข้อความอ้างอิงงบและกรอบวงเงิน (ผู้ขอแก้/เพิ่มย่อหน้าเองได้) · อ้างอิง = มติที่ประชุม (CAPEX) / เอกสารอนุมัติผู้บริหาร (OPEX) ของงบ · "ครั้งที่" นับจากคำขอก่อนหน้าของงบเดียวกัน'],
       ['ใช้งบ', 'ใครเลือกว่าทำ Memo', 'ผู้ขอเลือกเองด้วยปุ่ม "ทำ Memo" ข้างปุ่มส่ง · ถ้าเกณฑ์ของบริษัทบังคับ (ตั้งต้น: งบที่ไม่มี Item) จะมีแค่ปุ่มทำ Memo'],
