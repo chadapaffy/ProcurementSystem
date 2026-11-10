@@ -784,3 +784,11 @@ input.locked { background: var(--surface-2, #f3f4f6); color: var(--muted, #6b728
 .cf-table td, .cf-table th { white-space: nowrap; }
 .cf-edit tr > :first-child, .cf-table tr > :first-child { position: sticky; left: 0; background: var(--surface, #fff); z-index: 1; }
 .cf-edit thead tr > :first-child, .cf-table thead tr > :first-child { background: var(--surface-2, #f8fafc); }
+
+/* ส่งออกข้อมูล (Excel) */
+.export-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: var(--s-3); margin-top: var(--s-3); }
+.export-opt { display: flex; gap: var(--s-3); align-items: flex-start; padding: var(--s-3); border: 1px solid var(--border); border-radius: var(--radius-sm, 6px); cursor: pointer; }
+.export-opt:has(input:checked) { border-color: var(--primary); background: var(--primary-soft); }
+.export-opt span { display: flex; flex-direction: column; gap: 2px; flex: 1; }
+.export-opt small { color: var(--text-2); font-size: var(--fs-xs, 12px); }
+.export-opt em { font-style: normal; color: var(--text-2); font-size: var(--fs-xs, 12px); white-space: nowrap; }
