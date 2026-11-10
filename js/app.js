@@ -71,10 +71,11 @@
   const COMPANIES = { PBI: 'บริษัท PBI (ตัวอย่าง)', PCC: 'บริษัท PCC (ตัวอย่าง)' };
   /**
    * เกณฑ์ Memo ผู้บริหารเซ็นตอนขอดำเนินการใช้งบ (ตั้งรายบริษัทที่ข้อมูลหลัก)
-   * '' = ไม่ต้องใช้ · 'project' = เฉพาะงบที่ไม่มี Item (งบรวมโครงการ) · 'all' = ทุกงบ
+   * '' = ไม่ต้องใช้ · 'cross' = ต้องทำเมื่อใช้เงินข้ามบริษัทกับบริษัทนี้ (บริษัทอื่นมาใช้งบของบริษัทนี้ หรือบริษัทนี้ออกเงินให้งบของบริษัทอื่น)
    */
-  const MEMO_MODES = [['', 'ไม่ต้องใช้'], ['project', 'เฉพาะงบที่ไม่มี Item'], ['all', 'ทุกงบ']];
-  const MEMO_DEFAULT = 'project';
+  const MEMO_MODES = [['', 'ไม่ต้องใช้'], ['cross', 'ใช้เงินข้ามบริษัทกับบริษัทนี้']];
+  /** เกณฑ์ตั้งต้น: งบของ PCC ที่บริษัทอื่นมาใช้ (หรือ PCC ออกเงินให้งบของบริษัทอื่น) ต้องทำ Memo */
+  const memoDefaultFor = (code) => (code === 'PCC' ? 'cross' : '');
   /** ผู้ลงนามใน Memo ตั้งต้น (ข้อความตัวอย่างทั่วไป ใส่ชื่อ/ตำแหน่งจริงที่ข้อมูลหลัก > ผู้ลงนาม Memo) */
   const MEMO_PARTY_SAMPLE = {
     PBI: { to: 'ผู้บริหารสูงสุด PBI (ตัวอย่าง)', cc: 'บัญชี / การเงิน PBI (ตัวอย่าง)', reviewer: 'ผู้บริหารฝ่ายการเงิน PBI (ตัวอย่าง)', signer: 'กรรมการผู้จัดการ PBI (ตัวอย่าง)', doa: '' },
@@ -164,12 +165,14 @@
       });
     });
     // ค่าเดิมแบบติ๊ก (true/false) หรือยังไม่ตั้ง → ใช้เกณฑ์ตั้งต้น "เฉพาะงบที่ไม่มี Item"
-    companies.forEach((c) => { if (!MEMO_MODES.some(([v]) => v === c.memo)) c.memo = MEMO_DEFAULT; });
+    // เกณฑ์ Memo แบบใหม่ (ใช้เงินข้ามบริษัท) — เปลี่ยนจากเกณฑ์เดิมครั้งเดียว แล้วปรับเองได้ที่ข้อมูลหลัก
+    if (m.memoRule !== 2) companies.forEach((c) => { c.memo = memoDefaultFor(c.code); });
+    companies.forEach((c) => { if (!MEMO_MODES.some(([v]) => v === c.memo)) c.memo = memoDefaultFor(c.code); });
     const memoParties = list('memoParties').slice();
     companies.forEach((c) => {
       if (!memoParties.some((x) => x.code === c.code)) memoParties.push(Object.assign({ code: c.code, to: '', cc: '', reviewer: '', signer: '', doa: '' }, MEMO_PARTY_SAMPLE[c.code] || {}));
     });
-    d.master = { companies, departments, groups, assetTypes, glCodes, expenseCategories, memoParties };
+    d.master = { companies, departments, groups, assetTypes, glCodes, expenseCategories, memoParties, memoRule: 2 };
     return d;
   }
   const companyMap = () => Object.fromEntries(db.master.companies.map((c) => [c.code, c.name]));
@@ -192,10 +195,25 @@
     return { to: splitPeople(inv.to), cc: splitPeople(inv.cc), reviewers: splitPeople(inv.reviewer), approvers: splitPeople(inv.to), proposer: String(own.signer || '').trim() };
   }
   const investorCell = (code) => '<span class="nowrap">' + esc(code) + '</span>';
-  const memoMode = (b) => (b ? (db.master.companies.find((c) => c.code === b.company) || {}).memo || '' : '');
+  const memoModeOf = (code) => (db.master.companies.find((c) => c.code === code) || {}).memo || '';
+  /**
+   * Memo (CAPEX เท่านั้น): ต้องทำเมื่อใช้เงินข้ามบริษัท — มีบรรทัดที่บริษัทที่ลงทุนไม่ใช่บริษัทเจ้าของงบ
+   * และบริษัทใดบริษัทหนึ่งตั้งเกณฑ์ "ใช้เงินข้ามบริษัท" ไว้ (ตั้งต้น: PCC) · คืน { owner, investor } หรือ null
+   */
+  function memoCross(b, lines) {
+    if (!b || b.type !== 'CAPEX') return null;
+    for (const l of lines || []) {
+      const inv = lineInvestor(b, l);
+      if (inv && inv !== b.company && (memoModeOf(inv) === 'cross' || memoModeOf(b.company) === 'cross')) return { owner: b.company, investor: inv };
+    }
+    return null;
+  }
   /** งบนี้ต้องแนบ Memo ที่ผู้บริหารเซ็นตอนขอดำเนินการใช้งบหรือไม่ (ตามเกณฑ์ของบริษัท) */
-  const memoRequired = (b) => b.type === 'CAPEX' && (memoMode(b) === 'all' || (memoMode(b) === 'project' && b.structure === 'project'));
-  const memoReason = (b) => (memoMode(b) === 'all' ? 'บริษัท ' + b.company + ' กำหนดให้ทุกงบ' : 'งบรวมโครงการ (ไม่มี Item) ของบริษัท ' + b.company) + ' ต้องแนบ Memo ที่ผู้บริหารเซ็น';
+  const memoRequired = (b, lines) => !!memoCross(b, lines);
+  const memoReason = (b, lines) => {
+    const x = memoCross(b, lines);
+    return x ? 'งบของ ' + x.owner + ' มีรายการที่ ' + x.investor + ' เป็นบริษัทที่ลงทุน (ใช้เงินข้ามบริษัท) ต้องทำ Memo ให้ผู้บริหารเซ็นก่อนส่ง' : '';
+  };
   const assetTypeList = () => db.master.assetTypes.map((x) => x.name);
 
   function seed() {
@@ -352,7 +370,7 @@
         memo: { no: 'MEMO-PBI' + yy + '-002', by: '', files: [], issuedAt: iso(day(11, 2)) },
         memoParties: { to: ['ผู้บริหารสูงสุด PBI (ตัวอย่าง)', 'ผู้บริหารอาวุโส PBI (ตัวอย่าง)'], cc: ['บัญชี / การเงิน PBI (ตัวอย่าง)'], reviewers: ['ผู้บริหารฝ่ายการเงิน PBI (ตัวอย่าง)'],
           approvers: ['ผู้บริหารสูงสุด PBI (ตัวอย่าง)', 'ผู้บริหารอาวุโส PBI (ตัวอย่าง)'], proposer: 'กรรมการผู้จัดการ PBI (ตัวอย่าง)' },
-        lines: [line('c8', 'โคมไฟ LED พร้อมติดตั้ง 40 ชุด', 60000, { category: 'ค่าวัสดุ / อุปกรณ์', investor: 'PBI' })] }),
+        lines: [line('c8', 'โคมไฟ LED พร้อมติดตั้ง 40 ชุด', 60000, { category: 'ค่าวัสดุ / อุปกรณ์', investor: 'PCC' })] }),
       mk({ id: 'r7', no: 'REQ-' + year + '-0007', budgetId: 'b3', type: 'CBS', itemId: 'i5', useType: 'prpo', requesterId: 'req2', createdAt: iso(day(10, 31)),
         status: 'pending', purpose: 'วัสดุเพาะกล้ารอบถัดไป', payee: '',
         lines: [{ itemId: 'i5', description: 'ถุงเพาะ 6x12 นิ้ว 5,000 ใบ', amountBeforeVat: 6000, vat: 420, amount: 6420, glCode: '510101', glName: 'ค่าวัตถุดิบ' },
@@ -1938,7 +1956,7 @@
     const val = (k) => ' value="' + esc(v[k] == null ? '' : v[k]) + '"';
     const field = (label, inner, extra) => '<label class="field"' + (extra || '') + '><span>' + label + '</span>' + inner + '</label>';
     const lastReject = existing ? existing.steps.find((s) => s.status === 'rejected') : null;
-    const needMemo = memoRequired(b);
+    const needMemo = memoRequired(b, lines);
     const memoOk = b.type === 'CAPEX'; // OPEX ไม่ใช้ Memo: ขอดำเนินการใช้งบด้วยเอกสารขอดำเนินการใช้งบตามปกติ
     const mv = (existing && existing.memo) || {};
     const mp = (existing && existing.memoParties) || defaultMemoParties(b, b.company);
@@ -1981,10 +1999,10 @@
       '<dl class="kv compact"><dt>งบคงเหลือทั้งโครงการ</dt><dd>' + moneyCell(remaining) + '</dd>' +
       '<dt>คงเหลือหลังขอใช้</dt><dd id="sideAfter">' + moneyCell(remaining) + '</dd></dl>' +
       '<div class="actions side-actions">' +
-      (needMemo ? '' : '<button class="btn primary tall" type="submit" data-action="send">' + (existing && existing.status === 'rejected' ? 'ส่งให้ผู้คุมงบตรวจสอบอีกครั้ง' : 'ส่งให้ผู้คุมงบตรวจสอบ') + '</button>') +
-      (memoOk ? '<button class="btn ' + (needMemo ? 'primary tall' : 'memo-btn') + '" type="submit" data-action="memo">' + (existing && existing.status === 'memo' ? 'บันทึกและออก Memo ใหม่' : 'ทำ Memo ให้ผู้บริหารเซ็นก่อนส่ง') + '</button>' : '') +
+      '<button class="btn primary tall" type="submit" data-action="send"' + (needMemo ? ' hidden' : '') + '>' + (existing && existing.status === 'rejected' ? 'ส่งให้ผู้คุมงบตรวจสอบอีกครั้ง' : 'ส่งให้ผู้คุมงบตรวจสอบ') + '</button>' +
+      (memoOk ? '<button class="btn primary tall" type="submit" data-action="memo"' + (needMemo ? '' : ' hidden') + '>' + (existing && existing.status === 'memo' ? 'บันทึกและออก Memo ใหม่' : 'ทำ Memo ให้ผู้บริหารเซ็นก่อนส่ง') + '</button>' : '') +
       '<a class="btn" data-back href="' + (existing ? '#/request/' + existing.id : '#/budget/' + b.id) + '">ยกเลิก</a></div>' +
-      (memoOk ? '<p class="muted memo-side-note">' + (needMemo ? '<strong>' + esc(memoReason(b)) + '</strong> — ส่งตรงให้ผู้คุมงบไม่ได้<br>' : '') +
+      (memoOk ? '<p class="muted memo-side-note" id="memoNote"' + (needMemo ? '' : ' hidden') + '><strong id="memoReason">' + esc(memoReason(b, lines)) + '</strong><br>' +
         '<strong>ทำ Memo:</strong> ระบบบันทึกคำขอ ออกเลขที่ Memo และจองงบไว้ → กรอก Memo ตามแบบฟอร์ม แล้วพิมพ์ ไปให้ผู้บริหารเซ็น → กลับมาแนบไฟล์ที่เซ็นแล้วที่หน้าคำขอ จึงส่งให้ผู้คุมงบได้' +
         (existing && existing.memo && existing.memo.no ? '<br>Memo เดิมเลขที่ ' + esc(existing.memo.no) + ' — แก้ไขแล้วต้องให้ผู้บริหารเซ็นใหม่' : '') + '</p></div>' : '</div>') +
       '<div class="card form-tip"><h3 class="side-title">คำแนะนำ</h3><p class="muted">' +
@@ -2097,7 +2115,24 @@
         if (del) { files = files.filter((x) => x.id !== del.dataset.attDel); showFiles(); }
       });
     }
-    const needMemo = memoRequired(b);
+    // ---- ต้องทำ Memo หรือไม่: ดูจากบริษัทที่ลงทุนของทุกบรรทัด (ใช้เงินข้ามบริษัทกับ PCC)
+    const rowLines = () => Array.from(form.querySelectorAll('#lineRows tr')).map((tr) => ({
+      itemId: tr.querySelector('[name="lnItem"]') ? tr.querySelector('[name="lnItem"]').value : (f.itemId ? f.itemId.value : ''),
+      investor: tr.querySelector('[name="lnInv"]') ? tr.querySelector('[name="lnInv"]').value : undefined
+    }));
+    const needMemo = () => memoRequired(b, rowLines());
+    const syncMemo = () => {
+      const need = needMemo();
+      const send = form.querySelector('[data-action="send"]');
+      const memo = form.querySelector('[data-action="memo"]');
+      if (send) send.hidden = need;
+      if (memo) memo.hidden = !need;
+      const note = document.getElementById('memoNote');
+      if (note) { note.hidden = !need; document.getElementById('memoReason').textContent = memoReason(b, rowLines()); }
+    };
+    form.addEventListener('change', syncMemo);
+    form.addEventListener('input', syncMemo);
+    syncMemo();
     // ---- ผู้รับและผู้ลงนามใน Memo: เปลี่ยนตามบริษัทที่ลงทุนจนกว่าผู้ขอจะพิมพ์แก้เอง
     const PARTY_FIELDS = { to: 'memoTo', cc: 'memoCc', reviewers: 'memoReviewers', approvers: 'memoApprovers' };
     const hasParties = !!f.memoTo;
@@ -2125,8 +2160,6 @@
     };
     form.addEventListener('change', syncParties);
     form.addEventListener('input', syncParties);
-    let action = needMemo ? 'memo' : 'send';
-    form.querySelectorAll('[data-action]').forEach((btn) => btn.addEventListener('click', () => { action = btn.dataset.action; }));
     const useType = () => (form.querySelector('[name="useType"]:checked') || {}).value;
     const syncType = () => {
       const t = useType();
@@ -2226,8 +2259,8 @@
 
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
-      // ทำ Memo เมื่อผู้ขอเลือก หรือเมื่อเกณฑ์ของบริษัทบังคับ
-      const useMemo = needMemo || action === 'memo' || (e.submitter && e.submitter.dataset.action === 'memo');
+      // ทำ Memo เฉพาะเมื่อเข้าเกณฑ์ (ใช้เงินข้ามบริษัทกับ PCC) — นอกนั้นส่งตรงให้ผู้คุมงบ
+      const useMemo = needMemo();
       const lines = readLines(form, isCapex);
       const errors = [];
       if (!useType()) errors.push('กรุณาเลือกประเภทการดำเนินการใช้งบ');
@@ -2690,8 +2723,8 @@
     } else if (r.memo && (r.memo.files || []).length) {
       main += '<h2>Memo ผู้บริหารเซ็น</h2><section class="card"><p class="memo-meta">เลขที่ <strong>' + esc(r.memo.no) + '</strong>' + (r.memo.by ? ' · เซ็นโดย <strong>' + esc(r.memo.by) + '</strong>' : '') + '</p>' +
         attachList(r.memo.files, { empty: 'ยังไม่ได้แนบ Memo' }) + '</section>';
-    } else if (memoRequired(b) && (r.status === 'pending' || r.status === 'rejected')) {
-      main += '<div class="alert warn">' + esc(memoReason(b)) + ' — คำขอนี้ยังไม่มี Memo (ส่งก่อนเปิดใช้เงื่อนไขนี้)</div>';
+    } else if (memoRequired(b, r.lines) && (r.status === 'pending' || r.status === 'rejected')) {
+      main += '<div class="alert warn">' + esc(memoReason(b, r.lines)) + ' — คำขอนี้ยังไม่มี Memo (ส่งก่อนเปิดใช้เงื่อนไขนี้)</div>';
     }
     if ((r.attachments || []).length) main += '<h2>เอกสารประกอบ</h2><section class="card">' + attachList(r.attachments) + '</section>';
     if (r.status === 'approved' || r.status === 'closed') main += cutPanel(r);
@@ -3402,7 +3435,7 @@
 
   /** รายการข้อมูลหลัก: cols[0] เป็นรหัส/ชื่อที่ใช้อ้างอิง — รหัส (lock) แก้ไม่ได้หลังสร้าง, ชื่อที่ใช้อ้างอิง (เช่น หน่วยงาน) เปลี่ยนแล้วระบบแก้ให้ทุกงบ */
   const MASTER_SECTIONS = [
-    { key: 'companies', title: 'บริษัท', hint: 'ใช้กับงบทุกประเภท และเป็นส่วนหน้าของเลขที่ใบดำเนินการใช้งบ CAPEX (เช่น PBI26-001) · เกณฑ์ Memo (ใช้กับ CAPEX เท่านั้น) = เมื่อไรต้องให้ผู้บริหารเซ็น Memo ก่อนส่งขอดำเนินการใช้งบ (ตั้งต้น: เฉพาะงบที่ไม่มี Item)', lock: true,
+    { key: 'companies', title: 'บริษัท', hint: 'ใช้กับงบทุกประเภท และเป็นส่วนหน้าของเลขที่ใบดำเนินการใช้งบ CAPEX (เช่น PBI26-001) · เกณฑ์ Memo (ใช้กับ CAPEX เท่านั้น) = "ใช้เงินข้ามบริษัทกับบริษัทนี้" ต้องให้ผู้บริหารเซ็น Memo ก่อนส่ง เมื่อบริษัทอื่นมาใช้งบของบริษัทนี้ หรือบริษัทนี้ออกเงินให้งบของบริษัทอื่น (ตั้งต้น: PCC)', lock: true,
       cols: [{ k: 'code', label: 'รหัสบริษัท', w: '10rem' }, { k: 'name', label: 'ชื่อบริษัท' }, { k: 'memo', label: 'เกณฑ์ Memo ผู้บริหารเซ็น', type: 'select', options: MEMO_MODES, w: '15rem' }],
       inUse: (it) => db.budgets.some((b) => b.company === it.code) },
     { key: 'departments', title: 'หน่วยงาน', hint: 'ตัวเลือกหน่วยงานของงบ และตัวกรองในหน้ารายการงบ', lock: false,
@@ -3439,7 +3472,7 @@
   function masterRow(sec, it, isNew) {
     return '<tr data-orig="' + (isNew ? '' : esc(it[sec.cols[0].k])) + '">' + sec.cols.map((c, i) => (c.type === 'select'
       ? '<td' + (c.w ? ' style="width:' + c.w + '"' : '') + '><div class="select-wrap"><select data-k="' + c.k + '" aria-label="' + esc(c.label) + '">' +
-        c.options.map(([v, t]) => opt(v, t, isNew ? MEMO_DEFAULT : it[c.k] || '')).join('') + '</select></div></td>'
+        c.options.map(([v, t]) => opt(v, t, isNew ? '' : it[c.k] || '')).join('') + '</select></div></td>'
       : '<td' + (c.w ? ' style="width:' + c.w + '"' : '') + '><input data-k="' + c.k + '" value="' + esc(it[c.k] || '') + '" aria-label="' + esc(c.label) + '"' +
       (sec.lock && i === 0 && !isNew ? ' readonly class="locked"' : '') + '></td>')).join('') +
       '<td style="width:3rem"><button type="button" class="btn small bad" data-m-remove title="ลบ">×</button></td></tr>';
@@ -4218,8 +4251,8 @@
       ['ใช้งบ', 'คืนส่วนต่างเมื่อไร', 'เมื่อปิดยอด (Advance/สำรองจ่ายปิดอัตโนมัติเมื่อบันทึกใบเสร็จ)'],
       ['ใช้งบ', 'ผู้ขอยกเลิกใบ CAPEX ที่ออกแล้วได้ไหม', 'ไม่ได้ (ยกเลิกได้เฉพาะตอนรอตรวจ/ถูกส่งกลับ)'],
       ['ใช้งบ', 'จ่ายหลายงวด', 'ใช้ได้กับ PR/PO และจ่ายตรง — บันทึกจ่ายหลายครั้งแล้วปิดยอด'],
-      ['ใช้งบ', 'เงื่อนไขการทำ Memo (รอยืนยันกับผู้ใช้งานจริง)', 'ที่ทราบแล้ว: งบที่บริษัทอื่นมาใช้เงินของ PCC ต้องทำ Memo ขอ — ต้นแบบนี้ยังไม่ได้ปรับตามนี้ (ใช้เกณฑ์ตั้งต้นด้านล่างไปก่อน) · OPEX ไม่ใช้ Memo (ขอดำเนินการใช้งบด้วยเอกสารขอดำเนินการใช้งบตามปกติ)'],
-      ['ใช้งบ', 'Memo ผู้บริหารเซ็นตอนขอดำเนินการใช้งบ', 'ใช้กับ CAPEX เท่านั้น · ตั้งตั้งต้น: เฉพาะงบที่ไม่มี Item (งบรวมโครงการ) · ตั้งเกณฑ์รายบริษัทได้ที่ข้อมูลหลัก (ไม่ต้องใช้ / เฉพาะงบที่ไม่มี Item / ทุกงบ) · ต้องแนบไฟล์ Memo ที่เซ็นแล้ว + เลขที่ + ชื่อผู้บริหาร ก่อนส่ง · ทุกประเภทและทุกยอดเงิน · ผู้บริหารเซ็นนอกระบบ'],
+      ['ใช้งบ', 'เงื่อนไขการทำ Memo', 'ทำ Memo เฉพาะงบ CAPEX ที่ใช้เงินข้ามบริษัทกับ PCC: งบของ PCC ที่มีบรรทัดซึ่งบริษัทอื่นเป็นบริษัทที่ลงทุน หรืองบของบริษัทอื่นที่มีบรรทัดซึ่ง PCC เป็นบริษัทที่ลงทุน · นอกนั้นไม่ต้องทำ Memo (ส่งตรงให้ผู้คุมงบ) · OPEX ไม่ใช้ Memo · ปุ่มในฟอร์มเปลี่ยนตามบริษัทที่ลงทุนของแต่ละบรรทัด'],
+      ['ใช้งบ', 'ตั้งเกณฑ์ Memo รายบริษัท', 'ข้อมูลหลัก > บริษัท > เกณฑ์ Memo: "ใช้เงินข้ามบริษัทกับบริษัทนี้" (ตั้งต้นเฉพาะ PCC) หรือ "ไม่ต้องใช้" · ต้องแนบไฟล์ Memo ที่เซ็นแล้วก่อนส่ง · ทุกประเภทการใช้งบและทุกยอดเงิน · ผู้บริหารเซ็นนอกระบบ'],
       ['ใช้งบ', 'แบบฟอร์ม Memo', 'ออกตามแบบฟอร์ม Memo จริงของบริษัท: เรียน/สำเนาถึง/เรื่อง/อ้างอิง → 1. เรื่องสืบเนื่อง → 2. เรื่องเพื่อพิจารณาลงนาม (ยอดเงินเป็นตัวอักษร) → ตารางสรุปงบ (กรอบงบ − เบิกไปแล้ว − ขอครั้งนี้ = คงเหลือ) → อ้างอิงอำนาจอนุมัติ → ตารางทบทวน/ผู้พิจารณาอนุมัติ · ยังไม่ทำหัวกระดาษและเลขหน้าของบริษัท'],
       ['ใช้งบ', 'กรอก Memo อย่างไร', 'กด "ทำ Memo" ในฟอร์มคำขอ → ระบบออกเลขที่ Memo แล้วเปิดหน้า Memo ที่เป็นโครงแบบฟอร์มจริง มีช่องกรอกในตำแหน่งเดียวกับเอกสาร: เรียน · วันที่ · สำเนาถึง · เรื่อง · อ้างอิง · 1. เรื่องสืบเนื่อง · 2. เรื่องเพื่อพิจารณาลงนาม · อ้างอิงอำนาจอนุมัติ · ผู้ลงนามเสนอ (ชื่อ/ตำแหน่ง) · ผู้ทบทวน · ผู้พิจารณาอนุมัติ (เพิ่ม/ลบแถวได้) · ค่าเริ่มต้นดึงจากคำขอและ ข้อมูลหลัก > ผู้ลงนาม Memo ของบริษัทที่ลงทุน · ยอดเงิน รายการ และตารางสรุปงบ ระบบคำนวณจากคำขอ (แก้ที่คำขอ) · แก้ Memo ได้จนกว่าจะแนบฉบับที่เซ็นแล้วและส่งให้ผู้คุมงบ'],
       ['ใช้งบ', 'ค่าเริ่มต้นของเรื่องสืบเนื่อง / อ้างอิง', 'เรื่องสืบเนื่อง = ข้อความอ้างอิงงบและกรอบวงเงิน (ผู้ขอแก้/เพิ่มย่อหน้าเองได้) · อ้างอิง = มติที่ประชุม (CAPEX) / เอกสารอนุมัติผู้บริหาร (OPEX) ของงบ · "ครั้งที่" นับจากคำขอก่อนหน้าของงบเดียวกัน'],
