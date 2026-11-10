@@ -792,3 +792,15 @@ input.locked { background: var(--surface-2, #f3f4f6); color: var(--muted, #6b728
 .export-opt span { display: flex; flex-direction: column; gap: 2px; flex: 1; }
 .export-opt small { color: var(--text-2); font-size: var(--fs-xs, 12px); }
 .export-opt em { font-style: normal; color: var(--text-2); font-size: var(--fs-xs, 12px); white-space: nowrap; }
+
+/* เปิดดูไฟล์แนบในหน้าเว็บ */
+.files .file-dl { margin-left: .5rem; font-size: var(--fs-xs, 12px); color: var(--text-2); }
+.viewer { position: fixed; inset: 0; z-index: 1000; background: rgba(15, 23, 42, .6); display: flex; align-items: center; justify-content: center; padding: 2vh 2vw; }
+.viewer-panel { background: var(--surface, #fff); border-radius: 10px; width: min(1100px, 100%); height: 96vh; display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 20px 50px rgba(0,0,0,.3); }
+.viewer-head { display: flex; align-items: center; justify-content: space-between; gap: var(--s-3); padding: var(--s-3) var(--s-4); border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+.viewer-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1; }
+.viewer-actions { display: flex; gap: var(--s-2); flex-wrap: wrap; }
+.viewer-body { flex: 1; min-height: 0; background: #525659; display: flex; align-items: center; justify-content: center; }
+.viewer-body iframe { width: 100%; height: 100%; border: 0; background: #fff; }
+.viewer-body img { max-width: 100%; max-height: 100%; object-fit: contain; }
+@media print { .viewer { display: none !important; } }
