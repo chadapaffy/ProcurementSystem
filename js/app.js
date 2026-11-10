@@ -57,15 +57,16 @@
     { key: 'cut.record', group: 'ผู้คุมงบ', label: 'บันทึกการตัดงบและปิดยอด', hint: 'Advance · สำรองจ่าย · จ่ายตรง Supplier · ปิดยอดคืนส่วนต่าง (CAPEX และ OPEX)' },
     { key: 'po.record', group: 'จัดซื้อ', label: 'บันทึก PR / PO', hint: 'ตัดงบ PR/PO ตามยอด PO' },
     { key: 'master.manage', group: 'ผู้ดูแลระบบ', label: 'จัดการข้อมูลหลัก', hint: 'บริษัท หน่วยงาน กลุ่มงบ ประเภทสินทรัพย์ หมวดค่าใช้จ่าย GL Code' },
+    { key: 'data.export', group: 'การเงิน / บัญชี', label: 'ส่งออกข้อมูล (Excel)', hint: 'ดาวน์โหลดข้อมูลงบ คำขอ การตัดงบ ปรับงบ Plan Cashflow เป็นไฟล์ .xlsx' },
     { key: 'log.view', group: 'ผู้ดูแลระบบ', label: 'ดู Log การทำงาน', hint: '' },
     { key: 'user.manage', group: 'ผู้ดูแลระบบ', label: 'จัดการผู้ใช้ บทบาท และสิทธิ์', hint: 'หน้า Admin (โหมดทดลองดูได้อย่างเดียว)' }
   ];
   /** โหมดทดลอง: สิทธิ์ตั้งต้นของแต่ละบทบาท */
   const DEMO_ROLE_PERMS = {
     business: ['budget.create', 'request.create'],
-    controller: ['budget.view_all', 'budget.manage', 'budget.verify', 'budget.adjust', 'request.decide', 'cut.record'],
+    controller: ['budget.view_all', 'budget.manage', 'budget.verify', 'budget.adjust', 'request.decide', 'cut.record', 'data.export'],
     purchasing: ['budget.view_all', 'po.record'],
-    admin: ['budget.view_all', 'master.manage', 'log.view', 'user.manage']
+    admin: ['budget.view_all', 'master.manage', 'log.view', 'user.manage', 'data.export']
   };
 
   const COMPANIES = { PBI: 'บริษัท PBI (ตัวอย่าง)', PCC: 'บริษัท PCC (ตัวอย่าง)' };
@@ -938,6 +939,7 @@
     master: '<ellipse cx="12" cy="5.5" rx="7.5" ry="2.5"/><path d="M4.5 5.5v6.5c0 1.4 3.4 2.5 7.5 2.5s7.5-1.1 7.5-2.5V5.5"/><path d="M4.5 12v6.5c0 1.4 3.4 2.5 7.5 2.5s7.5-1.1 7.5-2.5V12"/>',
     log: '<rect x="3.5" y="4" width="17" height="16" rx="2"/><path d="M7 9l3 3-3 3"/><path d="M12 15h5"/>',
     admin: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.6 3.3-5.5 6.5-5.5s5.7 1.9 6.5 5.5"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7"/><path d="M18 14.8c1.9.7 3.1 2.4 3.5 5.2"/>',
+    export: '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M9 12l6 6M15 12l-6 6"/>',
     assumptions: '<circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 1 1 3.6 2.2c-.7.4-1.1 1-1.1 1.8v.5"/><circle cx="12" cy="17" r=".9" fill="currentColor"/>'
   };
   const navIcon = (k) => '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
@@ -962,6 +964,7 @@
         MASTER_NAV.forEach(([k, t]) => links.push(['sub', '#/master/' + k, t, [], k === cur]));
       }
     }
+    if (can('data.export')) links.push(['export', '#/export', 'ส่งออกข้อมูล (Excel)', ['#/export']]);
     if (can('log.view')) links.push(['log', '#/log', 'Log การทำงาน', ['#/log']]);
     if (can('user.manage')) links.push(['admin', '#/admin', 'ผู้ใช้และสิทธิ์' + count(REMOTE ? adminCounts.pending : 0), ['#/admin']]);
     links.push(['assumptions', '#/assumptions', 'สิ่งที่รอยืนยัน', ['#/assumptions']]);
@@ -2061,6 +2064,210 @@
       save();
       setFlash('success', 'บันทึก Plan Cashflow ของ ' + b.code + ' แล้ว');
       go('#/budget/' + b.id);
+    });
+  }
+
+  // ---------------------------------------------------------------- ส่งออกข้อมูลการเงิน / บัญชี เป็นไฟล์ Excel (.xlsx) — เขียนไฟล์เองในเบราว์เซอร์ ไม่ใช้ไลบรารีภายนอก
+
+  /** สร้างไฟล์ .xlsx จาก [{ name, cols: [{ h, w, num }], rows: [[...]] }] คืน Uint8Array */
+  function buildXlsx(sheets) {
+    const enc = new TextEncoder();
+    const xmlEsc = (v) => String(v).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])).replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, '');
+    const colName = (i) => { let s = ''; i += 1; while (i > 0) { const m = (i - 1) % 26; s = String.fromCharCode(65 + m) + s; i = Math.floor((i - 1) / 26); } return s; };
+    const cell = (ref, v, num, style) => {
+      if (v === null || v === undefined || v === '') return '';
+      if (num && typeof v === 'number' && isFinite(v)) return '<c r="' + ref + '" s="1"><v>' + v + '</v></c>';
+      return '<c r="' + ref + '" t="inlineStr"' + (style ? ' s="' + style + '"' : '') + '><is><t xml:space="preserve">' + xmlEsc(v) + '</t></is></c>';
+    };
+    const sheetXml = (sh) => {
+      const last = colName(Math.max(sh.cols.length - 1, 0)) + (sh.rows.length + 1);
+      return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+        '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">' +
+        '<sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>' +
+        '<cols>' + sh.cols.map((c, i) => '<col min="' + (i + 1) + '" max="' + (i + 1) + '" width="' + (c.w || 14) + '" customWidth="1"/>').join('') + '</cols>' +
+        '<sheetData><row r="1">' + sh.cols.map((c, i) => cell(colName(i) + '1', c.h, false, 2)).join('') + '</row>' +
+        sh.rows.map((r, ri) => '<row r="' + (ri + 2) + '">' + r.map((v, ci) => cell(colName(ci) + (ri + 2), v, sh.cols[ci] && sh.cols[ci].num)).join('') + '</row>').join('') +
+        '</sheetData>' + (sh.rows.length ? '<autoFilter ref="A1:' + last + '"/>' : '') + '</worksheet>';
+    };
+    const files = [
+      ['[Content_Types].xml', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">' +
+        '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/>' +
+        '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>' +
+        '<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>' +
+        sheets.map((s, i) => '<Override PartName="/xl/worksheets/sheet' + (i + 1) + '.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>').join('') + '</Types>'],
+      ['_rels/.rels', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+        '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>'],
+      ['xl/workbook.xml', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>' +
+        sheets.map((s, i) => '<sheet name="' + xmlEsc(s.name.slice(0, 31)) + '" sheetId="' + (i + 1) + '" r:id="rId' + (i + 1) + '"/>').join('') + '</sheets>' +
+        (sheets.some((s) => s.rows.length) ? '<definedNames>' + sheets.map((s, i) => s.rows.length ? '<definedName name="_xlnm._FilterDatabase" localSheetId="' + i + '" hidden="1">\'' + xmlEsc(s.name.slice(0, 31)) + '\'!$A$1:$' + colName(s.cols.length - 1) + '$' + (s.rows.length + 1) + '</definedName>' : '').join('') + '</definedNames>' : '') +
+        '</workbook>'],
+      ['xl/_rels/workbook.xml.rels', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+        sheets.map((s, i) => '<Relationship Id="rId' + (i + 1) + '" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet' + (i + 1) + '.xml"/>').join('') +
+        '<Relationship Id="rId' + (sheets.length + 1) + '" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>'],
+      ['xl/styles.xml', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">' +
+        '<numFmts count="1"><numFmt numFmtId="164" formatCode="#,##0.00"/></numFmts>' +
+        '<fonts count="2"><font><sz val="11"/><name val="Tahoma"/></font><font><b/><sz val="11"/><name val="Tahoma"/></font></fonts>' +
+        '<fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FFE8EEF7"/><bgColor indexed="64"/></patternFill></fill></fills>' +
+        '<borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>' +
+        '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>' +
+        '<cellXfs count="3"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>' +
+        '<xf numFmtId="164" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>' +
+        '<xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1"/></cellXfs>' +
+        '<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>']
+    ].concat(sheets.map((s, i) => ['xl/worksheets/sheet' + (i + 1) + '.xml', sheetXml(s)]));
+    // ZIP แบบไม่บีบอัด (stored)
+    const crcTable = buildXlsx.crc || (buildXlsx.crc = Array.from({ length: 256 }, (_, n) => { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; return c >>> 0; }));
+    const crc32 = (buf) => { let c = 0xffffffff; for (let i = 0; i < buf.length; i++) c = crcTable[(c ^ buf[i]) & 0xff] ^ (c >>> 8); return (c ^ 0xffffffff) >>> 0; };
+    const parts = [];
+    const central = [];
+    let offset = 0;
+    const u16 = (v) => [v & 0xff, (v >>> 8) & 0xff];
+    const u32 = (v) => [v & 0xff, (v >>> 8) & 0xff, (v >>> 16) & 0xff, (v >>> 24) & 0xff];
+    const d = new Date();
+    const dosTime = (d.getHours() << 11) | (d.getMinutes() << 5) | Math.floor(d.getSeconds() / 2);
+    const dosDate = ((d.getFullYear() - 1980) << 9) | ((d.getMonth() + 1) << 5) | d.getDate();
+    files.forEach(([name, text]) => {
+      const nameB = enc.encode(name);
+      const data = enc.encode(text);
+      const crc = crc32(data);
+      const head = [].concat(u32(0x04034b50), u16(20), u16(0x0800), u16(0), u16(dosTime), u16(dosDate), u32(crc), u32(data.length), u32(data.length), u16(nameB.length), u16(0));
+      parts.push(new Uint8Array(head), nameB, data);
+      central.push(new Uint8Array([].concat(u32(0x02014b50), u16(20), u16(20), u16(0x0800), u16(0), u16(dosTime), u16(dosDate), u32(crc), u32(data.length), u32(data.length),
+        u16(nameB.length), u16(0), u16(0), u16(0), u16(0), u32(0), u32(offset))), nameB);
+      offset += head.length + nameB.length + data.length;
+    });
+    const cdSize = central.reduce((s, p) => s + p.length, 0);
+    const end = new Uint8Array([].concat(u32(0x06054b50), u16(0), u16(0), u16(files.length), u16(files.length), u32(cdSize), u32(offset), u16(0)));
+    const all = parts.concat(central, [end]);
+    const out = new Uint8Array(all.reduce((s, p) => s + p.length, 0));
+    let pos = 0;
+    all.forEach((p) => { out.set(p, pos); pos += p.length; });
+    return out;
+  }
+
+  const EXPORT_SHEETS = [
+    ['budgets', 'งบประมาณ', 'สรุปรายงบ: งบอนุมัติ ตัดงบแล้ว จองไว้ คงเหลือ'],
+    ['items', 'Item', 'รายการ Item ของแต่ละงบ พร้อม GL / ประเภทสินทรัพย์ / DOA และยอดคงเหลือ'],
+    ['requests', 'ดำเนินการใช้งบ', 'คำขอ / ใบดำเนินการใช้งบ: เลขที่ ประเภท สถานะ ยอดเงิน ยอดตัดงบ ปิดยอด'],
+    ['lines', 'รายการในใบ', 'บรรทัดในใบดำเนินการใช้งบ: Item / หมวด / GL / บริษัทที่ลงทุน / ยอดเงิน'],
+    ['cuts', 'ตัดงบ-จ่ายเงิน', 'การตัดงบ: PO / เคลียร์เงินทดรอง / จ่ายคืนพนักงาน / จ่าย Supplier'],
+    ['changes', 'ปรับงบ', 'ขอเพิ่มงบ (INC) โยกงบ (TRF) ลดงบ (DEC)'],
+    ['cashflow', 'Plan Cashflow', 'แผนการใช้เงินรายเดือนของ CAPEX เทียบยอดตัดงบจริง']
+  ];
+  const canExport = () => can('data.export');
+
+  function exportData(f) {
+    const inB = (b) => b && (!f.year || String(b.fiscalYear) === f.year) && (!f.company || b.company === f.company) && (!f.type || b.type === f.type);
+    const budgets = db.budgets.filter(inB);
+    const bIds = new Set(budgets.map((b) => b.id));
+    const reqs = db.requests.filter((r) => bIds.has(r.budgetId));
+    const day = (v) => (v ? String(v).slice(0, 10) : '');
+    const T = (t) => TYPE_SHORT[t] || t;
+    const sheets = [];
+    const add = (key, cols, rows) => { if (f.sheets.includes(key)) sheets.push({ name: EXPORT_SHEETS.find((x) => x[0] === key)[1], cols, rows }); };
+    const N = (h, w) => ({ h, w: w || 15, num: true });
+    const S = (h, w) => ({ h, w: w || 14 });
+
+    add('budgets', [S('บริษัท', 8), S('ประเภทงบ', 9), S('ปีงบประมาณ', 10), S('กลุ่มงบ', 8), S('รหัสโครงการ'), S('ชื่อโครงการ', 34), S('หน่วยงาน', 16), S('Business เจ้าของงบ', 18),
+      S('สถานะ', 12), S('โครงสร้าง', 14), S('เลขที่มติ / อนุมัติ', 22), S('วันที่อนุมัติ', 12), N('งบอนุมัติ (รวม VAT)', 17), N('ตัดงบแล้ว'), N('จองไว้'), N('คงเหลือ')],
+    budgets.map((b) => { const u = usage(b); return [b.company, T(b.type), b.fiscalYear, b.group || '', b.code, b.name, b.department, userName(b.ownerId), BUDGET_STATE[b.state || 'active'] || '',
+      b.structure === 'project' ? 'งบรวมทั้งโครงการ' : 'แยก Item', (b.meeting || {}).no || '', day((b.meeting || {}).date), budgetTotal(b), u.used, u.reserved, u.remaining]; }));
+
+    const itemRows = [];
+    budgets.forEach((b) => sortedItems(b).forEach((it) => {
+      const own = b.type !== 'CBS' || hasOwnBudget(b, it);
+      const u = own ? usage(b, it.id) : null;
+      itemRows.push([b.company, T(b.type), b.code, it.code, it.name, b.type === 'CBS' ? depth(it) + 1 : 1, itemInvestor(b, it), it.assetType || '', it.doa || '', it.glCode || '', it.glName || '',
+        it.qty === '' || it.qty == null ? '' : Number(it.qty), it.unit || '', own ? round2(Number(it.amount || 0)) : '', own ? round2(Number(it.vat || 0)) : '', own ? itemTotal(it) : '',
+        u ? u.used : '', u ? u.reserved : '', u ? u.remaining : '', own ? '' : 'ใช้วงเงิน Item ' + (budgetNodeOf(b, it) || {}).code]);
+    }));
+    add('items', [S('บริษัท', 8), S('ประเภทงบ', 9), S('รหัสโครงการ'), S('รหัส Item', 16), S('ชื่อรายการ', 32), { h: 'ระดับ', w: 7, num: true }, S('บริษัทที่ลงทุน', 12), S('ประเภทสินทรัพย์', 16),
+      S('หมวด DOA', 9), S('GL Code', 10), S('GL Name', 20), { h: 'จำนวน', w: 9, num: true }, S('หน่วย', 8), N('ก่อน VAT'), N('VAT'), N('งบ (รวม VAT)'), N('ตัดงบแล้ว'), N('จองไว้'), N('คงเหลือ'), S('หมายเหตุ', 20)], itemRows);
+
+    add('requests', [S('เลขที่คำขอ', 15), S('เลขที่เอกสาร', 16), S('เลขที่ Memo', 16), S('บริษัท', 8), S('ประเภทงบ', 9), S('รหัสโครงการ'), S('ประเภทการใช้งบ', 22), S('สถานะ', 20),
+      S('ผู้ขอ', 16), S('วันที่ขอ', 11), S('วันที่อนุมัติ', 11), S('วัตถุประสงค์', 34), S('Supplier / ผู้รับเงิน', 22), S('PO No.', 14), N('ก่อน VAT'), N('VAT'), N('รวม'),
+      N('ตัดงบแล้ว'), N('ปิดยอด: ใช้จริง'), N('ปิดยอด: คืนงบ'), S('วันที่ปิดยอด', 11), S('Note ผู้คุมงบ', 24)],
+    reqs.map((r) => { const b = budgetById(r.budgetId); return [r.no, r.docNo || '', (r.memo || {}).no || '', b.company, T(r.type), b.code, (USE_TYPES[r.useType] || {}).label || '', STATUS_LABEL[r.status] || r.status,
+      userName(r.requesterId), day(r.createdAt), day(r.approvedAt), r.purpose || '', r.payee || '', r.poNo && r.poNo !== 'N/A' ? r.poNo : '', r.amountBeforeVat, r.vat, r.amount,
+      cutTotal(r), r.closed ? r.closed.actual : '', r.closed ? r.closed.returned : '', r.closed ? day(r.closed.at) : '', r.approverNote || '']; }));
+
+    const lineRows = [];
+    reqs.forEach((r) => { const b = budgetById(r.budgetId); r.lines.forEach((l, i) => { const it = itemById(b, l.itemId) || {};
+      lineRows.push([r.no, r.docNo || '', b.code, i + 1, b.structure === 'project' ? '' : it.code || '', b.structure === 'project' ? '' : it.name || '', l.category || '', l.glCode || it.glCode || '', l.glName || it.glName || '',
+        lineInvestor(b, l), l.description || '', l.amountBeforeVat, l.vat, l.amount, STATUS_LABEL[r.status] || r.status]); }); });
+    add('lines', [S('เลขที่คำขอ', 15), S('เลขที่เอกสาร', 16), S('รหัสโครงการ'), { h: 'บรรทัด', w: 7, num: true }, S('รหัส Item', 16), S('ชื่อ Item', 26), S('หมวดค่าใช้จ่าย', 18), S('GL Code', 10), S('GL Name', 20),
+      S('บริษัทที่ลงทุน', 12), S('รายละเอียด', 34), N('ก่อน VAT'), N('VAT'), N('รวม'), S('สถานะ', 20)], lineRows);
+
+    const cutRows = [];
+    reqs.forEach((r) => { const b = budgetById(r.budgetId); (r.cuts || []).forEach((c) => cutRows.push([r.docNo || '', r.no, b.company, T(r.type), b.code, CUT_KIND[c.kind] || c.kind, day(c.date || c.at), c.amount,
+      c.prNo || '', c.poNo || '', c.ref || '', c.note || '', userName(c.by)])); });
+    add('cuts', [S('เลขที่เอกสาร', 16), S('เลขที่คำขอ', 15), S('บริษัท', 8), S('ประเภทงบ', 9), S('รหัสโครงการ'), S('ประเภทการตัดงบ', 18), S('วันที่', 11), N('จำนวนเงิน'), S('PR No.', 12), S('PO No.', 12),
+      S('อ้างอิง', 18), S('หมายเหตุ', 24), S('บันทึกโดย', 16)], cutRows);
+
+    const chRows = [];
+    (db.changes || []).filter((c) => bIds.has(c.budgetId)).forEach((c) => { const b = budgetById(c.budgetId);
+      chRows.push([c.no, 'ขอเพิ่มงบ', b.company, T(b.type), b.code, day(c.createdAt), CHANGE_STATE[c.state] || c.state, changeTotal(c), (c.meeting || {}).no || '', c.reason || '', userName(c.createdBy)]); });
+    budgets.forEach((b) => (b.history || []).filter((h) => /^(TRF|DEC)-/.test(h.ref || '') && h.action !== 'รับงบที่โยกเข้า').forEach((h) => {
+      const amt = Number(String(h.note || '').replace(/^[A-Z]+-\d+-\d+ · /, '').split(' บาท')[0].replace(/,/g, '')) || '';
+      chRows.push([h.ref, h.ref.startsWith('TRF') ? 'โยกงบ' : 'ลดงบ', b.company, T(b.type), b.code, day(h.at), 'บันทึกแล้ว', h.ref.startsWith('DEC') && amt ? -amt : amt, '', h.note || '', userName(h.by)]);
+    }));
+    add('changes', [S('เลขที่', 15), S('ประเภท', 11), S('บริษัท', 8), S('ประเภทงบ', 9), S('รหัสโครงการ (ต้นทาง)'), S('วันที่', 11), S('สถานะ', 14), N('จำนวนเงิน'), S('เลขที่มติ / อนุมัติ', 20),
+      S('เหตุผล / รายละเอียด', 44), S('โดย', 16)], chRows);
+
+    const cfRows = [];
+    budgets.filter((b) => b.type === 'CAPEX' && isActive(b)).forEach((b) => ledgerItems(b).forEach((it) => {
+      const act = actualByMonth(b, it.id);
+      fyMonths(b).forEach((ym) => {
+        const plan = planOf(b, it.id, ym);
+        const a = act[ym] || 0;
+        if (plan || a) cfRows.push([b.company, b.code, it.code, it.name, itemTotal(it), ym, plan, round2(a), round2(plan - a)]);
+      });
+    }));
+    add('cashflow', [S('บริษัท', 8), S('รหัสโครงการ'), S('รหัส Item', 16), S('ชื่อ Item', 28), N('งบ Item'), S('เดือน (ปี-เดือน)', 12), N('แผน (Plan)'), N('ใช้จริง (ตัดงบ)'), N('ผลต่าง')], cfRows);
+    return sheets;
+  }
+
+  function viewExport() {
+    if (!canExport()) return '<div class="alert error">ไม่มีสิทธิ์ส่งออกข้อมูล</div>';
+    const years = uniq(db.budgets.map((b) => String(b.fiscalYear))).sort().reverse();
+    const sel = (name, label, opts) => '<label class="field"><span>' + label + '</span><div class="select-wrap"><select name="' + name + '">' + opts + '</select></div></label>';
+    return '<div class="page-head"><div><h1>ส่งออกข้อมูล (Excel)</h1><div class="page-sub">ข้อมูลการเงินและบัญชีสำหรับทำรายงาน / บันทึกบัญชี — ไฟล์ .xlsx เปิดด้วย Excel ได้ทันที แต่ละหัวข้อเป็นแผ่นงาน (Sheet) แยกกัน</div></div></div>' +
+      '<form id="exportForm" class="form-main"><section class="card form-section"><div class="form-grid">' +
+      sel('year', 'ปีงบประมาณ', '<option value="">ทุกปี</option>' + years.map((y) => opt(y, y, String(new Date().getFullYear()))).join('')) +
+      sel('company', 'บริษัท', '<option value="">ทุกบริษัท</option>' + optList(db.master.companies, 'code', (c) => c.code + (c.name ? ' — ' + c.name : ''), '')) +
+      sel('type', 'ประเภทงบ', '<option value="">ทั้ง CAPEX และ OPEX</option>' + opt('CAPEX', TYPE_LABEL.CAPEX, '') + opt('CBS', TYPE_LABEL.CBS, '')) +
+      '</div></section><section class="card form-section"><h2 class="section-title">ข้อมูลที่ต้องการ</h2><div class="export-list">' +
+      EXPORT_SHEETS.map(([k, t, hint]) => '<label class="export-opt"><input type="checkbox" name="sheet" value="' + k + '" checked><span><strong>' + t + '</strong><small>' + hint + '</small></span><em data-count="' + k + '"></em></label>').join('') +
+      '</div></section><div class="actions"><button class="btn primary" type="submit">ดาวน์โหลดไฟล์ Excel</button></div></form>';
+  }
+
+  function bindExport() {
+    const form = document.getElementById('exportForm');
+    if (!form) return;
+    const filters = () => ({ year: form.elements.year.value, company: form.elements.company.value, type: form.elements.type.value,
+      sheets: Array.from(form.querySelectorAll('[name="sheet"]:checked')).map((x) => x.value) });
+    const counts = () => {
+      const all = exportData(Object.assign(filters(), { sheets: EXPORT_SHEETS.map((x) => x[0]) }));
+      EXPORT_SHEETS.forEach(([k, t]) => { const s = all.find((x) => x.name === t); form.querySelector('[data-count="' + k + '"]').textContent = (s ? s.rows.length : 0).toLocaleString('th-TH') + ' แถว'; });
+    };
+    form.addEventListener('change', counts);
+    counts();
+    guard(form, [{ btn: 'button[type="submit"]', missing: (f) => [!f.querySelector('[name="sheet"]:checked') && 'เลือกข้อมูลอย่างน้อย 1 หัวข้อ'] }]);
+    form.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const fl = filters();
+      if (!fl.sheets.length) return;
+      const bytes = buildXlsx(exportData(fl));
+      const name = 'budget-export-' + [fl.year || 'all', fl.company, fl.type ? TYPE_SHORT[fl.type] : ''].filter(Boolean).join('-') + '-' + new Date().toISOString().slice(0, 10) + '.xlsx';
+      const blob = new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = name;
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+      logAction('ส่งออกข้อมูล (Excel)', '', name + ' · ' + fl.sheets.length + ' หัวข้อ');
+      save();
     });
   }
 
@@ -4464,6 +4671,7 @@
       ['ปรับงบ', 'ปิดปีงบ: งบเหลือหมดสิทธิ์หรือยกไป', 'ยังไม่ได้ทำ — งบปีก่อนยังใช้ต่อได้เหมือนเดิม'],
       ['ปรับงบ', 'มีงบกลาง/งบสำรองไหม', 'ไม่มี — โยกตรงจากรายการ/โครงการหนึ่งไปอีกที่'],
       ['ปรับงบ', 'โยก/ลดงบแล้วแจ้งเจ้าของงบไหม', 'บันทึกในประวัติของงบทั้งสองฝั่ง (ยังไม่มีแจ้งเตือน)'],
+      ['ระบบ', 'ส่งออกข้อมูล (Excel)', 'เมนู "ส่งออกข้อมูล (Excel)" สำหรับผู้คุมงบและ Admin (สิทธิ์ data.export) · กรองปีงบ / บริษัท / ประเภทงบ · แผ่นงาน: งบประมาณ, Item, ดำเนินการใช้งบ, รายการในใบ, ตัดงบ-จ่ายเงิน, ปรับงบ (INC/TRF/DEC), Plan Cashflow · ตัวเลขเป็นตัวเลขจริงใน Excel (รวม/กรองได้) · รอยืนยันกับฝ่ายบัญชีว่าต้องการคอลัมน์ / รูปแบบเพิ่มเติม (เช่น รูปแบบนำเข้าระบบบัญชี)'],
       ['CAPEX', 'Plan Cashflow', 'หลังงบอนุมัติ (เปิดใช้แล้ว) Business เจ้าของงบหรือผู้คุมงบ ประมาณการว่าแต่ละ Item จะใช้เงินเดือนไหนเท่าไร (รวม VAT) ตามเดือนของปีงบประมาณ · รวมของแต่ละ Item ต้องไม่เกินวงเงิน Item · ไม่บังคับก่อนขอใช้งบ (แจ้งเตือนในหน้างบ) · แสดงเทียบกับยอดตัดงบจริงรายเดือน · แก้ได้ตลอด เก็บประวัติ'],
       ['ใช้งบ', 'ใบดำเนินการใช้งบ 1 ใบใช้ได้หลาย Item ไหม', 'ได้ ทั้ง CAPEX และ OPEX — เลือก Item ทีละบรรทัด · ตรวจเกินงบทีละ Item และทั้งโครงการ · ตัดงบแบ่งตามสัดส่วนยอดของแต่ละ Item · DOA ของ CAPEX อ้างอิงหมวดของ Item ที่ขอใช้ยอดมากที่สุดในใบ'],
       ['ใช้งบ', 'ขอเกินงบรายการย่อยแต่ไม่เกินงบโครงการ', 'ขอได้ ระบบเตือน ผู้คุมงบต้องใส่ Note'],
@@ -4773,7 +4981,7 @@
   }
   const previousPage = () => (navStack.length > 1 ? navStack[navStack.length - 2] : null);
 
-  const LIST_PAGES = ['dashboard', 'master', 'admin', 'adjust', 'tasks', 'history', 'po', 'cuts', 'log', 'assumptions', 'budgets', 'my-budgets', 'requests', 'approvals', 'accounting', 'payments'];
+  const LIST_PAGES = ['export', 'dashboard', 'master', 'admin', 'adjust', 'tasks', 'history', 'po', 'cuts', 'log', 'assumptions', 'budgets', 'my-budgets', 'requests', 'approvals', 'accounting', 'payments'];
   let lastBudgetList = null; // หน้ารายการงบล่าสุด (จำแท็บ/ตัวกรอง)
   let lastRequestParent = null; // หน้าที่เปิดคำขอมาล่าสุด: รายการคำขอ / รอตรวจสอบ / งวดจ่าย / หน้ารายละเอียดงบ
 
@@ -4862,6 +5070,7 @@
     else if (parts[0] === 'history') html = viewHistory(params);
     else if (parts[0] === 'log') html = viewLog(params);
     else if (parts[0] === 'assumptions') html = viewAssumptions();
+    else if (parts[0] === 'export') html = viewExport();
     else if (parts[0] === 'doc') html = viewDocument(parts[1]);
     else html = notFound();
 
@@ -4885,6 +5094,7 @@
     bindSubItems();
     bindMemoDoc();
     bindCashflow();
+    bindExport();
     bindChangeDetail();
     bindAdjust();
     bindLog();
