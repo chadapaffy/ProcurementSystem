@@ -1405,14 +1405,54 @@
   // ---- ไฟล์แนบ (โหมดทดลองเก็บในเบราว์เซอร์ เป็น data URL)
   const fmtSize = (n) => (n >= 1024 * 1024 ? (n / 1024 / 1024).toFixed(1) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB');
   /** รายการไฟล์แนบ: opts.del = ใส่ปุ่มลบ (data-att-del) */
+  /** ไฟล์ที่แสดงอยู่บนหน้า (id → ไฟล์) ใช้เปิดดูในหน้าเว็บ */
+  const ATT_REG = new Map();
+  const isImageFile = (f) => /^image\//.test(f.type || '') || /^data:image\//.test(f.data || '') || /\.(png|jpe?g)$/i.test(f.name || '');
   function attachList(list, opts) {
     const files = list || [];
+    files.forEach((f) => { if (f.id) ATT_REG.set(f.id, f); });
     if (!files.length) return '<p class="muted small-note">' + ((opts && opts.empty) || 'ยังไม่มีไฟล์แนบ') + '</p>';
-    return '<ul class="files">' + files.map((f) => '<li><span class="file-ico" aria-hidden="true">PDF</span><div>' +
-      (f.data ? '<a href="' + f.data + '" download="' + esc(f.name) + '" target="_blank" rel="noopener">' + esc(f.name) + '</a>' : '<span>' + esc(f.name) + '</span>') +
+    return '<ul class="files">' + files.map((f) => '<li><span class="file-ico" aria-hidden="true">' + (isImageFile(f) ? 'IMG' : 'PDF') + '</span><div>' +
+      (f.data ? '<a href="#" data-att-view="' + esc(f.id) + '" title="เปิดดูในหน้าเว็บ">' + esc(f.name) + '</a>' +
+        ' <a class="file-dl" href="' + f.data + '" download="' + esc(f.name) + '" title="ดาวน์โหลด">ดาวน์โหลด</a>' : '<span>' + esc(f.name) + '</span>') +
       '<small>' + (f.sample ? 'ไฟล์ตัวอย่าง (ไม่มีเนื้อหา)' : fmtSize(f.size)) + ' · ' + esc(userName(f.by)) + ' · ' + fmtDate(f.at) + '</small></div>' +
       (opts && opts.del ? '<button type="button" class="btn small bad" data-att-del="' + esc(f.id) + '" title="ลบไฟล์">×</button>' : '') + '</li>').join('') + '</ul>';
   }
+  /** เปิดดูไฟล์แนบในหน้าเว็บ (PDF ด้วยตัวแสดง PDF ของเบราว์เซอร์ · รูปภาพแสดงเต็มกรอบ) */
+  function openAttachment(f) {
+    if (!f || !f.data) return;
+    let url = f.data;
+    try {
+      const [head, b64] = f.data.split(',');
+      const mime = (head.match(/^data:([^;]+)/) || [])[1] || f.type || 'application/pdf';
+      const bin = atob(b64);
+      const arr = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+      url = URL.createObjectURL(new Blob([arr], { type: mime }));
+    } catch (err) { /* ใช้ data URL เดิม */ }
+    const box = document.createElement('div');
+    box.className = 'viewer';
+    box.setAttribute('role', 'dialog');
+    box.setAttribute('aria-modal', 'true');
+    box.innerHTML = '<div class="viewer-panel"><div class="viewer-head"><strong class="viewer-name">' + esc(f.name) + '</strong>' +
+      '<div class="viewer-actions"><a class="btn small" href="' + url + '" target="_blank" rel="noopener">เปิดในแท็บใหม่</a>' +
+      '<a class="btn small" href="' + f.data + '" download="' + esc(f.name) + '">ดาวน์โหลด</a>' +
+      '<button type="button" class="btn small" data-viewer-close>ปิด ✕</button></div></div>' +
+      '<div class="viewer-body">' + (isImageFile(f) ? '<img src="' + url + '" alt="' + esc(f.name) + '">' : '<iframe src="' + url + '" title="' + esc(f.name) + '"></iframe>') + '</div></div>';
+    const close = () => { box.remove(); document.removeEventListener('keydown', onKey); if (url !== f.data) setTimeout(() => URL.revokeObjectURL(url), 1000); };
+    const onKey = (e) => { if (e.key === 'Escape') close(); };
+    box.addEventListener('click', (e) => { if (e.target === box || e.target.closest('[data-viewer-close]')) close(); });
+    document.addEventListener('keydown', onKey);
+    document.body.appendChild(box);
+    box.querySelector('[data-viewer-close]').focus();
+  }
+  document.addEventListener('click', (e) => {
+    const a = e.target.closest('[data-att-view]');
+    if (!a) return;
+    e.preventDefault();
+    openAttachment(ATT_REG.get(a.dataset.attView));
+  });
+
   /** อ่านไฟล์จาก input — รับ PDF/รูปภาพ ไม่เกิน ATTACH_MAX (โหมดทดลอง) */
   function readFiles(input, slot) {
     const files = Array.from(input.files || []);
