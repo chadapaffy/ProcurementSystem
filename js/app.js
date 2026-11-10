@@ -1236,7 +1236,7 @@
       '<p class="muted small-note">งบ OPEX ต้องมี Item — กรอก <strong>Item หลัก</strong> (รหัส 1, 2, 3 …) พร้อมวงเงินของแต่ละ Item (ไม่ต้องกรอกจำนวน/หน่วย) · <strong>Item ย่อย</strong> 2 ระดับ (1.1 และ 1.1.1) พร้อมจำนวน/หน่วย เพิ่มได้เรื่อย ๆ ภายหลังเมื่องบเปิดใช้แล้ว ที่หน้ารายละเอียดงบ (วงเงินรวมไม่เกิน Item หลัก และจะกำหนดวงเงินหรือไม่ก็ได้)</p>' +
       '<div class="table-wrap"><table class="edit-table"><thead><tr><th style="width:5.5rem">รหัส</th><th style="min-width:12rem">รายการ</th>' +
       '<th class="num" style="width:9rem">ก่อน VAT</th><th style="width:4rem">VAT 7%</th>' +
-      '<th style="width:7rem">GL Code</th><th style="width:10rem">GL Name</th><th style="width:7rem">บริษัทที่ลงทุน</th><th style="width:3rem"></th></tr></thead>' +
+      '<th style="width:7rem">GL Code <small class="muted">(บัญชีใส่ทีหลังได้)</small></th><th style="width:10rem">GL Name</th><th style="width:7rem">บริษัทที่ลงทุน</th><th style="width:3rem"></th></tr></thead>' +
       '<tbody id="cbsRows">' + cbsItems.map((it) => cbsRow(Object.assign({}, it, { investor: it.investor || v.company }), false)).join('') + '</tbody></table></div>' +
       '<div class="actions table-actions"><button type="button" class="btn small" data-add-row="cbs">+ เพิ่มรายการ</button>' +
       '<span class="muted">รวม (รวม VAT) <strong data-total="cbs">0.00</strong> บาท</span></div></fieldset>' +
@@ -1534,6 +1534,7 @@
     if (editable) actions.push('<a class="btn" href="#/budget/' + b.id + '/edit">แก้ไขร่าง</a>');
     if (own || canViewAll()) actions.push('<a class="btn" href="#/budget/' + b.id + '/form">พิมพ์แบบฟอร์มขออนุมัติ</a>');
     if (manageSub) actions.push('<a class="btn" href="#/budget/' + b.id + '/items">จัดการ Item ย่อย</a>');
+    if (canEditGl(b)) actions.push('<a class="btn" href="#/budget/' + b.id + '/gl">ใส่ GL Code</a>');
     if (canPlanCashflow(b)) actions.push('<a class="btn" href="#/budget/' + b.id + '/cashflow">' + (hasCashflow(b) ? 'แก้ไข Plan Cashflow' : 'วาง Plan Cashflow') + '</a>');
     if (active && can('budget.adjust')) actions.push('<a class="btn" href="#/adjust?budget=' + b.id + '">โยก / ลดงบ</a>');
     if (editable) actions.push('<button type="button" class="btn bad" id="cancelBudget">ยกเลิกคำขอ</button>');
@@ -1620,12 +1621,18 @@
           const alloc = childrenOf(b, i).length && own ? '<div class="muted">จัดสรรให้ Item ย่อย ' + money(allocatedOf(b, i)) + ' · ยังไม่จัดสรร ' + money(round2(itemTotal(i) - allocatedOf(b, i))) + '</div>' : '';
           return '<tr class="' + (main ? 'parent-row' : '') + '"><td class="nowrap">' + esc(i.code) + '</td>' +
             '<td style="padding-left:' + (0.75 + depth(i) * 1.1) + 'rem">' + esc(i.name) + qty + '<div class="muted">ลงทุนโดย ' + esc(itemInvestor(b, i)) + '</div>' + alloc + '</td>' +
-            '<td>' + (i.glCode ? esc(i.glCode) + '<div class="muted">' + esc(i.glName) + '</div>' : '') + '</td>' +
+            '<td>' + (i.glCode ? esc(i.glCode) + '<div class="muted">' + esc(i.glName) + '</div>' : itemGl(b, i).code ? '<span class="muted">ตาม ' + esc(itemGl(b, i).code) + '</span>' : isMainItem(b, i) ? '<span class="muted">รอบัญชี</span>' : '') + '</td>' +
             '<td class="num">' + (own ? money(itemTotal(i)) : '<span class="muted">ไม่กำหนดวงเงิน</span>') + '</td>' +
             (active ? '<td class="num">' + money(iu.used) + '</td><td class="num">' + money(iu.reserved) + '</td>' +
               '<td class="num nowrap">' + (own ? moneyCell(iu.remaining) + (iu.remaining < 0 ? ' <span class="badge rejected">เกินงบ</span>' : '') : '<span class="muted">ใช้วงเงิน Item ' + esc(node.code) + '</span>') + '</td>' : '') +
             (canRequest ? reqBtn(i) : '') + '</tr>';
         }).join('') + '</tbody></table></div>';
+    }
+
+    // ---- GL Code ที่ยังรอฝ่ายบัญชี (OPEX)
+    if (missingGl(b).length) {
+      items = '<div class="alert ' + (canEditGl(b) ? 'warn' : 'info') + '">ยังไม่มี GL Code ' + missingGl(b).length + ' Item หลัก (' + missingGl(b).map((x) => esc(x.code)).join(', ') + ') — ฝ่ายบัญชีใส่ทีหลังได้' +
+        (canEditGl(b) ? ' · <a href="#/budget/' + b.id + '/gl">ใส่ GL Code</a>' : '') + '</div>' + items;
     }
 
     // ---- Plan Cashflow (CAPEX ที่เปิดใช้แล้ว)
@@ -1835,7 +1842,7 @@
         '<div class="muted section-hint">วงเงิน Item หลัก <strong>' + money(itemTotal(m)) + '</strong> บาท · จัดสรรให้ Item ย่อยแล้ว <strong data-alloc>0.00</strong> · ยังไม่จัดสรร <strong data-free>0.00</strong></div></div>' +
         '<button type="button" class="btn" data-add-sub="' + esc(m.id) + '">+ เพิ่ม Item ย่อย</button></div>' +
         '<div class="table-wrap"><table class="edit-table"><thead><tr><th style="width:8.5rem">รหัส</th><th style="min-width:12rem">รายการ</th><th style="width:6rem">จำนวน</th><th style="width:5.5rem">หน่วย</th>' +
-        '<th class="num" style="width:9rem">วงเงินก่อน VAT</th><th style="width:4rem">VAT 7%</th><th style="width:7rem">GL Code</th><th style="width:8rem">บริษัทที่ลงทุน</th><th style="width:6.5rem"></th></tr></thead>' +
+        '<th class="num" style="width:9rem">วงเงินก่อน VAT</th><th style="width:4rem">VAT 7%</th><th style="width:7rem">GL Code <small class="muted">(ไม่บังคับ)</small></th><th style="width:8rem">บริษัทที่ลงทุน</th><th style="width:6.5rem"></th></tr></thead>' +
         '<tbody>' + subs.map((x) => subItemRow(b, x, itemInUse(b, x))).join('') + '</tbody></table></div>' +
         '</section>';
     }).join('');
@@ -2240,7 +2247,7 @@
     budgets.forEach((b) => sortedItems(b).forEach((it) => {
       const own = b.type !== 'CBS' || hasOwnBudget(b, it);
       const u = own ? usage(b, it.id) : null;
-      itemRows.push([b.company, T(b.type), b.code, it.code, it.name, b.type === 'CBS' ? depth(it) + 1 : 1, itemInvestor(b, it), it.assetType || '', it.doa || '', it.glCode || '', it.glName || '',
+      itemRows.push([b.company, T(b.type), b.code, it.code, it.name, b.type === 'CBS' ? depth(it) + 1 : 1, itemInvestor(b, it), it.assetType || '', it.doa || '', itemGl(b, it).code, itemGl(b, it).name,
         it.qty === '' || it.qty == null ? '' : Number(it.qty), it.unit || '', own ? round2(Number(it.amount || 0)) : '', own ? round2(Number(it.vat || 0)) : '', own ? itemTotal(it) : '',
         u ? u.used : '', u ? u.reserved : '', u ? u.remaining : '', own ? '' : 'ใช้วงเงิน Item ' + (budgetNodeOf(b, it) || {}).code]);
     }));
@@ -2256,7 +2263,7 @@
 
     const lineRows = [];
     reqs.forEach((r) => { const b = budgetById(r.budgetId); r.lines.forEach((l, i) => { const it = itemById(b, l.itemId) || {};
-      lineRows.push([r.no, r.docNo || '', b.code, i + 1, b.structure === 'project' ? '' : it.code || '', b.structure === 'project' ? '' : it.name || '', l.category || '', l.glCode || it.glCode || '', l.glName || it.glName || '',
+      lineRows.push([r.no, r.docNo || '', b.code, i + 1, b.structure === 'project' ? '' : it.code || '', b.structure === 'project' ? '' : it.name || '', l.category || '', lineGl(b, l).code, lineGl(b, l).name,
         lineInvestor(b, l), l.description || '', l.amountBeforeVat, l.vat, l.amount, STATUS_LABEL[r.status] || r.status]); }); });
     add('lines', [S('เลขที่คำขอ', 15), S('เลขที่เอกสาร', 16), S('รหัสโครงการ'), { h: 'บรรทัด', w: 7, num: true }, S('รหัส Item', 16), S('ชื่อ Item', 26), S('หมวดค่าใช้จ่าย', 18), S('GL Code', 10), S('GL Name', 20),
       S('บริษัทที่ลงทุน', 12), S('รายละเอียด', 34), N('ก่อน VAT'), N('VAT'), N('รวม'), S('สถานะ', 20)], lineRows);
@@ -2331,6 +2338,73 @@
       setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
       logAction('ส่งออกข้อมูล (Excel)', '', name + ' · ' + fl.sheets.length + ' หัวข้อ');
       save();
+    });
+  }
+
+  // ---------------------------------------------------------------- GL Code (OPEX): ฝ่ายบัญชีใส่ทีหลังได้
+
+  /** GL ของ Item: ของตัวเอง หรือของ Item แม่ที่ใกล้ที่สุด (Item ย่อยใช้ GL ของ Item หลักได้) */
+  function itemGl(b, it) {
+    let n = it;
+    while (n) {
+      if (n.glCode) return { code: n.glCode, name: n.glName || ((db.master.glCodes.find((g) => g.code === n.glCode) || {}).name || ''), own: n === it };
+      n = b.type === 'CBS' ? parentOf(b, n) : null;
+    }
+    return { code: '', name: '', own: false };
+  }
+  /** GL ของบรรทัด: ที่บันทึกในบรรทัด หรือ GL ปัจจุบันของ Item (บัญชีใส่ทีหลัง) */
+  const lineGl = (b, l) => (l.glCode ? { code: l.glCode, name: l.glName || '' } : itemGl(b, itemById(b, l.itemId) || { code: '' }));
+  /** Item หลักของ OPEX ที่ยังไม่มี GL */
+  const missingGl = (b) => (b.type === 'CBS' && b.structure !== 'project' ? b.items.filter((it) => isMainItem(b, it) && !it.glCode) : []);
+  /** ฝ่ายบัญชี (ผู้คุมงบ) ใส่ / แก้ GL ได้ทุกเมื่อ ยกเว้นงบที่ยกเลิก */
+  const canEditGl = (b) => b.type === 'CBS' && b.structure !== 'project' && b.state !== 'cancelled' && can('budget.manage');
+
+  function viewGl(id) {
+    const b = budgetById(id);
+    if (!b) return notFound();
+    if (!canEditGl(b)) return '<div class="alert error">ใส่ GL Code ได้เฉพาะงบ OPEX โดยฝ่ายบัญชี / ผู้คุมงบ</div>';
+    const rows = sortedItems(b).map((it) => {
+      const inh = itemGl(b, it);
+      const ph = !it.glCode && inh.code ? 'ตาม Item แม่ (' + inh.code + ')' : '';
+      return '<tr data-item="' + esc(it.id) + '" class="' + (isMainItem(b, it) ? 'parent-row' : '') + '"><td class="nowrap">' + esc(it.code) + '</td>' +
+        '<td style="padding-left:' + (0.75 + depth(it) * 1.1) + 'rem">' + esc(it.name) + '</td>' +
+        '<td><input name="gl" list="glList" value="' + esc(it.glCode || '') + '" placeholder="' + esc(ph || (isMainItem(b, it) ? 'ยังไม่มี' : '')) + '" aria-label="GL Code ' + esc(it.code) + '"></td>' +
+        '<td><input name="glName" value="' + esc(it.glName || '') + '" aria-label="GL Name ' + esc(it.code) + '"></td></tr>';
+    }).join('');
+    return '<div class="page-head"><div><h1>ใส่ GL Code · ' + esc(b.code) + '</h1><div class="page-sub">' + esc(b.name) +
+      ' — ฝ่ายบัญชีใส่ GL ของแต่ละ Item ได้ทุกเมื่อ (ตอนตั้งงบไม่ต้องกรอก) · Item ย่อยที่เว้นว่างใช้ GL ของ Item แม่ · ใบดำเนินการใช้งบที่ยังไม่มี GL จะใช้ GL ล่าสุดของ Item</div></div></div>' +
+      '<div id="formError"></div>' +
+      '<datalist id="glList">' + db.master.glCodes.map((g) => '<option value="' + esc(g.code) + '">' + esc(g.name) + '</option>').join('') + '</datalist>' +
+      '<form id="glForm" data-id="' + b.id + '"><section class="card form-section"><div class="table-wrap"><table class="edit-table"><thead><tr><th style="width:6rem">รหัส</th><th>รายการ</th>' +
+      '<th style="width:11rem">GL Code</th><th style="width:16rem">GL Name</th></tr></thead><tbody>' + rows + '</tbody></table></div></section>' +
+      '<div class="actions"><button class="btn primary" type="submit">บันทึก GL Code</button><a class="btn" data-back href="#/budget/' + b.id + '">ยกเลิก</a></div></form>';
+  }
+
+  function bindGl() {
+    const form = document.getElementById('glForm');
+    if (!form) return;
+    const b = budgetById(form.dataset.id);
+    form.addEventListener('change', (e) => {
+      if (!e.target.matches('[name="gl"]')) return;
+      const g = db.master.glCodes.find((x) => x.code === e.target.value.trim());
+      if (g) e.target.closest('tr').querySelector('[name="glName"]').value = g.name;
+    });
+    form.addEventListener('submit', (e) => {
+      e.preventDefault();
+      let changed = 0;
+      form.querySelectorAll('tbody tr').forEach((tr) => {
+        const it = itemById(b, tr.dataset.item);
+        const code = tr.querySelector('[name="gl"]').value.trim();
+        const name = code ? tr.querySelector('[name="glName"]').value.trim() : '';
+        if ((it.glCode || '') !== code || (it.glName || '') !== name) changed += 1;
+        it.glCode = code;
+        it.glName = name;
+        if (code && !db.master.glCodes.some((g) => g.code === code)) db.master.glCodes.push({ code, name });
+      });
+      addHistory(b, 'บัญชีใส่ / แก้ GL Code', changed + ' รายการ', 'งบ ' + b.code);
+      save();
+      setFlash('success', 'บันทึก GL Code ของ ' + b.code + ' แล้ว (' + changed + ' รายการ)');
+      go('#/budget/' + b.id);
     });
   }
 
@@ -2803,9 +2877,9 @@
     if (r.type === 'CBS') {
       // GL ตั้งต้นจากรายการต้นทุน
       r.lines.forEach((l) => {
-        const it = itemById(b, l.itemId) || {};
-        l.glCode = it.glCode || '';
-        l.glName = it.glName || '';
+        const g = itemGl(b, itemById(b, l.itemId) || { code: '' });
+        l.glCode = g.code;
+        l.glName = g.name;
       });
     }
   }
@@ -2869,7 +2943,7 @@
         const it = itemById(b, l.itemId) || {};
         return '<tr><td>' + (i + 1) + '</td>' +
           (withCat ? '<td>' + esc(l.category || '-') + '</td>' : withItem ? '<td>' + esc(it.code) + '<div class="muted">' + esc(it.name) + '</div></td>' : '') +
-          (withGl ? '<td>' + esc(l.glCode || '-') + '<div class="muted">' + esc(l.glName || '') + '</div></td>' : '') +
+          (withGl ? '<td>' + esc(lineGl(b, l).code || '-') + '<div class="muted">' + esc(lineGl(b, l).code ? lineGl(b, l).name : 'รอบัญชีใส่ GL') + '</div></td>' : '') +
           '<td>' + investorCell(lineInvestor(b, l)) + '</td>' +
           '<td>' + esc(l.description) + '</td><td class="num">' + money(l.amountBeforeVat) + '</td><td class="num">' + money(l.vat) +
           '</td><td class="num">' + money(l.amount) + '</td></tr>';
@@ -3669,7 +3743,7 @@
       r.lines.map((l, i) => {
         const it = itemById(b, l.itemId) || {};
         return '<tr><td>' + (i + 1) + '</td>' +
-          (withCat ? '<td>' + esc(l.category || '-') + '</td>' : isCapex ? (perItem ? '<td>' + esc(it.code + ' ' + it.name) + '</td>' : '') : '<td>' + esc(it.code + ' ' + it.name) + (l.glCode ? '<br><small>GL ' + esc(l.glCode + ' ' + (l.glName || '')) + '</small>' : '') + '</td>') +
+          (withCat ? '<td>' + esc(l.category || '-') + '</td>' : isCapex ? (perItem ? '<td>' + esc(it.code + ' ' + it.name) + '</td>' : '') : '<td>' + esc(it.code + ' ' + it.name) + (lineGl(b, l).code ? '<br><small>GL ' + esc(lineGl(b, l).code + ' ' + (lineGl(b, l).name || '')) + '</small>' : '') + '</td>') +
           '<td>' + esc(lineInvestor(b, l)) + '</td><td>' + esc(l.description) + '</td><td class="num">' + money(l.amountBeforeVat) + '</td><td class="num">' + money(l.vat) + '</td><td class="num">' + money(l.amount) + '</td></tr>';
       }).join('') +
       '<tr><th colspan="' + (isCapex && !withCat && !perItem ? 3 : 4) + '" class="right">รวมทั้งสิ้น</th><td class="num">' + money(r.amountBeforeVat) + '</td><td class="num">' + money(r.vat) +
@@ -4735,6 +4809,7 @@
       ['ปรับงบ', 'มีงบกลาง/งบสำรองไหม', 'ไม่มี — โยกตรงจากรายการ/โครงการหนึ่งไปอีกที่'],
       ['ปรับงบ', 'โยก/ลดงบแล้วแจ้งเจ้าของงบไหม', 'บันทึกในประวัติของงบทั้งสองฝั่ง (ยังไม่มีแจ้งเตือน)'],
       ['ระบบ', 'ส่งออกข้อมูล (Excel)', 'เมนู "ส่งออกข้อมูล (Excel)" สำหรับผู้คุมงบและ Admin (สิทธิ์ data.export) · กรองปีงบ / บริษัท / ประเภทงบ · แผ่นงาน: งบประมาณ, Item, ดำเนินการใช้งบ, รายการในใบ, ตัดงบ-จ่ายเงิน, ปรับงบ (INC/TRF/DEC), Plan Cashflow · ตัวเลขเป็นตัวเลขจริงใน Excel (รวม/กรองได้) · รอยืนยันกับฝ่ายบัญชีว่าต้องการคอลัมน์ / รูปแบบเพิ่มเติม (เช่น รูปแบบนำเข้าระบบบัญชี)'],
+      ['OPEX', 'GL Code', 'ไม่บังคับตอนตั้งงบ / เพิ่ม Item ย่อย — ฝ่ายบัญชี (ผู้คุมงบ) ใส่ทีหลังได้ทุกเมื่อที่ปุ่ม "ใส่ GL Code" ในหน้างบ · Item ย่อยที่เว้นว่างใช้ GL ของ Item แม่ · ใบดำเนินการใช้งบที่ยังไม่มี GL แสดง GL ล่าสุดของ Item (รวมถึงใน Excel) · หน้างบแจ้งเตือน Item หลักที่ยังไม่มี GL'],
       ['CAPEX', 'Plan Cashflow', 'หลังงบอนุมัติ (เปิดใช้แล้ว) Business เจ้าของงบหรือผู้คุมงบ ประมาณการว่าแต่ละ Item จะใช้เงินเดือนไหนเท่าไร (รวม VAT) ตามเดือนของปีงบประมาณ · รวมของแต่ละ Item ต้องไม่เกินวงเงิน Item · ไม่บังคับก่อนขอใช้งบ (แจ้งเตือนในหน้างบ) · แสดงเทียบกับยอดตัดงบจริงรายเดือน · แก้ได้ตลอด เก็บประวัติ'],
       ['ใช้งบ', 'ใบดำเนินการใช้งบ 1 ใบใช้ได้หลาย Item ไหม', 'ได้ ทั้ง CAPEX และ OPEX — เลือก Item ทีละบรรทัด · ตรวจเกินงบทีละ Item และทั้งโครงการ · ตัดงบแบ่งตามสัดส่วนยอดของแต่ละ Item · DOA ของ CAPEX อ้างอิงหมวดของ Item ที่ขอใช้ยอดมากที่สุดในใบ'],
       ['ใช้งบ', 'ขอเกินงบรายการย่อยแต่ไม่เกินงบโครงการ', 'ขอได้ ระบบเตือน ผู้คุมงบต้องใส่ Note'],
@@ -5014,7 +5089,7 @@
   /** หน้าฟอร์ม (สร้าง/แก้ไข) ไม่ใช่ที่ที่ควรย้อนกลับมา — หลังส่งหรือยกเลิกแล้วจะถูกตัดออกจาก stack */
   function isFormHash(hash) {
     const p = navPath(hash).slice(2).split('/');
-    return (p[0] === 'budget' && (p[1] === 'new' || p[2] === 'edit' || p[2] === 'items' || p[2] === 'cashflow')) || (p[0] === 'request' && (p[1] === 'new' || p[2] === 'edit')) ||
+    return (p[0] === 'budget' && (p[1] === 'new' || p[2] === 'edit' || p[2] === 'items' || p[2] === 'cashflow' || p[2] === 'gl')) || (p[0] === 'request' && (p[1] === 'new' || p[2] === 'edit')) ||
       (p[0] === 'change' && (p[1] === 'new' || p[2] === 'edit')) || p[0] === 'adjust';
   }
   /** หน้าที่อ้างถึงข้อมูลที่ถูกลบไปแล้วไม่ใช้เป็นปลายทางย้อนกลับ */
@@ -5082,7 +5157,7 @@
   function backTarget(parts) {
     const budgetList = lastBudgetList || (canViewAll() ? '#/budgets' : '#/my-budgets');
     if (parts[0] === 'budget' && parts[1] === 'new') return budgetList;
-    if (parts[0] === 'budget' && (parts[2] === 'edit' || parts[2] === 'form' || parts[2] === 'items' || parts[2] === 'cashflow')) return '#/budget/' + parts[1];
+    if (parts[0] === 'budget' && (parts[2] === 'edit' || parts[2] === 'form' || parts[2] === 'items' || parts[2] === 'cashflow' || parts[2] === 'gl')) return '#/budget/' + parts[1];
     if (parts[0] === 'budget') return budgetList;
     if (parts[0] === 'request' && parts[1] === 'new') return '#/budget/' + parts[2];
     if (parts[0] === 'request' && (parts[2] === 'edit' || parts[2] === 'memo')) return '#/request/' + parts[1];
@@ -5118,6 +5193,7 @@
     else if (parts[0] === 'budget' && parts[2] === 'form') html = viewBudgetRequestForm(parts[1]);
     else if (parts[0] === 'budget' && parts[2] === 'items') html = viewSubItems(parts[1]);
     else if (parts[0] === 'budget' && parts[2] === 'cashflow') html = viewCashflow(parts[1]);
+    else if (parts[0] === 'budget' && parts[2] === 'gl') html = viewGl(parts[1]);
     else if (parts[0] === 'budget') html = viewBudgetDetail(parts[1]);
     else if (parts[0] === 'request' && parts[1] === 'new') html = viewRequestForm(parts[2], null, params);
     else if (parts[0] === 'request' && parts[2] === 'edit') html = viewRequestForm(null, parts[1], params);
@@ -5157,6 +5233,7 @@
     bindSubItems();
     bindMemoDoc();
     bindCashflow();
+    bindGl();
     bindExport();
     bindChangeDetail();
     bindAdjust();
