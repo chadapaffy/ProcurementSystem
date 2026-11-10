@@ -344,30 +344,30 @@
     };
     const requests = [
       mk({ id: 'r1', no: 'REQ-' + year + '-0001', budgetId: 'b1', itemId: 'c1', useType: 'prpo', requesterId: 'req1', createdAt: iso(day(9, 1)),
-        status: 'approved', approvedAt: iso(day(9, 3)), docNo: 'PBI' + yy + '-001', purpose: 'ทดแทนเครื่องเดิมที่เสื่อมสภาพ',
+        status: 'approved', approvedAt: iso(day(9, 3)), docNo: 'CAPEX-' + year + '-0001', purpose: 'ทดแทนเครื่องเดิมที่เสื่อมสภาพ',
         lines: [line('c1', 'เครื่องตัดชิ้นงาน CNC พร้อมติดตั้ง', 450000)] }),
       mk({ id: 'r2', no: 'REQ-' + year + '-0002', budgetId: 'b1', itemId: 'c2', useType: 'advance', requesterId: 'req1', createdAt: iso(day(9, 20)),
-        status: 'approved', approvedAt: iso(day(9, 22)), docNo: 'PBI' + yy + '-002', purpose: 'ซื้ออุปกรณ์ห้องแล็บหน้าร้าน', payee: 'สมชาย ใจดี (เงินทดรอง)',
+        status: 'approved', approvedAt: iso(day(9, 22)), docNo: 'CAPEX-' + year + '-0002', purpose: 'ซื้ออุปกรณ์ห้องแล็บหน้าร้าน', payee: 'สมชาย ใจดี (เงินทดรอง)',
         advance: { at: iso(day(9, 25)), date: day(9, 25), amount: 32100, by: 'fin1' },
         lines: [line('c2', 'อุปกรณ์วัดและเครื่องมือห้องแล็บ', 30000)] }),
       mk({ id: 'r3', no: 'REQ-' + year + '-0003', budgetId: 'b2', itemId: 'c4', useType: 'reimburse', requesterId: 'req1', createdAt: iso(day(8, 5)),
-        status: 'closed', approvedAt: iso(day(8, 6)), docNo: 'PBI' + yy + '-003', purpose: 'ซื้อจอภาพด่วนสำหรับห้องประชุม', payee: 'สมชาย ใจดี (สำรองจ่าย)',
+        status: 'closed', approvedAt: iso(day(8, 6)), docNo: 'CAPEX-' + year + '-0003', purpose: 'ซื้อจอภาพด่วนสำหรับห้องประชุม', payee: 'สมชาย ใจดี (สำรองจ่าย)',
         lines: [line('c4', 'จอภาพ 27 นิ้ว 4 เครื่อง', 20000)],
         cuts: [{ id: 'x1', kind: 'reimburse', date: day(8, 12), amount: 19260, ref: 'ใบเสร็จ INV-5521', note: '', by: 'fin1', at: iso(day(8, 12)), attachments: [] }],
         closed: { at: iso(day(8, 12)), by: 'fin1', actual: 19260, returned: 2140, note: 'ซื้อได้ถูกกว่าที่ขอ' } }),
       mk({ id: 'r4', no: 'REQ-' + year + '-0004', budgetId: 'b6', itemId: 'c8', useType: 'direct', requesterId: 'req1', createdAt: iso(day(10, 28)),
         status: 'pending', purpose: 'งานปรับปรุงพื้นที่ชั้น 2', payee: 'หจก. ก่อสร้างตัวอย่าง',
-        memo: { no: 'MEMO-PBI' + yy + '-001', by: 'กรรมการผู้จัดการ', at: iso(day(10, 29)), files: [Object.assign(sampleFile('Memo-ปรับปรุงชั้น2-ลงนามแล้ว.pdf'), { slot: 'memo', by: 'req1' })] },
+        memo: { no: 'MEMO-' + year + '-0001', by: 'กรรมการผู้จัดการ', at: iso(day(10, 29)), files: [Object.assign(sampleFile('Memo-ปรับปรุงชั้น2-ลงนามแล้ว.pdf'), { slot: 'memo', by: 'req1' })] },
         lines: [line('c8', 'งานรื้อถอนและปรับพื้นชั้น 2', 150000, { category: 'ค่าจ้างเหมา', investor: 'PBI' }), line('c8', 'กระเบื้องและวัสดุปูพื้น', 40000, { category: 'ค่าวัสดุ / อุปกรณ์', investor: 'PCC' })] }),
       mk({ id: 'r5', no: 'REQ-' + year + '-0005', budgetId: 'b5', itemId: 'c7', useType: 'prpo', requesterId: 'req2', createdAt: iso(day(10, 30)),
         status: 'pending', purpose: 'ขยายพื้นที่จัดเก็บสินค้า', requesterReason: 'ราคาเหล็กปรับขึ้นจากตอนตั้งงบ',
         lines: [line('c7', 'ชั้นวางสินค้าแบบ Heavy duty 12 ชุด', 327000)] }),
       mk({ id: 'r6', no: 'REQ-' + year + '-0006', budgetId: 'b3', type: 'CBS', itemId: 'i4', useType: 'direct', requesterId: 'req2', createdAt: iso(day(9, 10)),
-        status: 'approved', approvedAt: iso(day(9, 11)), docNo: 'OPEX' + yy + '-0001', purpose: 'ซื้อดินผสมสำหรับเพาะกล้า', payee: 'ร้านวัสดุเกษตร',
+        status: 'approved', approvedAt: iso(day(9, 11)), docNo: 'OPEX-' + year + '-0001', purpose: 'ซื้อดินผสมสำหรับเพาะกล้า', payee: 'ร้านวัสดุเกษตร',
         lines: [{ itemId: 'i4', description: 'ดินผสม 100 กระสอบ', amountBeforeVat: 5000, vat: 0, amount: 5000, glCode: '510101', glName: 'ค่าวัตถุดิบ' }] }),
       mk({ id: 'r8', no: 'REQ-' + year + '-0008', budgetId: 'b6', itemId: 'c8', useType: 'prpo', requesterId: 'req1', createdAt: iso(day(11, 2)),
         status: 'memo', purpose: 'ติดตั้งระบบไฟส่องสว่างชั้น 2', payee: '',
-        memo: { no: 'MEMO-PBI' + yy + '-002', by: '', files: [], issuedAt: iso(day(11, 2)) },
+        memo: { no: 'MEMO-' + year + '-0002', by: '', files: [], issuedAt: iso(day(11, 2)) },
         memoParties: { to: ['ผู้บริหารสูงสุด PCC (ตัวอย่าง)', 'ผู้บริหารอาวุโส PCC (ตัวอย่าง)'], cc: ['บัญชี / การเงิน PCC (ตัวอย่าง)'], reviewers: ['ผู้บริหารฝ่ายการเงิน PCC (ตัวอย่าง)'],
           approvers: ['ผู้บริหารสูงสุด PCC (ตัวอย่าง)', 'ผู้บริหารอาวุโส PCC (ตัวอย่าง)'], proposer: 'กรรมการผู้จัดการ PBI (ตัวอย่าง)' },
         lines: [line('c8', 'โคมไฟ LED พร้อมติดตั้ง 40 ชุด', 60000, { category: 'ค่าวัสดุ / อุปกรณ์', investor: 'PCC' })] }),
@@ -391,10 +391,8 @@
       if (r.approvedAt) log.push({ at: r.approvedAt, by: 'fin1', action: 'อนุมัติ ออกใบดำเนินการใช้งบ', ref: r.docNo, detail: '' });
     });
     log.sort((a, b) => a.at.localeCompare(b.at));
-    const doc = {};
-    doc['PBI' + yy] = 3;
-    doc['OPEX' + yy] = 1;
-    return ensureMaster({ seq: { req: 8, id: 200, doc, chg: 1, memo: { ['PBI' + yy]: 2 } }, budgets, requests, changes, log });
+    const no = { ['REQ-' + year]: 8, ['INC-' + year]: 1, ['MEMO-' + year]: 2, ['CAPEX-' + year]: 3, ['OPEX-' + year]: 1 };
+    return ensureMaster({ seq: { req: 8, id: 200, doc: {}, no }, budgets, requests, changes, log });
   }
 
   function load() {
@@ -563,26 +561,33 @@
     return re ? res : null;
   }
 
-  function nextReqNo() {
-    db.seq.req += 1;
-    return 'REQ-' + new Date().getFullYear() + '-' + String(db.seq.req).padStart(4, '0');
+  /**
+   * เลขที่เอกสารที่ระบบออกให้: <ตัวย่อเอกสาร>-<ปี ค.ศ.>-<ลำดับ 4 หลัก> เริ่มนับ 0001 ใหม่ทุกปี
+   * REQ คำขอดำเนินการใช้งบ · INC คำขอเพิ่มงบ · MEMO บันทึกข้อความ · CAPEX / OPEX ใบดำเนินการใช้งบ · TRF โยกงบ · DEC ลดงบ
+   * (เลขที่ฝ่ายอื่นเป็นคนออก เช่น รหัสโครงการ / Item No. / PR / PO / เลขที่มติ / ใบเสร็จ ให้ผู้ใช้กรอกเอง)
+   */
+  const DOC_PREFIX = { req: 'REQ', inc: 'INC', memo: 'MEMO', CAPEX: 'CAPEX', CBS: 'OPEX', trf: 'TRF', dec: 'DEC' };
+  function usedNumbers() {
+    const out = [];
+    db.requests.forEach((r) => { out.push(r.no, r.docNo, r.memo && r.memo.no); });
+    (db.changes || []).forEach((c) => out.push(c.no));
+    db.budgets.forEach((b) => (b.history || []).forEach((h) => out.push(h.ref)));
+    return out.filter(Boolean);
   }
-
-  /** เลขที่ Memo ที่ระบบออกให้: MEMO-<บริษัท><ปี 2 หลัก>-<ลำดับ> เช่น MEMO-PBI26-001 */
-  function nextMemoNo(b) {
-    const key = b.company + String(new Date().getFullYear()).slice(-2);
-    db.seq.memo = db.seq.memo || {};
-    db.seq.memo[key] = (db.seq.memo[key] || 0) + 1;
-    return 'MEMO-' + key + '-' + String(db.seq.memo[key]).padStart(3, '0');
+  function nextNo(prefix, at) {
+    const year = new Date(at || Date.now()).getFullYear();
+    const head = prefix + '-' + year + '-';
+    const key = prefix + '-' + year;
+    db.seq.no = db.seq.no || {};
+    // กันเลขซ้ำกับเลขที่มีอยู่แล้ว (เช่น ข้อมูลเดิม)
+    const used = usedNumbers().filter((n) => String(n).startsWith(head)).map((n) => parseInt(String(n).slice(head.length), 10)).filter((n) => n > 0);
+    const n = Math.max(db.seq.no[key] || 0, ...used, 0) + 1;
+    db.seq.no[key] = n;
+    return head + String(n).padStart(4, '0');
   }
-
-  /** เลขที่เอกสาร: CAPEX ใช้รูปแบบใบเบิกเดิม <บริษัท><ปี 2 หลัก>-<ลำดับ> เช่น PBI26-001, OPEX เป็น CBS26-0001 */
-  function nextDocNo(r, b, at) {
-    const yy = String(new Date(at).getFullYear()).slice(-2);
-    const key = (r.type === 'CAPEX' ? b.company : 'OPEX') + yy;
-    db.seq.doc[key] = (db.seq.doc[key] || 0) + 1;
-    return key + '-' + String(db.seq.doc[key]).padStart(r.type === 'CAPEX' ? 3 : 4, '0');
-  }
+  const nextReqNo = () => nextNo(DOC_PREFIX.req);
+  const nextMemoNo = () => nextNo(DOC_PREFIX.memo);
+  const nextDocNo = (r, b, at) => nextNo(DOC_PREFIX[r.type] || 'DOC', at);
 
   // ---------------------------------------------------------------- helpers
 
@@ -3446,7 +3451,7 @@
 
   /** รายการข้อมูลหลัก: cols[0] เป็นรหัส/ชื่อที่ใช้อ้างอิง — รหัส (lock) แก้ไม่ได้หลังสร้าง, ชื่อที่ใช้อ้างอิง (เช่น หน่วยงาน) เปลี่ยนแล้วระบบแก้ให้ทุกงบ */
   const MASTER_SECTIONS = [
-    { key: 'companies', title: 'บริษัท', hint: 'ใช้กับงบทุกประเภท และเป็นส่วนหน้าของเลขที่ใบดำเนินการใช้งบ CAPEX (เช่น PBI26-001) · เกณฑ์ Memo (ใช้กับ CAPEX เท่านั้น) = "ใช้เงินข้ามบริษัทกับบริษัทนี้" ต้องให้ผู้บริหารเซ็น Memo ก่อนส่ง เมื่อบริษัทอื่นมาใช้งบของบริษัทนี้ หรือบริษัทนี้ออกเงินให้งบของบริษัทอื่น (ตั้งต้น: PCC)', lock: true,
+    { key: 'companies', title: 'บริษัท', hint: 'ใช้กับงบทุกประเภท · เกณฑ์ Memo (ใช้กับ CAPEX เท่านั้น) = "ใช้เงินข้ามบริษัทกับบริษัทนี้" ต้องให้ผู้บริหารเซ็น Memo ก่อนส่ง เมื่อบริษัทอื่นมาใช้งบของบริษัทนี้ หรือบริษัทนี้ออกเงินให้งบของบริษัทอื่น (ตั้งต้น: PCC)', lock: true,
       cols: [{ k: 'code', label: 'รหัสบริษัท', w: '10rem' }, { k: 'name', label: 'ชื่อบริษัท' }, { k: 'memo', label: 'เกณฑ์ Memo ผู้บริหารเซ็น', type: 'select', options: MEMO_MODES, w: '15rem' },
         { k: 'logo', label: 'โลโก้หัวกระดาษ Memo', type: 'image', w: '14rem' }],
       inUse: (it) => db.budgets.some((b) => b.company === it.code) },
@@ -3826,8 +3831,7 @@
         Object.assign(c, { reason, lines });
         addHistory(c, 'แก้ไขคำขอเพิ่มงบ', '', c.no);
       } else {
-        db.seq.chg = (db.seq.chg || 0) + 1;
-        c = { id: nextId('g'), no: 'INC-' + new Date().getFullYear() + '-' + String(db.seq.chg).padStart(4, '0'), budgetId: b.id, state: 'draft', reason, lines,
+        c = { id: nextId('g'), no: nextNo(DOC_PREFIX.inc), budgetId: b.id, state: 'draft', reason, lines,
           meeting: {}, attachments: [], createdBy: me().id, createdAt: new Date().toISOString(), history: [] };
         db.changes = (db.changes || []).concat(c);
         addHistory(c, 'สร้างคำขอเพิ่มงบ', money(changeTotal(c)) + ' บาท', c.no);
@@ -4028,13 +4032,14 @@
       if (errors.length) { showErrors(errors); return; }
       adjustItem(src.it, -amount);
       adjustItem(dst.it, amount);
-      const detail = money(amount) + ' บาท จาก ' + label(src) + ' ไป ' + label(dst) + ' — ' + reason;
+      const no = nextNo(DOC_PREFIX.trf);
+      const detail = no + ' · ' + money(amount) + ' บาท จาก ' + label(src) + ' ไป ' + label(dst) + ' — ' + reason;
       addRevision(src.b, 'โยกออก ' + money(amount) + ' ไป ' + label(dst) + ' — ' + reason);
       if (dst.b !== src.b) addRevision(dst.b, 'โยกเข้า ' + money(amount) + ' จาก ' + label(src) + ' — ' + reason);
       else src.b.revisions[src.b.revisions.length - 1].note = 'โยกภายในโครงการ ' + detail;
-      src.b.history.push({ at: new Date().toISOString(), by: me().id, action: 'โยกงบออก', note: detail });
-      if (dst.b !== src.b) dst.b.history.push({ at: new Date().toISOString(), by: me().id, action: 'รับงบที่โยกเข้า', note: detail });
-      logAction('โยกงบ', src.b.code + ' → ' + dst.b.code, detail);
+      src.b.history.push({ at: new Date().toISOString(), by: me().id, action: 'โยกงบออก', note: detail, ref: no });
+      if (dst.b !== src.b) dst.b.history.push({ at: new Date().toISOString(), by: me().id, action: 'รับงบที่โยกเข้า', note: detail, ref: no });
+      logAction('โยกงบ', 'งบ ' + src.b.code, detail + (dst.b !== src.b ? ' (เข้างบ ' + dst.b.code + ')' : ''));
       save();
       setFlash('success', 'โยกงบ ' + detail);
       go('#/budget/' + (location.hash.indexOf('to=') >= 0 ? dst.b.id : src.b.id));
@@ -4054,10 +4059,11 @@
       if (!reason) errors.push('กรุณาระบุเหตุผล');
       if (errors.length) { showErrors(errors); return; }
       adjustItem(t.it, -amount);
-      const detail = money(amount) + ' บาท ที่ ' + label(t) + ' — ' + reason;
+      const no = nextNo(DOC_PREFIX.dec);
+      const detail = no + ' · ' + money(amount) + ' บาท ที่ ' + label(t) + ' — ' + reason;
       addRevision(t.b, 'ลดงบ ' + detail);
-      t.b.history.push({ at: new Date().toISOString(), by: me().id, action: 'ลดงบ', note: detail });
-      logAction('ลดงบ', t.b.code, detail);
+      t.b.history.push({ at: new Date().toISOString(), by: me().id, action: 'ลดงบ', note: detail, ref: no });
+      logAction('ลดงบ', 'งบ ' + t.b.code, detail);
       save();
       setFlash('success', 'ลดงบ ' + detail);
       go('#/budget/' + t.b.id);
@@ -4305,7 +4311,7 @@
       ['OPEX', 'ผู้บริหารที่อนุมัติ ต้องเป็นผู้ใช้ในระบบไหม', 'ไม่ — พิมพ์ชื่อ/ตำแหน่งและแนบหลักฐาน (ถ้าต้องการให้ผู้บริหารกดอนุมัติในระบบ จะเพิ่มบทบาท "ผู้บริหาร" ภายหลัง)'],
       ['OPEX', 'ใบ OPEX ที่ใช้หลายรายการต้นทุน ตัดงบอย่างไร', 'แบ่งยอดที่ตัดตามสัดส่วนยอดของแต่ละรายการต้นทุนในใบ'],
       ['OPEX', 'Asset / Expenses และขั้นตอนบัญชีแยกของ OPEX', 'ไม่มี — ใช้ GL Code ที่ติดมากับรายการต้นทุน (ขั้นตอนบัญชี OPEX เดิมถูกแทนด้วยการตัดงบแบบเดียวกับ CAPEX)'],
-      ['OPEX', 'เลขที่เอกสารใบดำเนินการใช้งบ OPEX', 'ใช้รูปแบบเดิม OPEX26-0001 (CAPEX ใช้ รหัสบริษัท + ปี + ลำดับ)'],
+      ['ระบบ', 'เลขที่เอกสารที่ระบบออกให้', 'รูปแบบ ตัวย่อเอกสาร-ปี ค.ศ.-ลำดับ 4 หลัก เริ่มนับใหม่ทุกปี: REQ คำขอดำเนินการใช้งบ · CAPEX / OPEX ใบดำเนินการใช้งบ · MEMO บันทึกข้อความ · INC คำขอเพิ่มงบ · TRF โยกงบ · DEC ลดงบ (เช่น CAPEX-2026-0001) · เอกสารที่ออกไปแล้วคงเลขเดิม · เลขที่ฝ่ายอื่นเป็นคนออก (รหัสโครงการ / Item No. / PR / PO / เลขที่มติ / เลขที่ใบเสร็จ) ผู้ใช้กรอกเอง'],
       ['ไฟล์แนบ', 'จุดแนบและชนิดเอกสาร', 'มติ (ตั้งงบ/เพิ่มงบ) · เอกสารประกอบคำขอ · PO · ใบเสร็จ/หลักฐานจ่าย — โหมดทดลองจำกัด 400 KB ต่อไฟล์'],
       ['ระบบ', 'ฐานข้อมูล Supabase', 'ต้นแบบนี้ยังไม่เชื่อม — จะปรับฐานข้อมูลเมื่อยืนยันขั้นตอนแล้ว (เวอร์ชันเดิมอยู่ที่ /v1/)']
     ];
