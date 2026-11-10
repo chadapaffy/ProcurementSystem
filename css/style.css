@@ -771,3 +771,8 @@ input.locked { background: var(--surface-2, #f3f4f6); color: var(--muted, #6b728
 .logo-cell { display: flex; align-items: center; gap: .4rem; flex-wrap: wrap; }
 .logo-cell .logo-prev img { max-height: 28px; max-width: 90px; display: block; }
 .memo-edit .memo-head .mh-row { align-items: center; }
+
+/* Item ย่อย OPEX: เยื้องตามระดับ (1.1 / 1.1.1) */
+.sub-sec tr.lv2 .si-code { padding-left: 1.4rem; position: relative; }
+.sub-sec tr.lv2 .si-code::before { content: '└'; position: absolute; left: .35rem; top: 50%; transform: translateY(-50%); color: var(--text-3, #9ca3af); }
+.sub-sec tr.lv2 td { background: #fafbfc; }
