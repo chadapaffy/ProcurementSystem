@@ -818,3 +818,28 @@ input.locked { background: var(--surface-2, #f3f4f6); color: var(--muted, #6b728
 .import-steps { margin: 0 0 var(--s-3); padding-left: 1.25rem; line-height: 1.8; }
 .import-table tr.row-bad td { background: color-mix(in srgb, var(--bad, #c62828) 6%, transparent); }
 .err-list { margin: 0; padding-left: 1rem; color: var(--bad, #c62828); font-size: var(--fs-xs); line-height: 1.6; }
+
+/* ---- หน้างบประมาณ: รายการแบบตาราง */
+.budget-table-wrap { margin-bottom: var(--s-3); }
+.budget-table { min-width: 980px; }
+.budget-table td.num, .budget-table th.num { white-space: nowrap; }
+.budget-table th { white-space: nowrap; }
+.budget-table .th-sort { all: unset; cursor: pointer; font: inherit; color: inherit; display: inline-flex; align-items: center; gap: 2px; }
+.budget-table .th-sort:hover, .budget-table .th-sort:focus-visible { text-decoration: underline; }
+.budget-table .th-sort:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; border-radius: 2px; }
+.budget-table th.num .th-sort { justify-content: flex-end; width: 100%; }
+.budget-table tbody tr.not-active { background: var(--surface-2); }
+.budget-table .b-name { min-width: 13rem; max-width: 20rem; }
+.budget-table td:nth-child(4) { min-width: 8rem; }
+.budget-table .b-name a { color: inherit; font-weight: 500; text-decoration: none; }
+.budget-table .b-name a:hover { text-decoration: underline; }
+.budget-table .b-acts { text-align: right; min-width: 7.5rem; }
+.budget-table .b-acts .btn { margin: 0 0 var(--s-1) var(--s-1); }
+.budget-table tfoot td { font-weight: 600; background: var(--surface-2); border-top: 2px solid var(--border-strong); }
+.budget-table tr[hidden] { display: none; }
+.pager { display: flex; justify-content: space-between; align-items: center; gap: var(--s-3); flex-wrap: wrap; margin: 0 0 var(--s-5); }
+.pager-btns { display: inline-flex; align-items: center; gap: var(--s-3); }
+.budget-table th, .budget-table td { padding-left: var(--s-3); padding-right: var(--s-3); }
+.budget-table .b-name { min-width: 11rem; }
+.budget-table .b-acts { min-width: 6rem; }
+.budget-table td .badge { white-space: normal; display: inline-block; max-width: 8.5rem; line-height: 1.35; text-align: left; }
