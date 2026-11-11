@@ -95,9 +95,10 @@
   };
   /**
    * สถานะของตัวงบ
-   * ทางหลัก (งบประจำปี): ผู้คุมงบลงงบ (สร้าง / Import Excel) → pending_open รอ Business เปิดใช้งบครั้งแรก
-   *   → OPEX: Business กดเปิดใช้งบ = active · CAPEX: Business ทำ Memo ให้ผู้บริหารเซ็น แนบแล้วส่ง → open_review → ผู้คุมงบยืนยัน = active / ส่งกลับ = open_returned
-   * ทางเดิม (Business ขอตั้งงบใหม่เอง): ร่าง → แนบมติส่งตรวจ → ผู้คุมงบยืนยันเปิดใช้ / ส่งกลับ
+   * CAPEX (งบประจำปี): ผู้คุมงบลงงบ (สร้าง / Import Excel) → pending_open รอ Business เปิดใช้งบครั้งแรก
+   *   → Business ทำ Memo ให้ผู้บริหารเซ็น แนบแล้วส่ง → open_review → ผู้คุมงบยืนยัน = active / ส่งกลับ = open_returned
+   * OPEX: Business สร้างเอง ร่าง → พิมพ์แบบฟอร์ม / ใช้เอกสารขออนุมัติของตน ส่งผู้บริหารอนุมัติเอง → แนบเอกสารอนุมัติในระบบส่งตรวจ → ผู้คุมงบยืนยันเปิดใช้ / ส่งกลับ
+   * (CAPEX ที่ Business ขอตั้งงบใหม่เองก็ใช้ทางเดียวกับ OPEX: ร่าง → แนบมติ → ผู้คุมงบยืนยัน)
    */
   const BUDGET_STATE = {
     draft: 'ร่าง', review: 'รอผู้คุมงบตรวจสอบ', returned: 'ส่งกลับแก้ไข',
@@ -317,8 +318,8 @@
         items: [item('c11', 'CP0101-01', 'ถังบำบัดและระบบเติมอากาศ', 'เครื่องจักร', '2.4', 1800000), item('c12', 'CP0101-02', 'งานโยธาและติดตั้ง', 'อาคารและสิ่งปลูกสร้าง', '2.5', 650000)]
       },
       {
-        id: 'b10', type: 'CBS', company: 'PBI', fiscalYear: year + 1, group: '03', code: 'OP0101', structure: 'items', state: 'pending_open', setup: true,
-        name: 'ค่าใช้จ่ายดำเนินงานแปลงเกษตร ' + (year + 1), department: 'ฝ่ายโครงการ', ownerId: 'req2', note: 'งบประจำปี',
+        id: 'b10', type: 'CBS', company: 'PBI', fiscalYear: year + 1, group: '03', code: 'OP0101', structure: 'items', state: 'draft',
+        name: 'ค่าใช้จ่ายดำเนินงานแปลงเกษตร ' + (year + 1), department: 'ฝ่ายโครงการ', ownerId: 'req2', note: 'Business สร้างเอง — รอเสนอผู้บริหารอนุมัติ',
         items: [
           { id: 'i20', code: '1', name: 'ต้นทุนวัตถุดิบ', qty: '', unit: '', amount: 300000, vat: 21000, glCode: '510101', glName: 'ค่าวัตถุดิบ' },
           { id: 'i21', code: '2', name: 'ต้นทุนค่าแรง', qty: '', unit: '', amount: 240000, vat: 0, glCode: '', glName: '' }
@@ -1225,11 +1226,9 @@
       '<span><strong>' + title + '</strong><small>' + sub + '</small></span></label>';
     const title = mode === 'setup' ? (b ? 'แก้ไขงบ ' + esc(b.code) : 'ลงงบประจำปี') : b ? 'แก้ไขร่างคำขออนุมัติงบ ' + esc(b.code) : 'ขออนุมัติงบใหม่';
     const introFor = (type) => mode === 'setup'
-      ? (type === 'CBS'
-        ? 'ผู้คุมงบลงงบประจำปีให้ Business — เมื่อบันทึก งบจะรอ Business เจ้าของงบกด "เปิดใช้งบ" (OPEX ไม่ต้องทำ Memo) · ลงหลายงบพร้อมกันได้ที่ Import Excel'
-        : 'ผู้คุมงบลงงบประจำปีให้ Business — เมื่อบันทึก งบจะรอ Business เจ้าของงบเปิดใช้งบครั้งแรก โดยทำ Memo ให้ผู้บริหารเซ็น แนบแล้วส่งให้ผู้คุมงบยืนยัน · ลงหลายงบพร้อมกันได้ที่ Import Excel')
+      ? 'ผู้คุมงบลงงบลงทุน (CAPEX) ประจำปีให้ Business — เมื่อบันทึก งบจะรอ Business เจ้าของงบเปิดใช้งบครั้งแรก โดยทำ Memo ให้ผู้บริหารเซ็น แนบแล้วส่งให้ผู้คุมงบยืนยัน · ลงหลายงบพร้อมกันได้ที่ Import Excel · งบ OPEX ให้ Business เป็นผู้สร้างและส่งอนุมัติเอง'
       : (type === 'CBS'
-        ? 'บันทึกเป็นร่างก่อน → พิมพ์แบบฟอร์มเสนอผู้บริหาร (OPEX ไม่ต้องเข้าบอร์ด) → เมื่อผู้บริหารอนุมัติ แนบเอกสารอนุมัติแล้วส่งให้ผู้คุมงบยืนยันเปิดใช้ (ถ้าผู้บริหารอนุมัติไม่เต็มจำนวน ให้แก้ตัวเลขในร่างก่อนส่ง)'
+        ? 'บันทึกเป็นร่างก่อน → พิมพ์แบบฟอร์มของระบบ หรือใช้เอกสารขออนุมัติของตนเอง ส่งผู้บริหารอนุมัติเอง (OPEX ไม่ต้องเข้าบอร์ด) → เมื่อผู้บริหารอนุมัติ นำเอกสารอนุมัติกลับมาแนบในระบบ แล้วส่งให้ผู้คุมงบยืนยันเปิดใช้งบ (ถ้าผู้บริหารอนุมัติไม่เต็มจำนวน ให้แก้ตัวเลขในร่างก่อนส่ง)'
         : 'บันทึกเป็นร่างก่อน → พิมพ์แบบฟอร์มเข้าที่ประชุม → เมื่อที่ประชุมอนุมัติ แนบมติแล้วส่งให้ผู้คุมงบยืนยันเปิดใช้ (ถ้าที่ประชุมอนุมัติไม่เต็มจำนวน ให้แก้ตัวเลขในร่างก่อนส่ง)');
 
     const intro = introFor(v.type);
@@ -1238,7 +1237,7 @@
       '<form id="budgetForm" class="card" data-id="' + esc(id || '') + '" data-mode="' + mode + '">' +
       '<datalist id="glList">' + db.master.glCodes.map((g) => '<option value="' + esc(g.code) + '">' + esc(g.name) + '</option>').join('') + '</datalist>' +
       '<div class="row">' +
-      field('ประเภทงบ', select('type', ['CAPEX', 'CBS'].map((t) => opt(t, TYPE_LABEL[t], v.type)).join(''))) +
+      field('ประเภทงบ', select('type', (mode === 'setup' && v.type !== 'CBS' ? ['CAPEX'] : ['CAPEX', 'CBS']).map((t) => opt(t, TYPE_LABEL[t], v.type)).join(''))) +
       field('บริษัท', select('company', optList(db.master.companies, 'code', (c) => c.code + (c.name ? ' — ' + c.name : ''), v.company))) +
       field('ปีงบประมาณ', '<input name="fiscalYear" type="number" required value="' + esc(v.fiscalYear) + '">') +
       field('กลุ่มงบประมาณ', select('group', '<option value="">— เลือก —</option>' +
@@ -1602,7 +1601,7 @@
     if (!active) {
       const msg = {
         draft: own ? (isCapex ? 'ร่างนี้ยังไม่ได้ส่ง — พิมพ์แบบฟอร์มเข้าที่ประชุม เมื่อที่ประชุมอนุมัติแล้ว แนบมติและส่งให้ผู้คุมงบด้านล่าง (ร่างค้างไว้ได้ไม่จำกัดเวลา)'
-          : 'ร่างนี้ยังไม่ได้ส่ง — พิมพ์แบบฟอร์มเสนอผู้บริหาร (ไม่ต้องเข้าบอร์ด) เมื่อผู้บริหารอนุมัติแล้ว แนบเอกสารอนุมัติและส่งให้ผู้คุมงบด้านล่าง (ร่างค้างไว้ได้ไม่จำกัดเวลา)') : 'ร่างของ Business ยังไม่ได้ส่งตรวจ',
+          : 'ร่างนี้ยังไม่ได้ส่ง — พิมพ์แบบฟอร์มของระบบ หรือใช้เอกสารขออนุมัติของคุณเอง ส่งผู้บริหารอนุมัติ (ไม่ต้องเข้าบอร์ด) เมื่อผู้บริหารอนุมัติแล้ว นำเอกสารอนุมัติกลับมาแนบด้านล่างแล้วส่งให้ผู้คุมงบยืนยันเปิดใช้งบ (ร่างค้างไว้ได้ไม่จำกัดเวลา)') : 'ร่างของ Business ยังไม่ได้ส่งตรวจ',
         returned: 'ผู้คุมงบส่งกลับให้แก้ไข: ' + (b.returnReason || ''),
         review: (isCapex ? 'แนบมติแล้ว' : 'แนบเอกสารอนุมัติผู้บริหารแล้ว') + ' รอผู้คุมงบตรวจสอบและยืนยันเปิดใช้งาน',
         pending_open: own ? (isCapex ? 'ผู้คุมงบลงงบนี้ให้คุณแล้ว — เปิดใช้งบครั้งแรกโดยทำ Memo ให้ผู้บริหารเซ็น แนบไฟล์ที่เซ็นแล้ว และส่งให้ผู้คุมงบยืนยัน (ด้านล่าง)'
@@ -2091,9 +2090,9 @@
     { k: 'type', h: 'ประเภทงบ (CAPEX/OPEX)', w: 14 }, { k: 'company', h: 'บริษัท', w: 9 }, { k: 'year', h: 'ปีงบประมาณ', w: 11, num: true },
     { k: 'group', h: 'กลุ่มงบ', w: 9 }, { k: 'code', h: 'รหัสโครงการ', w: 14 }, { k: 'name', h: 'ชื่อโครงการ / ชื่องบ', w: 30 },
     { k: 'dept', h: 'หน่วยงาน', w: 16 }, { k: 'owner', h: 'Business เจ้าของงบ', w: 18 }, { k: 'itCode', h: 'รหัส Item', w: 12 },
-    { k: 'itName', h: 'ชื่อ Item', w: 28 }, { k: 'amount', h: 'วงเงิน (CAPEX รวม VAT / OPEX ก่อน VAT)', w: 18, num: true },
-    { k: 'vat', h: 'VAT 7% (OPEX: Y/N)', w: 10 }, { k: 'asset', h: 'ประเภทสินทรัพย์ (CAPEX)', w: 18 }, { k: 'doa', h: 'หมวด DOA (CAPEX 2.4/2.5)', w: 12 },
-    { k: 'gl', h: 'GL Code (OPEX ถ้ามี)', w: 12 }, { k: 'inv', h: 'บริษัทที่ลงทุน (ถ้าต่างจากบริษัท)', w: 14 },
+    { k: 'itName', h: 'ชื่อ Item', w: 28 }, { k: 'amount', h: 'วงเงิน (รวม VAT)', w: 18, num: true },
+    { k: 'asset', h: 'ประเภทสินทรัพย์', w: 18 }, { k: 'doa', h: 'หมวด DOA (2.4/2.5)', w: 12 },
+    { k: 'inv', h: 'บริษัทที่ลงทุน (ถ้าต่างจากบริษัท)', w: 14 },
     { k: 'ref', h: 'อ้างอิงการอนุมัติ (ถ้ามี)', w: 20 }, { k: 'note', h: 'หมายเหตุ', w: 24 }
   ];
   let importPreview = null; // { file, budgets: [{ data, errors, rows }] }
@@ -2218,8 +2217,8 @@
       const r0 = g.rows[0].r;
       const errors = [];
       const typeRaw = get(r0, 'type').toUpperCase();
-      const type = typeRaw === 'CAPEX' ? 'CAPEX' : (typeRaw === 'OPEX' || typeRaw === 'CBS') ? 'CBS' : '';
-      if (!type) errors.push('ประเภทงบต้องเป็น CAPEX หรือ OPEX');
+      const type = typeRaw === 'CAPEX' ? 'CAPEX' : '';
+      if (!type) errors.push(typeRaw === 'OPEX' || typeRaw === 'CBS' ? 'งบ OPEX ให้ Business เป็นผู้สร้างและส่งอนุมัติเอง — Import ได้เฉพาะ CAPEX' : 'ประเภทงบต้องเป็น CAPEX');
       const company = get(r0, 'company') || (db.master.companies[0] || {}).code || '';
       if (!db.master.companies.some((c) => c.code === company)) errors.push('ไม่พบบริษัท "' + company + '" ในข้อมูลหลัก');
       const fy = num(get(r0, 'year')) || year + 1;
@@ -2234,19 +2233,10 @@
       const items = g.rows.map(({ line, r }) => {
         const amount = round2(num(get(r, 'amount')));
         const it = { id: '', code: get(r, 'itCode'), name: get(r, 'itName'), amount, investor: get(r, 'inv') || company, line };
-        if (type === 'CAPEX') {
-          it.assetType = get(r, 'asset') || assetTypeList()[0] || '';
-          it.doa = get(r, 'doa') === '2.4' ? '2.4' : '2.5';
-        } else {
-          it.qty = ''; it.unit = '';
-          it.vat = /^(y|yes|1|true|ใช่|มี|✓)$/i.test(get(r, 'vat')) ? round2(amount * VAT_RATE) : 0;
-          it.glCode = get(r, 'gl');
-          const gl = db.master.glCodes.find((x) => x.code === it.glCode);
-          it.glName = gl ? gl.name : '';
-        }
+        it.assetType = get(r, 'asset') || assetTypeList()[0] || '';
+        it.doa = get(r, 'doa') === '2.4' ? '2.4' : '2.5';
         if (!it.code || !it.name) errors.push('แถว ' + line + ': ไม่ได้ระบุรหัส / ชื่อ Item');
         if (!(amount > 0)) errors.push('แถว ' + line + ': วงเงินต้องมากกว่า 0');
-        if (type === 'CBS' && String(it.code).includes('.')) errors.push('แถว ' + line + ': Item หลักของ OPEX ใช้รหัสไม่มีจุด (1, 2, 3)');
         if (it.investor !== company && !db.master.companies.some((c) => c.code === it.investor)) errors.push('แถว ' + line + ': ไม่พบบริษัทที่ลงทุน "' + it.investor + '"');
         return it;
       });
@@ -2266,23 +2256,20 @@
   function importTemplate() {
     const y = new Date().getFullYear() + 1;
     const ownerA = (USERS.filter(canRequestUser)[0] || {}).name || '';
-    const ownerB = (USERS.filter(canRequestUser)[1] || {}).name || ownerA;
     const co = (db.master.companies[0] || {}).code || '';
     const dept = (db.master.departments[0] || {}).name || '';
     const rows = [
-      ['CAPEX', co, y, '01', 'CP-' + y + '-01', 'ตัวอย่าง: เครื่องจักรสายการผลิตใหม่', dept, ownerA, 'CP-' + y + '-01-01', 'เครื่องจักรหลัก', 1500000, '', assetTypeList()[0] || '', '2.4', '', '', '', ''],
-      ['CAPEX', co, y, '01', 'CP-' + y + '-01', 'ตัวอย่าง: เครื่องจักรสายการผลิตใหม่', dept, ownerA, 'CP-' + y + '-01-02', 'งานติดตั้ง', 300000, '', assetTypeList()[0] || '', '2.5', '', '', '', ''],
-      ['OPEX', co, y, '03', 'OP-' + y + '-01', 'ตัวอย่าง: ค่าใช้จ่ายดำเนินงานประจำปี', dept, ownerB, '1', 'ต้นทุนวัตถุดิบ', 200000, 'Y', '', '', '', '', '', ''],
-      ['OPEX', co, y, '03', 'OP-' + y + '-01', 'ตัวอย่าง: ค่าใช้จ่ายดำเนินงานประจำปี', dept, ownerB, '2', 'ต้นทุนค่าแรง', 120000, 'N', '', '', '', '', '', '']
+      ['CAPEX', co, y, '01', 'CP-' + y + '-01', 'ตัวอย่าง: เครื่องจักรสายการผลิตใหม่', dept, ownerA, 'CP-' + y + '-01-01', 'เครื่องจักรหลัก', 1500000, assetTypeList()[0] || '', '2.4', '', '', ''],
+      ['CAPEX', co, y, '01', 'CP-' + y + '-01', 'ตัวอย่าง: เครื่องจักรสายการผลิตใหม่', dept, ownerA, 'CP-' + y + '-01-02', 'งานติดตั้ง', 300000, assetTypeList()[0] || '', '2.5', '', '', ''],
+      ['CAPEX', co, y, '02', 'CP-' + y + '-02', 'ตัวอย่าง: ปรับปรุงอาคารคลังสินค้า', dept, ownerA, 'CP-' + y + '-02-01', 'งานก่อสร้าง', 500000, assetTypeList()[0] || '', '2.5', '', '', '']
     ];
     const guide = [
       ['1 แถว = 1 Item · แถวที่ "รหัสโครงการ" เดียวกันรวมเป็นงบเดียวกัน (ข้อมูลระดับงบใช้จากแถวแรกของโครงการ)'],
-      ['ประเภทงบ: CAPEX หรือ OPEX · บริษัท: รหัสบริษัทตามข้อมูลหลัก (' + db.master.companies.map((c) => c.code).join(', ') + ')'],
+      ['ประเภทงบ: CAPEX เท่านั้น (งบ OPEX ให้ Business เป็นผู้สร้างและส่งอนุมัติเอง) · บริษัท: รหัสบริษัทตามข้อมูลหลัก (' + db.master.companies.map((c) => c.code).join(', ') + ')'],
       ['Business เจ้าของงบ: ชื่อ หรือรหัสผู้ใช้ (' + USERS.filter(canRequestUser).map((u) => u.name).join(', ') + ')'],
       ['หน่วยงาน: ตามข้อมูลหลัก (' + db.master.departments.map((d) => d.name).join(', ') + ')'],
-      ['CAPEX: วงเงินรวม VAT · ประเภทสินทรัพย์ / หมวด DOA (2.4 สินทรัพย์ลงทุน / 2.5 ดำเนินงานทั่วไป)'],
-      ['OPEX: ใส่เฉพาะ Item หลัก (รหัส 1, 2, 3 …) วงเงินก่อน VAT · VAT 7% ใส่ Y ถ้ามี · GL Code ใส่ทีหลังได้ · Item ย่อยให้ Business เพิ่มหลังเปิดใช้งบ'],
-      ['หลัง Import งบจะอยู่สถานะ "รอ Business เปิดใช้งบ" — CAPEX ต้องทำ Memo ให้ผู้บริหารเซ็นและผู้คุมงบยืนยัน · OPEX Business กดเปิดใช้งบได้เลย'],
+      ['วงเงินรวม VAT · ประเภทสินทรัพย์ / หมวด DOA (2.4 สินทรัพย์ลงทุน / 2.5 ดำเนินงานทั่วไป)'],
+      ['หลัง Import งบจะอยู่สถานะ "รอ Business เปิดใช้งบ" — Business ต้องทำ Memo ให้ผู้บริหารเซ็น แนบไฟล์ แล้วผู้คุมงบตรวจและยืนยัน'],
       ['บันทึกเป็น .xlsx หรือ .csv (UTF-8) ก็ได้']
     ];
     return buildXlsx([
@@ -2293,7 +2280,7 @@
 
   function viewImport() {
     if (!can('budget.manage')) return '<div class="alert error">Import งบได้เฉพาะผู้คุมงบ</div>';
-    let html = '<div class="page-head"><div><h1>Import งบประจำปีจาก Excel</h1><div class="page-sub">ลงงบหลายงบพร้อมกัน — งบที่ Import จะรอ Business เจ้าของงบเปิดใช้งบครั้งแรก (CAPEX ทำ Memo ให้ผู้บริหารเซ็น · OPEX กดเปิดใช้)</div></div></div>' +
+    let html = '<div class="page-head"><div><h1>Import งบประจำปีจาก Excel</h1><div class="page-sub">ลงงบ CAPEX หลายงบพร้อมกัน — งบที่ Import จะรอ Business เจ้าของงบเปิดใช้งบครั้งแรก (ทำ Memo ให้ผู้บริหารเซ็น แนบแล้วผู้คุมงบยืนยัน) · งบ OPEX ให้ Business เป็นผู้สร้างเอง</div></div></div>' +
       takeFlash() +
       '<section class="card form-section"><ol class="import-steps"><li>ดาวน์โหลดไฟล์ตัวอย่าง แล้วกรอก 1 แถวต่อ 1 Item (รหัสโครงการเดียวกัน = งบเดียวกัน)</li>' +
       '<li>เลือกไฟล์ .xlsx หรือ .csv ระบบจะแสดงตัวอย่างและตรวจข้อมูลก่อน</li><li>กด "นำเข้า" — งบที่มีข้อผิดพลาดจะไม่ถูกนำเข้า</li></ol>' +
@@ -4502,7 +4489,7 @@
     }
     if (can('budget.create')) {
       const mineB = db.budgets.filter((b) => b.ownerId === u.id);
-      tasks.push(task('งบรอเปิดใช้', mineB.filter((b) => b.state === 'pending_open').length, '#/tasks?tab=toopen', 'CAPEX ทำ Memo ให้ผู้บริหารเซ็น · OPEX กดเปิดใช้'),
+      tasks.push(task('งบรอเปิดใช้', mineB.filter((b) => b.state === 'pending_open').length, '#/tasks?tab=toopen', 'ทำ Memo ให้ผู้บริหารเซ็น'),
         task('งบร่าง', mineB.filter((b) => b.state === 'draft').length, '#/tasks?tab=drafts'),
         task('งบรอผู้คุมงบยืนยัน', mineB.filter((b) => b.state === 'review' || b.state === 'open_review').length, '#/tasks?tab=waiting'));
     }
@@ -5232,7 +5219,7 @@
         [sec('Memo เปิดใช้งบ (งบประจำปี)', db.budgets.filter((b) => b.state === 'open_review'), budgetQueueTable),
           sec('คำขอตั้งงบใหม่ของ Business', db.budgets.filter((b) => b.state === 'review'), budgetQueueTable)]);
       if (has('budget.manage')) {
-        add('setup', 'งบที่ลงไว้ รอ Business เปิดใช้', false, 'งบประจำปีที่ผู้คุมงบลงไว้ (สร้าง / Import Excel) ที่ Business ยังไม่ได้เปิดใช้ — แก้ไข / ยกเลิกได้จนกว่า Business ส่ง Memo หรือเปิดใช้',
+        add('setup', 'งบที่ลงไว้ รอ Business เปิดใช้', false, 'งบ CAPEX ประจำปีที่ผู้คุมงบลงไว้ (สร้าง / Import Excel) ที่ Business ยังไม่ได้เปิดใช้ — แก้ไข / ยกเลิกได้จนกว่า Business ส่ง Memo หรือเปิดใช้',
           [sec('', db.budgets.filter((b) => b.setup && waitingOpen(b)), myBudgetTable)]);
       }
       add('changes', 'คำขอเพิ่มงบ', true, 'ตรวจมติ / เอกสารอนุมัติผู้บริหารแล้วยืนยันเพิ่มงบ หรือส่งกลับ',
@@ -5256,7 +5243,7 @@
       const mineB = db.budgets.filter((b) => b.ownerId === u.id);
       const mineR = db.requests.filter((r) => r.requesterId === u.id);
       const mineC = (db.changes || []).filter((c) => c.createdBy === u.id);
-      add('toopen', 'งบรอเปิดใช้', true, 'งบประจำปีที่ผู้คุมงบลงไว้ให้คุณ — CAPEX: ทำ Memo ขอเปิดใช้งบ ให้ผู้บริหารเซ็น แนบแล้วส่งให้ผู้คุมงบยืนยัน · OPEX: กด "เปิดใช้งบ" ได้เลย',
+      add('toopen', 'งบรอเปิดใช้', true, 'งบ CAPEX ประจำปีที่ผู้คุมงบลงไว้ให้คุณ — ทำ Memo ขอเปิดใช้งบ ให้ผู้บริหารเซ็น แนบไฟล์ที่เซ็นแล้วส่งให้ผู้คุมงบยืนยัน',
         [sec('', mineB.filter((b) => b.state === 'pending_open'), myBudgetTable)]);
       add('fix', 'ส่งกลับแก้ไข', true, 'ผู้คุมงบส่งกลับพร้อมเหตุผล — แก้ไขแล้วส่งใหม่ หรือยกเลิก', [
         sec('งบ', mineB.filter((b) => b.state === 'returned' || b.state === 'open_returned'), myBudgetTable),
@@ -5386,8 +5373,9 @@
     const rows = [
       ['ระบบ', 'Admin ทำอะไรได้', 'ดูแลข้อมูลหลัก ดู Log ทั้งระบบ และจัดการผู้ใช้/สิทธิ์ · ดูงบได้ทั้งหมดแต่ไม่ทำรายการ'],
       ['ระบบ', 'ผู้ใช้ทั่วไปเห็นประวัติแค่ไหน', 'เห็น "ประวัติการทำรายการ" ที่ตนทำ และที่ผู้อื่นทำกับงบ/เอกสารของตน (ไม่เห็น Log ทั้งระบบ)'],
-      ['ตั้งงบ', 'Journey งบประจำปี', 'ผู้คุมงบลงงบของแต่ละปี (กดสร้าง หรือ Import Excel) → งบรอ Business เจ้าของงบเปิดใช้ครั้งแรก · เปิดทั้งงบทีเดียว · CAPEX: Business ทำ Memo ขอเปิดใช้งบ ให้ผู้บริหารเซ็น แนบแล้วส่ง → ผู้คุมงบตรวจ Memo แล้วยืนยัน (หรือส่งกลับให้แก้) · OPEX: Business กด "เปิดใช้งบ" ได้เลย ไม่ต้องมี Memo และไม่ต้องให้ผู้คุมงบยืนยัน · ผู้คุมงบแก้ / ยกเลิกงบที่ลงไว้ได้จนกว่า Business ส่ง Memo หรือเปิดใช้'],
-      ['ตั้งงบ', 'Import งบจาก Excel', 'ไฟล์ .xlsx หรือ .csv ตามไฟล์ตัวอย่าง: 1 แถว = 1 Item · รหัสโครงการเดียวกัน = งบเดียวกัน · Business เจ้าของงบใส่ชื่อหรือรหัสผู้ใช้ · ตรวจข้อมูลก่อนนำเข้า (บริษัท / หน่วยงานตามข้อมูลหลัก, รหัสซ้ำ, วงเงิน > 0) งบที่ผิดไม่ถูกนำเข้า · OPEX ใส่เฉพาะ Item หลัก (Item ย่อยเพิ่มหลังเปิดใช้)'],
+      ['ตั้งงบ', 'Journey งบประจำปี', 'CAPEX: ผู้คุมงบลงงบของแต่ละปี (กดสร้าง หรือ Import Excel) → งบรอ Business เจ้าของงบเปิดใช้ครั้งแรก (เปิดทั้งงบทีเดียว) → Business ทำ Memo ขอเปิดใช้งบ ให้ผู้บริหารเซ็น แนบไฟล์ที่เซ็นแล้วส่ง → ผู้คุมงบตรวจ Memo แล้วยืนยัน (หรือส่งกลับให้แก้) · ผู้คุมงบแก้ / ยกเลิกงบที่ลงไว้ได้จนกว่า Business ส่ง Memo หรือเปิดใช้ · OPEX: Business เป็นผู้สร้างงบเอง (ผู้คุมงบลง / Import OPEX ไม่ได้) — ดูแถว "OPEX Business สร้างและส่งอนุมัติเอง"'],
+      ['ตั้งงบ', 'Import งบจาก Excel', 'ไฟล์ .xlsx หรือ .csv ตามไฟล์ตัวอย่าง: 1 แถว = 1 Item · รหัสโครงการเดียวกัน = งบเดียวกัน · Business เจ้าของงบใส่ชื่อหรือรหัสผู้ใช้ · ตรวจข้อมูลก่อนนำเข้า (บริษัท / หน่วยงานตามข้อมูลหลัก, รหัสซ้ำ, วงเงิน > 0) งบที่ผิดไม่ถูกนำเข้า · นำเข้าได้เฉพาะ CAPEX'],
+      ['ตั้งงบ', 'OPEX Business สร้างและส่งอนุมัติเอง', 'Business สร้างงบ OPEX (ร่าง) เอง → พิมพ์แบบฟอร์มของระบบ หรือใช้เอกสารขออนุมัติของตนเอง ส่งผู้บริหารอนุมัติเองนอกระบบ → นำเอกสารอนุมัติกลับมาแนบ + เลขที่เอกสาร + ชื่อผู้บริหาร แล้วส่งให้ผู้คุมงบยืนยันเปิดใช้งบ (หรือส่งกลับให้แก้) · ผู้คุมงบไม่ต้องลง OPEX ให้ · รอยืนยันว่าผู้คุมงบยังต้องตรวจก่อนเปิดใช้ หรือให้เปิดใช้ทันทีที่แนบเอกสาร'],
       ['ตั้งงบ', 'Business ยังขอตั้งงบใหม่เองได้ไหม', 'ได้ (ทางเดิม): ร่าง → พิมพ์แบบฟอร์มเข้าที่ประชุม / เสนอผู้บริหาร → แนบมติ / เอกสารอนุมัติ → ผู้คุมงบยืนยันเปิดใช้ — ทางนี้ไม่ต้องทำ Memo เปิดใช้งบอีก เพราะผู้คุมงบตรวจหลักฐานการอนุมัติแล้ว'],
       ['ตั้งงบ', 'ใครกำหนดรหัสโครงการ/รหัสรายการย่อย', 'ผู้คุมงบกรอกตอนลงงบ / Import · Business กรอกเองเมื่อขอตั้งงบใหม่'],
       ['ตั้งงบ', 'แบบฟอร์มขออนุมัติงบเข้าที่ประชุม', 'ใช้แบบฟอร์มชั่วคราว (รอแบบฟอร์มจริง)'],
