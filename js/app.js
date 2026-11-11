@@ -52,7 +52,7 @@
     { key: 'request.create', group: 'Business', label: 'ขอดำเนินการใช้งบ / ขอเพิ่มงบ', hint: 'เฉพาะงบที่ตนเป็นเจ้าของ' },
     { key: 'budget.verify', group: 'ผู้คุมงบ', label: 'ยืนยันเปิดใช้งบ / ยืนยันเพิ่มงบ', hint: 'ตรวจมติแล้วยืนยันหรือส่งกลับ' },
     { key: 'budget.adjust', group: 'ผู้คุมงบ', label: 'โยกงบ / ลดงบ', hint: 'โยกข้ามรายการหรือโครงการได้ ต้องระบุเหตุผล' },
-    { key: 'budget.manage', group: 'ผู้คุมงบ', label: 'นำเข้างบที่อนุมัติแล้ว', hint: 'บันทึกงบเดิมและเปิดใช้ทันที (ช่วงเริ่มระบบ)' },
+    { key: 'budget.manage', group: 'ผู้คุมงบ', label: 'ลงงบประจำปี (สร้าง / Import Excel)', hint: 'ลงงบให้ Business เปิดใช้ครั้งแรก · ใส่ GL · จัดการ Item ย่อย' },
     { key: 'request.decide', group: 'ผู้คุมงบ', label: 'ตรวจสอบ / อนุมัติการดำเนินการใช้งบ', hint: 'ขอเกินงบรายการต้องใส่ Note' },
     { key: 'cut.record', group: 'ผู้คุมงบ', label: 'บันทึกการตัดงบและปิดยอด', hint: 'Advance · สำรองจ่าย · จ่ายตรง Supplier · ปิดยอดคืนส่วนต่าง (CAPEX และ OPEX)' },
     { key: 'po.record', group: 'จัดซื้อ', label: 'บันทึก PR / PO', hint: 'ตัดงบ PR/PO ตามยอด PO' },
@@ -93,9 +93,20 @@
     rejected: 'ส่งกลับแก้ไข',
     cancelled: 'ยกเลิก'
   };
-  /** สถานะของตัวงบ: Business ร่าง → แนบมติส่งตรวจ → ผู้คุมงบยืนยันเปิดใช้ / ส่งกลับ */
-  const BUDGET_STATE = { draft: 'ร่าง', review: 'รอผู้คุมงบตรวจสอบ', returned: 'ส่งกลับแก้ไข', active: 'เปิดใช้งาน', cancelled: 'ยกเลิก' };
-  const BUDGET_STATE_BADGE = { draft: 'draft', review: 'pending', returned: 'rejected', active: 'approved', cancelled: 'cancelled' };
+  /**
+   * สถานะของตัวงบ
+   * ทางหลัก (งบประจำปี): ผู้คุมงบลงงบ (สร้าง / Import Excel) → pending_open รอ Business เปิดใช้งบครั้งแรก
+   *   → OPEX: Business กดเปิดใช้งบ = active · CAPEX: Business ทำ Memo ให้ผู้บริหารเซ็น แนบแล้วส่ง → open_review → ผู้คุมงบยืนยัน = active / ส่งกลับ = open_returned
+   * ทางเดิม (Business ขอตั้งงบใหม่เอง): ร่าง → แนบมติส่งตรวจ → ผู้คุมงบยืนยันเปิดใช้ / ส่งกลับ
+   */
+  const BUDGET_STATE = {
+    draft: 'ร่าง', review: 'รอผู้คุมงบตรวจสอบ', returned: 'ส่งกลับแก้ไข',
+    pending_open: 'รอ Business เปิดใช้งบ', open_review: 'รอผู้คุมงบตรวจ Memo เปิดใช้', open_returned: 'ส่งกลับแก้ Memo เปิดใช้',
+    active: 'เปิดใช้งาน', cancelled: 'ยกเลิก'
+  };
+  const BUDGET_STATE_BADGE = { draft: 'draft', review: 'pending', returned: 'rejected', pending_open: 'draft', open_review: 'pending', open_returned: 'rejected', active: 'approved', cancelled: 'cancelled' };
+  /** งบที่ผู้คุมงบลงไว้ ยังรอ Business เปิดใช้ครั้งแรก (Business ทำ Memo / กดเปิดใช้ได้) */
+  const waitingOpen = (b) => b.state === 'pending_open' || b.state === 'open_returned';
   /** ประเภทการดำเนินการใช้งบ (CAPEX) และจังหวะที่ตัดงบจริง */
   const USE_TYPES = {
     prpo: { label: 'ซื้อโดยเปิด PR / PO', short: 'PR/PO', cut: 'ตัดงบเมื่อจัดซื้อออก PO (ตามยอด PO)', who: 'จัดซื้อ' },
@@ -298,6 +309,20 @@
         meeting: { date: day(10, 20), no: 'มติที่ 9/' + year, note: 'อนุมัติเต็มจำนวน' },
         attachments: [sampleFile('มติที่ประชุม-9-' + year + '.pdf')],
         items: [item('c9', year + '-04-PD003', 'รถยกไฟฟ้า 2 ตัน', 'ยานพาหนะ', '2.5', 980000)]
+      },
+      {
+        id: 'b9', type: 'CAPEX', company: 'PBI', fiscalYear: year + 1, group: '02', code: 'CP0101', structure: 'items', state: 'pending_open', setup: true,
+        name: 'ระบบบำบัดน้ำเสียโรงงาน 2', department: 'ฝ่ายวิศวกรรม', ownerId: 'req1', note: 'งบประจำปี ' + (year + 1) + ' ตามแผนที่บอร์ดอนุมัติ',
+        meeting: { date: day(10, 25), no: 'มติงบประจำปี ' + (year + 1), note: '' },
+        items: [item('c11', 'CP0101-01', 'ถังบำบัดและระบบเติมอากาศ', 'เครื่องจักร', '2.4', 1800000), item('c12', 'CP0101-02', 'งานโยธาและติดตั้ง', 'อาคารและสิ่งปลูกสร้าง', '2.5', 650000)]
+      },
+      {
+        id: 'b10', type: 'CBS', company: 'PBI', fiscalYear: year + 1, group: '03', code: 'OP0101', structure: 'items', state: 'pending_open', setup: true,
+        name: 'ค่าใช้จ่ายดำเนินงานแปลงเกษตร ' + (year + 1), department: 'ฝ่ายโครงการ', ownerId: 'req2', note: 'งบประจำปี',
+        items: [
+          { id: 'i20', code: '1', name: 'ต้นทุนวัตถุดิบ', qty: '', unit: '', amount: 300000, vat: 21000, glCode: '510101', glName: 'ค่าวัตถุดิบ' },
+          { id: 'i21', code: '2', name: 'ต้นทุนค่าแรง', qty: '', unit: '', amount: 240000, vat: 0, glCode: '', glName: '' }
+        ]
       }
     ];
     budgets.forEach((b) => {
@@ -305,6 +330,13 @@
       b.createdBy = b.ownerId;
       b.state = b.state || 'active';
       b.history = [{ at: b.createdAt, by: b.ownerId, action: 'สร้างร่างคำขออนุมัติงบ' }];
+      if (b.setup) {
+        b.createdBy = 'fin1';
+        b.history = [{ at: b.createdAt, by: 'fin1', action: 'ผู้คุมงบลงงบประจำปี — รอ Business เปิดใช้งบ' }];
+        b.attachments = [];
+        b.revisions = [];
+        return;
+      }
       if (b.state !== 'draft') {
         b.attachments = b.attachments || [sampleFile((b.type === 'CBS' ? 'เอกสารอนุมัติผู้บริหาร-' : 'มติที่ประชุม-') + b.code + '.pdf')];
         b.history.push({ at: iso(b.meeting.date), by: b.ownerId, action: b.type === 'CBS' ? 'แนบเอกสารอนุมัติผู้บริหารและส่งให้ผู้คุมงบตรวจสอบ' : 'แนบมติที่ประชุมและส่งให้ผู้คุมงบตรวจสอบ', note: b.meeting.no });
@@ -595,7 +627,7 @@
     const out = [];
     db.requests.forEach((r) => { out.push(r.no, r.docNo, r.memo && r.memo.no); });
     (db.changes || []).forEach((c) => out.push(c.no));
-    db.budgets.forEach((b) => (b.history || []).forEach((h) => out.push(h.ref)));
+    db.budgets.forEach((b) => { (b.history || []).forEach((h) => out.push(h.ref)); if (b.openMemo) out.push(b.openMemo.no); });
     return out.filter(Boolean);
   }
   function nextNo(prefix, at) {
@@ -1044,7 +1076,8 @@
       (can('budget.create') && mine
         ? '<a class="btn primary tall" href="#/budget/new"><span aria-hidden="true">+</span> ขออนุมัติงบใหม่</a>'
         : can('budget.manage') && !mine
-          ? '<a class="btn tall" href="#/budget/new"><span aria-hidden="true">+</span> นำเข้างบที่อนุมัติแล้ว</a>'
+          ? '<span class="filter-actions"><a class="btn primary tall" href="#/budget/new"><span aria-hidden="true">+</span> ลงงบประจำปี</a>' +
+            '<a class="btn tall" href="#/budget/import">Import Excel</a></span>'
           : '<span></span>') +
       '</div>';
 
@@ -1066,13 +1099,15 @@
         '<div class="card-head"><div><h3>' + esc(b.name) + '</h3><div class="code">' + esc(b.code) + ' · ' + sub + '</div></div>' +
         '<div class="card-badges">' + badge(b.type + ' lg', TYPE_SHORT[b.type]) + (active ? '' : badge(BUDGET_STATE_BADGE[state], BUDGET_STATE[state])) + '</div></div>' +
         '<div class="card-body"><p class="card-sub">' + budgetSubline(b, mine) + '</p>' +
-        (active ? usageKv(us) : '<dl class="kv"><dt>วงเงินที่ขออนุมัติ</dt><dd class="big">' + money(budgetTotal(b)) + '</dd>' +
+        (active ? usageKv(us) : '<dl class="kv"><dt>' + (b.setup ? 'วงเงินงบ' : 'วงเงินที่ขออนุมัติ') + '</dt><dd class="big">' + money(budgetTotal(b)) + '</dd>' +
           (b.meeting && b.meeting.no ? '<dt>' + apprOf(b.type).short + '</dt><dd>' + esc(b.meeting.no) + '</dd>' : '') + '</dl>') + '</div>' +
         (active ? '<div class="usage-strip">' + usageBar(us) + '</div>' : '') +
         '<div class="card-foot">' +
         '<a class="btn" href="#/budget/' + b.id + '">รายละเอียด</a>' +
         (own && (state === 'draft' || state === 'returned') ? '<a class="btn" href="#/budget/' + b.id + '/edit">แก้ไขร่าง</a>' : '') +
         (state === 'review' && can('budget.verify') ? '<a class="btn primary" href="#/budget/' + b.id + '">ตรวจสอบ</a>' : '') +
+        (state === 'open_review' && can('budget.verify') ? '<a class="btn primary" href="#/budget/' + b.id + '">ตรวจ Memo เปิดใช้</a>' : '') +
+        (waitingOpen(b) && own && can('request.create') ? '<a class="btn primary" href="#/budget/' + b.id + '">เปิดใช้งบ</a>' : '') +
         (active && own && can('request.create') ? '<a class="btn primary" href="#/request/new/' + b.id + '">ขอดำเนินการใช้งบ</a>' : '') +
         (active && can('budget.adjust') ? '<a class="btn" href="#/adjust?budget=' + b.id + '">โยก / ลดงบ</a>' : '') +
         '</div></article>';
@@ -1148,12 +1183,19 @@
     { code: '3', name: 'ต้นทุนค่าเช่า' }, { code: '4', name: 'รายการส่วนเพิ่มอื่นๆ' }
   ];
 
-  /** ใครสร้าง/แก้ฟอร์มงบได้: Business = ร่างของตน (ร่าง/ส่งกลับ) · ผู้คุมงบ = นำเข้างบที่อนุมัติแล้ว (เปิดใช้ทันที) */
+  /**
+   * ใครสร้าง/แก้ฟอร์มงบได้
+   * Business = ขอตั้งงบใหม่เอง (ร่าง/ส่งกลับของตน) · ผู้คุมงบ = ลงงบประจำปีให้ Business (แก้ได้จนกว่า Business ส่ง Memo / เปิดใช้)
+   */
   function budgetFormMode(b) {
     const u = me();
-    if (b) return (b.state === 'draft' || b.state === 'returned') && b.ownerId === u.id ? 'draft' : null;
+    if (b) {
+      if ((b.state === 'draft' || b.state === 'returned') && b.ownerId === u.id) return 'draft';
+      if (b.setup && waitingOpen(b) && can('budget.manage')) return 'setup';
+      return null;
+    }
     if (can('budget.create')) return 'draft';
-    if (can('budget.manage')) return 'import';
+    if (can('budget.manage')) return 'setup';
     return null;
   }
 
@@ -1169,7 +1211,7 @@
     const year = new Date().getFullYear();
     const v = b || {
       type: 'CAPEX', structure: 'items', company: (db.master.companies[0] || {}).code || '', fiscalYear: year + 1, group: '', code: '', parentCode: '', name: '',
-      department: '', ownerId: mode === 'import' ? '' : u.id, note: '', status: 'Plan', startDate: '', endDate: '', production: {}, items: []
+      department: '', ownerId: mode === 'setup' ? '' : u.id, note: '', status: 'Plan', startDate: '', endDate: '', production: {}, items: []
     };
     const structure = v.structure || 'items';
     const projItem = structure === 'project' && v.items[0] ? v.items[0] : {};
@@ -1181,9 +1223,11 @@
     const select = (name, inner, attrs) => '<div class="select-wrap"><select name="' + name + '"' + (attrs || '') + '>' + inner + '</select></div>';
     const radio = (value, title, sub) => '<label class="choice-opt"><input type="radio" name="structure" value="' + value + '"' + (structure === value ? ' checked' : '') + '>' +
       '<span><strong>' + title + '</strong><small>' + sub + '</small></span></label>';
-    const title = b ? 'แก้ไขร่างคำขออนุมัติงบ ' + esc(b.code) : mode === 'import' ? 'นำเข้างบที่อนุมัติแล้ว' : 'ขออนุมัติงบใหม่';
-    const introFor = (type) => mode === 'import'
-      ? 'สำหรับบันทึกงบที่ผ่านการอนุมัติมาก่อนเริ่มใช้ระบบ — งบจะเปิดใช้งานทันทีเมื่อบันทึก'
+    const title = mode === 'setup' ? (b ? 'แก้ไขงบ ' + esc(b.code) : 'ลงงบประจำปี') : b ? 'แก้ไขร่างคำขออนุมัติงบ ' + esc(b.code) : 'ขออนุมัติงบใหม่';
+    const introFor = (type) => mode === 'setup'
+      ? (type === 'CBS'
+        ? 'ผู้คุมงบลงงบประจำปีให้ Business — เมื่อบันทึก งบจะรอ Business เจ้าของงบกด "เปิดใช้งบ" (OPEX ไม่ต้องทำ Memo) · ลงหลายงบพร้อมกันได้ที่ Import Excel'
+        : 'ผู้คุมงบลงงบประจำปีให้ Business — เมื่อบันทึก งบจะรอ Business เจ้าของงบเปิดใช้งบครั้งแรก โดยทำ Memo ให้ผู้บริหารเซ็น แนบแล้วส่งให้ผู้คุมงบยืนยัน · ลงหลายงบพร้อมกันได้ที่ Import Excel')
       : (type === 'CBS'
         ? 'บันทึกเป็นร่างก่อน → พิมพ์แบบฟอร์มเสนอผู้บริหาร (OPEX ไม่ต้องเข้าบอร์ด) → เมื่อผู้บริหารอนุมัติ แนบเอกสารอนุมัติแล้วส่งให้ผู้คุมงบยืนยันเปิดใช้ (ถ้าผู้บริหารอนุมัติไม่เต็มจำนวน ให้แก้ตัวเลขในร่างก่อนส่ง)'
         : 'บันทึกเป็นร่างก่อน → พิมพ์แบบฟอร์มเข้าที่ประชุม → เมื่อที่ประชุมอนุมัติ แนบมติแล้วส่งให้ผู้คุมงบยืนยันเปิดใช้ (ถ้าที่ประชุมอนุมัติไม่เต็มจำนวน ให้แก้ตัวเลขในร่างก่อนส่ง)');
@@ -1206,14 +1250,14 @@
       '</div>' +
       '<div class="row">' +
       field('หน่วยงาน', select('department', '<option value="">— เลือก —</option>' + optList(db.master.departments, 'name', (d) => d.name, v.department), ' required')) +
-      (mode === 'import'
+      (mode === 'setup'
         ? field('Business เจ้าของงบ', select('ownerId', '<option value="">— เลือก —</option>' + requesters.map((x) => opt(x.id, x.name + (x.title ? ' — ' + x.title : ''), v.ownerId)).join(''), ' required'))
         : '<input type="hidden" name="ownerId" value="' + esc(v.ownerId) + '"><div class="field"><span>Business เจ้าของงบ</span><div class="out left">' + esc(userName(v.ownerId)) + '</div></div>') +
       '</div>' +
-      (mode === 'import'
-        ? '<div class="row">' + field('วันที่อนุมัติ / ประชุม', '<input name="meetingDate" type="date">') +
-          field('เลขที่มติ / เอกสารอนุมัติ', '<input name="meetingNo" required placeholder="เช่น มติที่ 1/2569 หรือ เอกสารอนุมัติผู้บริหาร">') +
-          field('ผู้บริหารที่อนุมัติ (OPEX)', '<input name="meetingBy" placeholder="ชื่อ / ตำแหน่ง">', ' data-for="CBS"') + '</div>'
+      (mode === 'setup'
+        ? '<div class="row">' + field('วันที่อนุมัติงบประจำปี (ถ้ามี)', '<input name="meetingDate" type="date" value="' + esc((v.meeting || {}).date || '') + '">') +
+          field('อ้างอิงการอนุมัติงบประจำปี (ถ้ามี)', '<input name="meetingNo" placeholder="เช่น มติที่ประชุม 12/2569" value="' + esc((v.meeting || {}).no || '') + '">') +
+          field('ผู้บริหารที่อนุมัติ (OPEX)', '<input name="meetingBy" placeholder="ชื่อ / ตำแหน่ง" value="' + esc((v.meeting || {}).by || '') + '">', ' data-for="CBS"') + '</div>'
         : '') +
 
       '<fieldset data-for="CAPEX"><legend>โครงสร้างงบ</legend><div class="choice">' +
@@ -1242,8 +1286,8 @@
       '<span class="muted">รวม (รวม VAT) <strong data-total="cbs">0.00</strong> บาท</span></div></fieldset>' +
 
       field('หมายเหตุ / ความจำเป็นของโครงการ', '<textarea name="note">' + esc(v.note) + '</textarea>') +
-      '<div class="actions"><button class="btn primary" type="submit">' + (mode === 'import' ? 'บันทึกและเปิดใช้งาน' : 'บันทึกร่าง') + '</button>' +
-      '<a class="btn" data-back href="' + (b ? '#/budget/' + b.id : '#/my-budgets') + '">ยกเลิก</a>' +
+      '<div class="actions"><button class="btn primary" type="submit">' + (mode === 'setup' ? (b ? 'บันทึกงบ' : 'บันทึกงบ (รอ Business เปิดใช้)') : 'บันทึกร่าง') + '</button>' +
+      '<a class="btn" data-back href="' + (b ? '#/budget/' + b.id : mode === 'setup' ? '#/budgets' : '#/my-budgets') + '">ยกเลิก</a>' +
       '</div></form>';
   }
 
@@ -1333,7 +1377,7 @@
       const errors = [];
       const code = f.code.value.trim();
       if (db.budgets.some((b) => b.code === code && b.id !== id && b.state !== 'cancelled')) errors.push('รหัส "' + code + '" มีอยู่แล้ว');
-      if (mode === 'import' && !f.ownerId.value) errors.push('กรุณาเลือก Business เจ้าของงบ');
+      if (mode === 'setup' && !f.ownerId.value) errors.push('กรุณาเลือก Business เจ้าของงบ');
 
       const rows = structure === 'project' ? [] : Array.from(form.querySelectorAll('#' + (type === 'CBS' ? 'cbs' : 'capex') + 'Rows tr'));
       const val = (tr, n) => tr.querySelector('[name="' + n + '"]');
@@ -1400,16 +1444,16 @@
       data.group = f.group.value.trim();
       const at = new Date().toISOString();
       let target;
+      if (mode === 'setup') data.meeting = { date: f.meetingDate.value, no: f.meetingNo.value.trim(), note: '', by: type === 'CBS' && f.meetingBy ? f.meetingBy.value.trim() : '' };
       if (existing) {
         target = existing;
         Object.assign(target, data, { updatedAt: at, updatedBy: me().id });
-        addHistory(target, 'แก้ไขร่าง', '', 'งบ ' + code);
+        addHistory(target, mode === 'setup' ? 'ผู้คุมงบแก้ไขงบ' : 'แก้ไขร่าง', '', 'งบ ' + code);
       } else {
         target = Object.assign({ id: nextId('b'), createdAt: at, createdBy: me().id, attachments: [], history: [], revisions: [] }, data);
-        if (mode === 'import') {
-          Object.assign(target, { state: 'active', activatedAt: at, activatedBy: me().id, meeting: { date: f.meetingDate.value, no: f.meetingNo.value.trim(), note: '', by: type === 'CBS' && f.meetingBy ? f.meetingBy.value.trim() : '' } });
-          target.revisions = [{ no: 0, at, by: me().id, note: 'นำเข้างบที่อนุมัติแล้ว (' + target.meeting.no + ')', total: budgetTotal(target), items: snapshot }];
-          addHistory(target, 'นำเข้างบที่อนุมัติแล้ว และเปิดใช้งาน', target.meeting.no, 'งบ ' + code);
+        if (mode === 'setup') {
+          Object.assign(target, { state: 'pending_open', setup: true });
+          addHistory(target, 'ผู้คุมงบลงงบประจำปี — รอ Business เปิดใช้งบ', target.meeting.no, 'งบ ' + code);
         } else {
           target.state = 'draft';
           addHistory(target, 'สร้างร่างคำขออนุมัติงบ', '', 'งบ ' + code);
@@ -1417,7 +1461,7 @@
         db.budgets.push(target);
       }
       save();
-      setFlash('success', mode === 'import' ? 'นำเข้างบ ' + code + ' และเปิดใช้งานแล้ว'
+      setFlash('success', mode === 'setup' ? 'บันทึกงบ ' + code + ' แล้ว — รอ ' + userName(target.ownerId) + ' เปิดใช้งบ' + (type === 'CAPEX' ? ' (ทำ Memo ให้ผู้บริหารเซ็น)' : '')
         : 'บันทึกร่าง ' + code + ' แล้ว — พิมพ์แบบฟอร์ม' + (type === 'CBS' ? 'เสนอผู้บริหาร' : 'เข้าที่ประชุม') + 'ได้จากหน้ารายละเอียด เมื่อได้' + (type === 'CBS' ? 'เอกสารอนุมัติ' : 'มติ') + 'แล้วแนบหลักฐานและส่งให้ผู้คุมงบ');
       go('#/budget/' + target.id);
     });
@@ -1503,6 +1547,14 @@
   /** แถบขั้นตอนของวงจรงบ */
   function budgetStepper(b) {
     const st = b.state || 'active';
+    if (b.setup) {
+      const capex = b.type === 'CAPEX';
+      const ss = capex
+        ? [['ผู้คุมงบลงงบ'], ['Business ทำ Memo ให้ผู้บริหารเซ็น'], ['ผู้คุมงบตรวจ Memo'], ['เปิดใช้งาน']]
+        : [['ผู้คุมงบลงงบ'], ['Business กดเปิดใช้งบ'], ['เปิดใช้งาน']];
+      const ix = st === 'active' ? ss.length - 1 : st === 'open_review' ? 2 : st === 'cancelled' ? -1 : 1;
+      return '<ol class="stepper">' + ss.map(([label], i) => '<li class="' + (i < ix ? 'done' : i === ix ? 'current' : '') + '"><span>' + (i + 1) + '</span>' + label + '</li>').join('') + '</ol>';
+    }
     const steps = [['draft', 'ร่างคำขอ'], ['meeting', apprOf(b.type).step], ['review', 'ผู้คุมงบตรวจสอบ'], ['active', 'เปิดใช้งาน']];
     const idx = { draft: 0, returned: 0, review: 2, active: 3, cancelled: -1 }[st];
     return '<ol class="stepper">' + steps.map(([k, label], i) => '<li class="' + (i < idx ? 'done' : i === idx ? 'current' : '') + '"><span>' + (i + 1) + '</span>' + label + '</li>').join('') + '</ol>';
@@ -1532,12 +1584,15 @@
       actions.push('<a class="btn" href="#/change/new/' + b.id + '">ขอเพิ่มงบ</a>');
     }
     if (editable) actions.push('<a class="btn" href="#/budget/' + b.id + '/edit">แก้ไขร่าง</a>');
-    if (own || canViewAll()) actions.push('<a class="btn" href="#/budget/' + b.id + '/form">พิมพ์แบบฟอร์มขออนุมัติ</a>');
+    const setupEdit = b.setup && waitingOpen(b) && can('budget.manage');
+    if (setupEdit) actions.push('<a class="btn" href="#/budget/' + b.id + '/edit">แก้ไขงบ</a>');
+    if (b.setup && b.openMemo && b.type === 'CAPEX' && (own || canViewAll())) actions.push('<a class="btn" href="#/budget/' + b.id + '/memo' + (canEditOpenMemo(b) ? '' : '?view=1') + '">Memo เปิดใช้งบ</a>');
+    if (!b.setup && (own || canViewAll())) actions.push('<a class="btn" href="#/budget/' + b.id + '/form">พิมพ์แบบฟอร์มขออนุมัติ</a>');
     if (manageSub) actions.push('<a class="btn" href="#/budget/' + b.id + '/items">จัดการ Item ย่อย</a>');
     if (canEditGl(b)) actions.push('<a class="btn" href="#/budget/' + b.id + '/gl">ใส่ GL Code</a>');
     if (canPlanCashflow(b)) actions.push('<a class="btn" href="#/budget/' + b.id + '/cashflow">' + (hasCashflow(b) ? 'แก้ไข Plan Cashflow' : 'วาง Plan Cashflow') + '</a>');
     if (active && can('budget.adjust')) actions.push('<a class="btn" href="#/adjust?budget=' + b.id + '">โยก / ลดงบ</a>');
-    if (editable) actions.push('<button type="button" class="btn bad" id="cancelBudget">ยกเลิกคำขอ</button>');
+    if (editable || setupEdit) actions.push('<button type="button" class="btn bad" id="cancelBudget">' + (setupEdit ? 'ยกเลิกงบ' : 'ยกเลิกคำขอ') + '</button>');
     let html = '<div class="page-head detail-head"><div>' +
       '<div class="eyebrow">' + (isCapex ? 'งบลงทุน' : 'งบดำเนินงาน') + ' · ' + badge(b.type, TYPE_SHORT[b.type]) + ' ' + esc(b.code) +
       ' · ' + budgetStateBadge(b) + '</div>' +
@@ -1550,9 +1605,13 @@
           : 'ร่างนี้ยังไม่ได้ส่ง — พิมพ์แบบฟอร์มเสนอผู้บริหาร (ไม่ต้องเข้าบอร์ด) เมื่อผู้บริหารอนุมัติแล้ว แนบเอกสารอนุมัติและส่งให้ผู้คุมงบด้านล่าง (ร่างค้างไว้ได้ไม่จำกัดเวลา)') : 'ร่างของ Business ยังไม่ได้ส่งตรวจ',
         returned: 'ผู้คุมงบส่งกลับให้แก้ไข: ' + (b.returnReason || ''),
         review: (isCapex ? 'แนบมติแล้ว' : 'แนบเอกสารอนุมัติผู้บริหารแล้ว') + ' รอผู้คุมงบตรวจสอบและยืนยันเปิดใช้งาน',
-        cancelled: 'คำขออนุมัติงบนี้ถูกยกเลิกแล้ว'
+        pending_open: own ? (isCapex ? 'ผู้คุมงบลงงบนี้ให้คุณแล้ว — เปิดใช้งบครั้งแรกโดยทำ Memo ให้ผู้บริหารเซ็น แนบไฟล์ที่เซ็นแล้ว และส่งให้ผู้คุมงบยืนยัน (ด้านล่าง)'
+          : 'ผู้คุมงบลงงบนี้ให้คุณแล้ว — กด "เปิดใช้งบ" ด้านล่างเพื่อเริ่มใช้งบ (OPEX ไม่ต้องทำ Memo)') : 'รอ ' + userName(b.ownerId) + ' เปิดใช้งบ' + (isCapex ? ' (ทำ Memo ให้ผู้บริหารเซ็น)' : ''),
+        open_review: 'แนบ Memo ที่ผู้บริหารเซ็นแล้ว รอผู้คุมงบตรวจ Memo และยืนยันเปิดใช้งบ',
+        open_returned: 'ผู้คุมงบส่ง Memo เปิดใช้งบกลับให้แก้ไข: ' + (b.returnReason || ''),
+        cancelled: b.setup ? 'งบนี้ถูกยกเลิกแล้ว' : 'คำขออนุมัติงบนี้ถูกยกเลิกแล้ว'
       }[state];
-      html += '<div class="card stepper-card">' + budgetStepper(b) + '<p class="' + (state === 'returned' ? 'neg' : 'muted') + '">' + esc(msg) + '</p></div>';
+      html += '<div class="card stepper-card">' + budgetStepper(b) + '<p class="' + (state === 'returned' || state === 'open_returned' ? 'neg' : 'muted') + '">' + esc(msg) + '</p></div>';
     }
 
     // ---- ข้อมูลหลักแบบตาราง
@@ -1661,6 +1720,7 @@
         : '<p class="muted">' + ap.none + '</p>') + attachList(b.attachments, { empty: ap.empty });
     }
     evidence += '</section>';
+    if (b.setup) evidence = openSection(b, own);
 
     const chgList = chgs.length
       ? '<h2>คำขอเพิ่มงบ <span class="muted count-note">(' + chgs.length + ')</span></h2><div class="table-wrap"><table><thead><tr><th>เลขที่</th><th>เหตุผล</th><th class="num">ขอเพิ่ม</th><th>สถานะ</th></tr></thead><tbody>' +
@@ -1687,7 +1747,7 @@
         stat('ปิดยอดแล้ว', count('closed')) +
         stat('ส่งกลับ / ยกเลิก', count('rejected') + count('cancelled')) + '</div></div>';
     } else {
-      side += '<div class="card total-card"><span class="muted">วงเงินที่ขออนุมัติ</span>' +
+      side += '<div class="card total-card"><span class="muted">' + (b.setup ? 'วงเงินงบ' : 'วงเงินที่ขออนุมัติ') + '</span>' +
         '<div class="total-amount">' + money(budgetTotal(b)) + ' <small>บาท</small></div>' +
         '<p class="muted small-note" style="margin:var(--s-2) 0 0">สถานะ: ' + esc(BUDGET_STATE[state]) + '</p></div>';
     }
@@ -1696,6 +1756,13 @@
         '<p class="muted small-note" style="margin:0 0 var(--s-3)">ตรวจว่า' + (ap.exec ? 'เอกสารอนุมัติของผู้บริหาร' : 'มติ') + 'ตรงกับวงเงินและรายการในคำขอ ผู้คุมงบแก้ตัวงบไม่ได้ ถ้าไม่ตรงให้ส่งกลับ</p>' +
         '<form id="verifyBudget" data-id="' + b.id + '"><label class="field"><span>หมายเหตุ (จำเป็นเมื่อส่งกลับ)</span><textarea name="comment" rows="3"></textarea></label>' +
         '<div class="actions"><button class="btn primary" type="submit" data-verify="active">ยืนยันเปิดใช้งาน</button>' +
+        '<button class="btn bad" type="submit" data-verify="returned">ส่งกลับให้แก้ไข</button></div></form></div>';
+    }
+    if (state === 'open_review' && can('budget.verify')) {
+      side += '<div class="card decision"><h3 class="side-title">ตรวจ Memo เปิดใช้งบ</h3>' +
+        '<p class="muted small-note" style="margin:0 0 var(--s-3)">ตรวจว่า Memo ที่แนบมีผู้บริหารลงนามครบ และวงเงิน / รายการตรงกับงบ ถ้าไม่ครบให้ส่งกลับให้ Business แก้ไข</p>' +
+        '<form id="verifyBudget" data-id="' + b.id + '"><label class="field"><span>หมายเหตุ (จำเป็นเมื่อส่งกลับ)</span><textarea name="comment" rows="3"></textarea></label>' +
+        '<div class="actions"><button class="btn primary" type="submit" data-verify="active">ยืนยัน Memo และเปิดใช้งบ</button>' +
         '<button class="btn bad" type="submit" data-verify="returned">ส่งกลับให้แก้ไข</button></div></form></div>';
     }
     if (active && b.revisions.length) {
@@ -1715,17 +1782,19 @@
   }
 
   function bindBudgetDetail() {
+    bindOpenSection();
     const sub = document.getElementById('submitBudget');
     const cancel = document.getElementById('cancelBudget');
     const verify = document.getElementById('verifyBudget');
     if (cancel) {
       cancel.addEventListener('click', () => {
         const b = budgetById(location.hash.split('/')[2]);
-        if (!b || !confirm('ยกเลิกคำขออนุมัติงบ ' + b.code + ' ?')) return;
+        const what = b && b.setup ? 'งบ' : 'คำขออนุมัติงบ';
+        if (!b || !confirm('ยกเลิก' + what + ' ' + b.code + ' ?')) return;
         b.state = 'cancelled';
-        addHistory(b, 'ยกเลิกคำขออนุมัติงบ', '', 'งบ ' + b.code);
+        addHistory(b, 'ยกเลิก' + what, '', 'งบ ' + b.code);
         save();
-        setFlash('info', 'ยกเลิกคำขออนุมัติงบ ' + b.code + ' แล้ว');
+        setFlash('info', 'ยกเลิก' + what + ' ' + b.code + ' แล้ว');
         go('#/budget/' + b.id);
       });
     }
@@ -1788,6 +1857,20 @@
         const comment = verify.elements.comment.value.trim();
         if (decision === 'returned' && !comment) { alert('กรุณาระบุเหตุผลที่ส่งกลับ'); return; }
         const at = new Date().toISOString();
+        if (b.state === 'open_review') {
+          if (decision === 'active') {
+            activateBudget(b, me().id, 'เปิดใช้งบตาม Memo ' + b.openMemo.no + (comment ? ' — ' + comment : ''));
+            addHistory(b, 'ผู้คุมงบยืนยัน Memo และเปิดใช้งบ', comment, b.openMemo.no);
+            setFlash('success', 'ยืนยัน Memo และเปิดใช้งบ ' + b.code + ' แล้ว — Business ขอดำเนินการใช้งบได้');
+          } else {
+            Object.assign(b, { state: 'open_returned', returnReason: comment });
+            addHistory(b, 'ส่ง Memo เปิดใช้งบกลับให้แก้ไข', comment, b.openMemo.no);
+            setFlash('info', 'ส่ง Memo เปิดใช้งบ ' + b.code + ' กลับให้ Business แก้ไขแล้ว');
+          }
+          save();
+          go('#/budget/' + b.id);
+          return;
+        }
         if (decision === 'active') {
           Object.assign(b, { state: 'active', activatedAt: at, activatedBy: me().id, returnReason: '' });
           b.revisions = [{ no: 0, at, by: me().id, note: 'เปิดใช้งานตาม' + ((b.meeting && b.meeting.no) || apprOf(b.type).short) + (comment ? ' — ' + comment : ''), total: budgetTotal(b), items: snapshotItems(b) }];
@@ -1802,6 +1885,486 @@
         go('#/budget/' + b.id);
       });
     }
+  }
+
+  // ---------------------------------------------------------------- เปิดใช้งบครั้งแรก (งบที่ผู้คุมงบลงไว้)
+
+  /** เปิดใช้งาน: บันทึกวงเงินตั้งต้น (ครั้งที่ 0) ไว้เทียบเมื่อปรับงบภายหลัง */
+  function activateBudget(b, by, note) {
+    const at = new Date().toISOString();
+    Object.assign(b, { state: 'active', activatedAt: at, activatedBy: by, returnReason: '' });
+    b.revisions = [{ no: 0, at, by, note, total: budgetTotal(b), items: snapshotItems(b) }];
+  }
+  /** Business เจ้าของงบทำ Memo / กดเปิดใช้งบได้ */
+  const canOpenBudget = (b) => b.setup && waitingOpen(b) && b.ownerId === me().id && can('request.create');
+  const canEditOpenMemo = (b) => b.type === 'CAPEX' && canOpenBudget(b);
+
+  /** ส่วน "เปิดใช้งบครั้งแรก" ในหน้างบ */
+  function openSection(b, own) {
+    const capex = b.type === 'CAPEX';
+    const m = b.openMemo;
+    let h = '<h2>เปิดใช้งบครั้งแรก</h2><section class="card evidence-card open-card">';
+    if (!capex) {
+      if (b.state === 'active') h += '<p>เปิดใช้งบแล้วโดย ' + esc(userName(b.activatedBy)) + ' · ' + fmtDate(b.activatedAt) + '</p>';
+      else if (canOpenBudget(b)) {
+        h += '<p class="muted small-note">ตรวจรายการและวงเงินด้านล่าง ถ้าถูกต้องกด "เปิดใช้งบ" เพื่อเริ่มขอดำเนินการใช้งบ (OPEX ไม่ต้องทำ Memo) · ถ้าวงเงิน / Item ไม่ถูกต้อง แจ้งผู้คุมงบให้แก้ก่อน</p>' +
+          '<div class="actions"><button type="button" class="btn primary" id="openBudget" data-id="' + b.id + '">เปิดใช้งบ</button></div>';
+      } else h += '<p class="muted">รอ ' + esc(userName(b.ownerId)) + ' กดเปิดใช้งบ</p>';
+      return h + '</section>';
+    }
+    // CAPEX: Memo เปิดใช้งบ
+    if (canOpenBudget(b)) {
+      const files = (m && m.files) || [];
+      h += '<ol class="open-steps">' +
+        '<li class="' + (m ? 'done' : 'current') + '"><strong>1. กรอก Memo ขอเปิดใช้งบ</strong><span>' + (m ? 'เลขที่ ' + esc(m.no) + ' · ' : '') +
+          '<a href="#/budget/' + b.id + '/memo">' + (m ? 'แก้ไข Memo' : 'ทำ Memo') + '</a>' + (m ? ' · <a href="#/budget/' + b.id + '/memo?view=1">ฉบับพิมพ์</a>' : '') + '</span></li>' +
+        '<li class="' + (m && !files.length ? 'current' : m ? 'done' : '') + '"><strong>2. พิมพ์ให้ผู้บริหารเซ็น แล้วแนบไฟล์ที่เซ็นแล้ว</strong>' +
+          (m ? '<div id="openMemoFiles" data-id="' + b.id + '">' + attachList(files, { del: true, empty: 'ยังไม่ได้แนบ Memo ที่เซ็นแล้ว' }) +
+            '<label class="btn small file-btn">+ แนบ Memo ที่เซ็นแล้ว<input type="file" id="openMemoFile" accept="application/pdf,image/png,image/jpeg" multiple hidden></label></div>' : '') + '</li>' +
+        '<li class="' + (m && files.length ? 'current' : '') + '"><strong>3. ส่งให้ผู้คุมงบตรวจ Memo และยืนยันเปิดใช้งบ</strong>' +
+          (m ? '<div class="actions"><button type="button" class="btn primary" id="submitOpenMemo" data-id="' + b.id + '"' + (files.length ? '' : ' disabled') + '>ส่ง Memo ให้ผู้คุมงบ</button>' +
+            (files.length ? '' : '<span class="guard-hint">ต้องแนบ Memo ที่ผู้บริหารเซ็นแล้วก่อน</span>') + '</div>' : '') + '</li></ol>';
+    } else if (m) {
+      h += '<p>Memo เลขที่ ' + esc(m.no) + (m.signers ? ' · ผู้บริหารที่ลงนาม: ' + esc(m.signers) : '') +
+        (m.submittedAt ? ' · ส่งเมื่อ ' + fmtDate(m.submittedAt) : '') + ' · <a href="#/budget/' + b.id + '/memo?view=1">เปิด Memo</a></p>' +
+        attachList(m.files, { empty: 'ยังไม่ได้แนบ Memo ที่เซ็นแล้ว' }) +
+        (b.state === 'active' ? '<p class="muted small-note">เปิดใช้งบแล้วโดย ' + esc(userName(b.activatedBy)) + ' · ' + fmtDate(b.activatedAt) + '</p>' : '');
+    } else {
+      h += '<p class="muted">รอ ' + esc(userName(b.ownerId)) + ' ทำ Memo ขอเปิดใช้งบ ให้ผู้บริหารเซ็น แล้วส่งให้ผู้คุมงบตรวจ</p>';
+    }
+    return h + '</section>';
+  }
+
+  function bindOpenSection() {
+    const openBtn = document.getElementById('openBudget');
+    if (openBtn) openBtn.addEventListener('click', () => {
+      const b = budgetById(openBtn.dataset.id);
+      if (!canOpenBudget(b) || !confirm('เปิดใช้งบ ' + b.code + ' วงเงิน ' + money(budgetTotal(b)) + ' บาท ?')) return;
+      activateBudget(b, me().id, 'Business เปิดใช้งบ');
+      addHistory(b, 'Business เปิดใช้งบ', '', 'งบ ' + b.code);
+      save();
+      setFlash('success', 'เปิดใช้งบ ' + b.code + ' แล้ว — ขอดำเนินการใช้งบได้');
+      go('#/budget/' + b.id);
+    });
+    const box = document.getElementById('openMemoFiles');
+    if (box) {
+      const b = budgetById(box.dataset.id);
+      box.querySelector('#openMemoFile').addEventListener('change', async (e) => {
+        const files = await readFiles(e.target, 'openMemo');
+        if (!files.length) return;
+        b.openMemo.files = (b.openMemo.files || []).concat(files);
+        addHistory(b, 'แนบ Memo เปิดใช้งบที่เซ็นแล้ว', files.map((f) => f.name).join(', '), b.openMemo.no);
+        if (!save()) return;
+        render();
+      });
+      box.addEventListener('click', (e) => {
+        const del = e.target.closest('[data-att-del]');
+        if (!del) return;
+        const f = b.openMemo.files.find((x) => x.id === del.dataset.attDel);
+        if (!f || !confirm('ลบไฟล์ ' + f.name + ' ?')) return;
+        b.openMemo.files = b.openMemo.files.filter((x) => x !== f);
+        addHistory(b, 'ลบไฟล์ Memo เปิดใช้งบ', f.name, b.openMemo.no);
+        save();
+        render();
+      });
+    }
+    const send = document.getElementById('submitOpenMemo');
+    if (send) send.addEventListener('click', () => {
+      const b = budgetById(send.dataset.id);
+      if (!canOpenBudget(b) || !(b.openMemo.files || []).length) return;
+      b.openMemo.signers = openMemoDocOf(b).approvers.join(' / ');
+      b.openMemo.submittedAt = new Date().toISOString();
+      b.state = 'open_review';
+      b.submittedAt = b.openMemo.submittedAt;
+      addHistory(b, 'ส่ง Memo เปิดใช้งบให้ผู้คุมงบตรวจ', b.openMemo.signers, b.openMemo.no);
+      save();
+      setFlash('success', 'ส่ง Memo ' + b.openMemo.no + ' ให้ผู้คุมงบตรวจแล้ว — รอยืนยันเปิดใช้งบ');
+      go('#/budget/' + b.id);
+    });
+  }
+
+  /** ค่าเริ่มต้นของ Memo ขอเปิดใช้งบ (CAPEX) */
+  function openMemoModel(b) {
+    const cname = (c) => companyMap()[c] || c;
+    const mp = defaultMemoParties(b, b.company);
+    const m = b.meeting || {};
+    const total = budgetTotal(b);
+    const amt = (v) => money(v) + ' บาท (' + bahtText(v) + ')';
+    const items = b.structure === 'project' ? [] : leaves(b);
+    const defaults = {
+      to: (mp.to.length ? mp.to : ['ผู้บริหาร']).concat([cname(b.company)]).join('\n'),
+      date: fmtDay(new Date().toISOString()),
+      cc: mp.cc.join(' , '),
+      subject: 'ขออนุมัติเปิดใช้งบประมาณ ' + b.code + ' ' + b.name,
+      ref: m.no ? m.no + (m.date ? ' วันที่ ' + fmtDay(m.date) : '') : 'งบประมาณลงทุน (CAPEX) ประจำปี ' + b.fiscalYear,
+      background: 'ตามที่' + cname(b.company) + ' ได้รับการจัดสรรงบประมาณลงทุน (CAPEX) ประจำปี ' + b.fiscalYear + ' โครงการ ' + b.code + ' ' + b.name +
+        ' ' + (b.department ? 'ของ' + b.department + ' ' : '') + 'กรอบวงเงินรวมทั้งสิ้น ' + amt(total) + (b.note ? '\n\n' + b.note : ''),
+      consider: 'เพื่อให้สามารถดำเนินโครงการตามแผนได้ จึงขออนุมัติเปิดใช้งบประมาณโครงการ ' + b.code + ' ทั้งโครงการ ตามรายการดังนี้',
+      doaRef: '',
+      signerName: userName(b.ownerId),
+      signerTitle: mp.proposer || '',
+      reviewers: mp.reviewers.slice(),
+      approvers: mp.approvers.slice()
+    };
+    return { b, r: { memoDoc: (b.openMemo || {}).doc }, total, items, amt, defaults };
+  }
+  const openMemoDocOf = (b) => memoDocOf(openMemoModel(b));
+
+  /** Memo ขอเปิดใช้งบ — โครงเดียวกับ Memo ขอเบิกใช้งบ (หัวกระดาษ / ตารางหัว / ตารางผู้ลงนาม) */
+  function openMemoHtml(b, edit) {
+    const M = openMemoModel(b);
+    const d = memoDocOf(M);
+    const text = (v) => esc(v || '').replace(/\n/g, '<br>');
+    const paras = (v) => String(v || '').split(/\n\s*\n/).map((p) => '<p>' + text(p.trim()) + '</p>').join('');
+    const inp = (k, ph, cls) => (edit ? '<input class="mf' + (cls ? ' ' + cls : '') + '" name="md_' + k + '" value="' + esc(d[k]) + '" placeholder="' + esc(ph || '') + '" aria-label="' + esc(ph || k) + '">' : text(d[k]));
+    const area = (k, rows, ph) => '<textarea class="mf" name="md_' + k + '" rows="' + rows + '" placeholder="' + esc(ph || '') + '" aria-label="' + esc(ph || k) + '">' + esc(d[k]) + '</textarea>';
+    const signRows = (k) => (d[k].length ? d[k] : ['']).map((x) => '<tr>' + (edit
+      ? '<td><div class="mf-row"><input class="mf" name="md_' + k + '" value="' + esc(x) + '" placeholder="ชื่อ / ตำแหน่ง" aria-label="ชื่อ / ตำแหน่ง">' +
+        '<button type="button" class="btn small bad no-print" data-mf-del title="ลบแถว">×</button></div></td>'
+      : '<td>' + esc(x) + '</td>') + '<td>☐ อนุมัติ &nbsp; ☐ ไม่อนุมัติ</td><td></td><td></td></tr>').join('');
+    const signTable = (k, title) => '<h2 class="memo-h">' + title + '</h2>' +
+      '<table class="memo-sign"><thead><tr><th>ชื่อ / ตำแหน่ง</th><th style="width:9rem">ผลการพิจารณา</th><th style="width:11rem">ลงนามอนุมัติ</th><th style="width:6rem">วันที่</th></tr></thead>' +
+      '<tbody data-mf-list="' + k + '">' + signRows(k) + '</tbody></table>' +
+      (edit ? '<button type="button" class="btn small no-print mf-add" data-mf-add="' + k + '">+ เพิ่มผู้ลงนาม</button>' : '');
+    const rows = M.items.length ? M.items : [{ code: b.code, name: 'งบรวมทั้งโครงการ', assetType: (b.items[0] || {}).assetType, amount: M.total }];
+    return '<article class="doc memo-doc' + (edit ? ' memo-edit' : '') + '">' +
+      memoLetterhead(b.company) +
+      '<table class="memo-head"><tbody>' +
+      '<tr><td><div class="mh-row"><span class="lbl">เรียน</span><div class="mh-val">' + (edit ? area('to', 2, 'ชื่อ (ตำแหน่ง) และบริษัท — บรรทัดละรายการ') : String(d.to || '').split('\n').map(esc).join('<br>')) + '</div></div></td>' +
+      '<td class="memo-date"><div class="mh-row"><span class="lbl lbl-s">วันที่</span><div class="mh-val">' + inp('date', 'วันที่', 'mf-date') + '</div></div>' +
+        '<div class="mh-row"><span class="lbl lbl-s">เลขที่</span><div class="mh-val">' + esc((b.openMemo || {}).no || '........') + '</div></div>' +
+        '<div class="mh-row mh-sub"><span class="lbl lbl-s">งบ</span><div class="mh-val">' + esc(b.code) + '</div></div></td></tr>' +
+      '<tr><td colspan="2"><div class="mh-row"><span class="lbl">เรื่อง</span><div class="mh-val">' + inp('subject', 'เรื่อง') + '</div></div></td></tr>' +
+      '<tr><td colspan="2"><div class="mh-row"><span class="lbl">สำเนาถึง</span><div class="mh-val">' + inp('cc', 'ผู้รับสำเนา (คั่นด้วย ,)') + '</div></div></td></tr>' +
+      '<tr><td colspan="2"><div class="mh-row"><span class="lbl">อ้างอิง</span><div class="mh-val">' + (edit ? area('ref', 1, 'มติ / เอกสารอนุมัติงบประจำปี') : text(d.ref)) + '</div></div></td></tr>' +
+      '</tbody></table>' +
+      '<h2 class="memo-h">1. เรื่องสืบเนื่อง</h2>' +
+      (edit ? area('background', 6, 'ที่มาของงบและกรอบวงเงินที่ได้รับจัดสรร') : '<div class="memo-text">' + paras(d.background) + '</div>') +
+      '<h2 class="memo-h">2. เรื่องเพื่อพิจารณาลงนาม</h2>' +
+      (edit ? area('consider', 3, 'ความประสงค์ในการขอเปิดใช้งบ') : '<div class="memo-text">' + paras(d.consider) + '</div>') +
+      '<table class="memo-sum"><thead><tr><th style="width:3rem">ลำดับ</th><th>รายการ</th><th style="width:9rem">ประเภทสินทรัพย์</th><th class="num" style="width:9rem">วงเงิน (บาท)</th></tr></thead><tbody>' +
+      rows.map((it, i) => '<tr><td class="center">' + (i + 1) + '</td><td>' + esc(it.code + ' ' + it.name) +
+        (it.investor && it.investor !== b.company ? '<br><small>ลงทุนโดย ' + esc(it.investor) + '</small>' : '') + '</td><td>' + esc(it.assetType || '') + '</td>' +
+        '<td class="num">' + money(it.amount !== undefined && M.items.length ? itemTotal(it) : it.amount) + '</td></tr>').join('') +
+      '<tr><td></td><td colspan="2"><strong>รวมวงเงินที่ขอเปิดใช้</strong></td><td class="num"><strong>' + money(M.total) + '</strong></td></tr></tbody></table>' +
+      '<p>จึงขออนุมัติเปิดใช้งบประมาณ รวมเป็นเงินทั้งสิ้น ' + esc(M.amt(M.total)) + '</p>' +
+      (edit ? '<p class="mf-note no-print">รายการและวงเงินดึงจากงบที่ผู้คุมงบลงไว้ — ถ้าไม่ถูกต้องให้แจ้งผู้คุมงบแก้ไขงบ</p>' : '') +
+      (edit ? '<div class="memo-doa"><strong><u>อ้างอิงอำนาจอนุมัติ</u></strong>' + area('doaRef', 2, 'อ้างอิง DOA (ถ้ามี)') + '</div>'
+        : d.doaRef ? '<p class="memo-doa"><strong><u>อ้างอิงอำนาจอนุมัติ</u></strong> ' + text(d.doaRef) + '</p>' : '') +
+      '<p class="memo-close">จึงเรียนมาเพื่อโปรดพิจารณาลงนาม</p>' +
+      '<div class="memo-signoff"><div>ขอแสดงความนับถือ</div><div class="memo-sig-line"></div>' +
+      '<div>(' + inp('signerName', 'ชื่อผู้ลงนามเสนอ', 'mf-center') + ')</div><div>' + inp('signerTitle', 'ตำแหน่ง', 'mf-center') + '</div></div>' +
+      signTable('reviewers', 'ทบทวน และให้ความเห็นชอบ') +
+      signTable('approvers', 'ผู้พิจารณาอนุมัติ') +
+      (edit ? '' : '<p class="note no-print">เมื่อผู้บริหารลงนามแล้ว ให้สแกน / ถ่ายรูป แนบในหน้างบ (เปิดใช้งบครั้งแรก) แล้วส่งให้ผู้คุมงบตรวจ</p>') +
+      '</article>';
+  }
+
+  /** หน้า Memo ขอเปิดใช้งบ (#/budget/:id/memo) — ?view=1 = ฉบับพิมพ์ */
+  function viewOpenMemo(id, params) {
+    const b = budgetById(id);
+    if (!b) return notFound();
+    if (!b.setup || b.type !== 'CAPEX') return '<div class="alert error">Memo เปิดใช้งบใช้กับงบ CAPEX ที่ผู้คุมงบลงไว้เท่านั้น</div>';
+    const editable = canEditOpenMemo(b);
+    if (!b.openMemo && !editable) return '<div class="alert info">ยังไม่มี Memo เปิดใช้งบ</div>';
+    if (editable && !(params && params.get('view'))) {
+      return '<div class="page-head no-print"><div><h1>Memo ขอเปิดใช้งบ · ' + esc(b.code) + '</h1>' +
+        '<div class="page-sub">เปิดใช้งบ CAPEX ครั้งแรกต้องมี Memo ที่ผู้บริหารเซ็น — กรอกในช่องตามโครงแบบฟอร์ม Memo ของบริษัท แล้วกด "บันทึกและดูฉบับพิมพ์"' +
+        (b.openMemo ? '' : ' (ระบบออกเลขที่ Memo เมื่อบันทึกครั้งแรก)') + '</div></div></div>' +
+        takeFlash() +
+        '<form id="memoDocForm" data-kind="budget" data-id="' + b.id + '">' +
+        '<div class="actions no-print memo-toolbar"><button class="btn primary" type="submit" data-mf-go="view">บันทึกและดูฉบับพิมพ์</button>' +
+        '<button class="btn" type="submit" data-mf-go="stay">บันทึก</button>' +
+        (b.openMemo && b.openMemo.doc ? '<button class="btn" type="button" id="memoDocReset">ใช้ค่าเริ่มต้นจากระบบ</button>' : '') +
+        '<a class="btn" href="#/budget/' + b.id + '">กลับไปที่งบ</a></div>' +
+        openMemoHtml(b, true) + '</form>';
+    }
+    return '<div class="actions no-print" style="margin:0 0 1rem"><button class="btn primary" onclick="window.print()">พิมพ์ / บันทึกเป็น PDF</button>' +
+      (editable ? '<a class="btn" href="#/budget/' + b.id + '/memo">แก้ไข Memo</a>' : '') +
+      '<a class="btn" href="#/budget/' + b.id + '">กลับไปที่งบ</a></div>' + takeFlash() + openMemoHtml(b, false);
+  }
+
+  // ---------------------------------------------------------------- Import งบจาก Excel (ผู้คุมงบ)
+
+  /** คอลัมน์ของไฟล์ Import (1 แถว = 1 Item · แถวที่รหัสโครงการเดียวกัน = งบเดียวกัน) */
+  const IMPORT_COLS = [
+    { k: 'type', h: 'ประเภทงบ (CAPEX/OPEX)', w: 14 }, { k: 'company', h: 'บริษัท', w: 9 }, { k: 'year', h: 'ปีงบประมาณ', w: 11, num: true },
+    { k: 'group', h: 'กลุ่มงบ', w: 9 }, { k: 'code', h: 'รหัสโครงการ', w: 14 }, { k: 'name', h: 'ชื่อโครงการ / ชื่องบ', w: 30 },
+    { k: 'dept', h: 'หน่วยงาน', w: 16 }, { k: 'owner', h: 'Business เจ้าของงบ', w: 18 }, { k: 'itCode', h: 'รหัส Item', w: 12 },
+    { k: 'itName', h: 'ชื่อ Item', w: 28 }, { k: 'amount', h: 'วงเงิน (CAPEX รวม VAT / OPEX ก่อน VAT)', w: 18, num: true },
+    { k: 'vat', h: 'VAT 7% (OPEX: Y/N)', w: 10 }, { k: 'asset', h: 'ประเภทสินทรัพย์ (CAPEX)', w: 18 }, { k: 'doa', h: 'หมวด DOA (CAPEX 2.4/2.5)', w: 12 },
+    { k: 'gl', h: 'GL Code (OPEX ถ้ามี)', w: 12 }, { k: 'inv', h: 'บริษัทที่ลงทุน (ถ้าต่างจากบริษัท)', w: 14 },
+    { k: 'ref', h: 'อ้างอิงการอนุมัติ (ถ้ามี)', w: 20 }, { k: 'note', h: 'หมายเหตุ', w: 24 }
+  ];
+  let importPreview = null; // { file, budgets: [{ data, errors, rows }] }
+
+  /** อ่านไฟล์ ZIP (xlsx) — รองรับไฟล์ที่บีบอัดแบบ deflate ด้วย DecompressionStream ของเบราว์เซอร์ */
+  async function readZip(buf) {
+    const u8 = new Uint8Array(buf);
+    const dv = new DataView(buf);
+    let e = u8.length - 22;
+    while (e >= 0 && dv.getUint32(e, true) !== 0x06054b50) e -= 1;
+    if (e < 0) throw new Error('ไฟล์ไม่ใช่ .xlsx');
+    const n = dv.getUint16(e + 10, true);
+    let p = dv.getUint32(e + 16, true);
+    const dec = new TextDecoder();
+    const out = {};
+    for (let i = 0; i < n; i++) {
+      const method = dv.getUint16(p + 10, true);
+      const csize = dv.getUint32(p + 20, true);
+      const nl = dv.getUint16(p + 28, true);
+      const xl = dv.getUint16(p + 30, true);
+      const cl = dv.getUint16(p + 32, true);
+      const off = dv.getUint32(p + 42, true);
+      const name = dec.decode(u8.subarray(p + 46, p + 46 + nl));
+      const start = off + 30 + dv.getUint16(off + 26, true) + dv.getUint16(off + 28, true);
+      out[name] = { method, data: u8.subarray(start, start + csize) };
+      p += 46 + nl + xl + cl;
+    }
+    const text = async (name) => {
+      const f = out[name];
+      if (!f) return null;
+      if (f.method === 0) return dec.decode(f.data);
+      if (f.method !== 8 || typeof DecompressionStream === 'undefined') throw new Error('เบราว์เซอร์นี้อ่านไฟล์ .xlsx ที่บีบอัดไม่ได้ — บันทึกเป็น .csv แล้ว Import แทน');
+      const stream = new Blob([f.data]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
+      return dec.decode(await new Response(stream).arrayBuffer());
+    };
+    return { names: Object.keys(out), text };
+  }
+
+  /** แผ่นงานแรกของ .xlsx → แถว (array ของ array ข้อความ/ตัวเลข) */
+  async function readXlsxRows(buf) {
+    const zip = await readZip(buf);
+    const xml = (t) => new DOMParser().parseFromString(t, 'application/xml');
+    const tags = (node, name) => Array.from(node.getElementsByTagName(name));
+    const wb = xml(await zip.text('xl/workbook.xml') || '');
+    const first = tags(wb, 'sheet')[0];
+    if (!first) throw new Error('ไม่พบแผ่นงานในไฟล์');
+    const rid = first.getAttribute('r:id') || first.getAttributeNS('http://schemas.openxmlformats.org/officeDocument/2006/relationships', 'id');
+    const rels = xml(await zip.text('xl/_rels/workbook.xml.rels') || '<x/>');
+    const rel = tags(rels, 'Relationship').find((r) => r.getAttribute('Id') === rid);
+    let target = rel ? rel.getAttribute('Target') : 'worksheets/sheet1.xml';
+    target = target.startsWith('/') ? target.slice(1) : 'xl/' + target.replace(/^\.\//, '');
+    const ssText = await zip.text('xl/sharedStrings.xml');
+    const shared = ssText ? tags(xml(ssText), 'si').map((si) => tags(si, 't').filter((t) => !t.closest('rPh')).map((t) => t.textContent).join('')) : [];
+    const sheet = xml(await zip.text(target) || '');
+    const colIdx = (ref) => { let n = 0; for (const ch of String(ref).replace(/\d+/g, '')) n = n * 26 + ch.charCodeAt(0) - 64; return n - 1; };
+    return tags(sheet, 'row').map((row) => {
+      const out = [];
+      tags(row, 'c').forEach((c, i) => {
+        const t = c.getAttribute('t');
+        const v = (tags(c, 'v')[0] || {}).textContent;
+        let val = '';
+        if (t === 's') val = shared[Number(v)] || '';
+        else if (t === 'inlineStr') val = tags(c, 't').map((x) => x.textContent).join('');
+        else if (t === 'str' || t === 'b' || t === 'e') val = v || '';
+        else if (v !== undefined && v !== '') val = Number(v);
+        out[c.getAttribute('r') ? colIdx(c.getAttribute('r')) : i] = val;
+      });
+      return Array.from(out, (x) => (x === undefined ? '' : x));
+    });
+  }
+
+  /** CSV (UTF-8) → แถว */
+  function parseCsv(text) {
+    const rows = [];
+    let row = [];
+    let cur = '';
+    let q = false;
+    const t = text.replace(/^﻿/, '');
+    for (let i = 0; i < t.length; i++) {
+      const ch = t[i];
+      if (q) {
+        if (ch === '"' && t[i + 1] === '"') { cur += '"'; i += 1; } else if (ch === '"') q = false; else cur += ch;
+      } else if (ch === '"') q = true;
+      else if (ch === ',') { row.push(cur); cur = ''; } else if (ch === '\n' || ch === '\r') {
+        if (ch === '\r' && t[i + 1] === '\n') i += 1;
+        row.push(cur); rows.push(row); row = []; cur = '';
+      } else cur += ch;
+    }
+    if (cur || row.length) { row.push(cur); rows.push(row); }
+    return rows;
+  }
+
+  /** แถวจากไฟล์ → งบ (จัดกลุ่มตามรหัสโครงการ) พร้อมตรวจความถูกต้อง */
+  function importBudgets(rows) {
+    const norm = (x) => String(x == null ? '' : x).replace(/\s+/g, '').toLowerCase();
+    const head = (rows[0] || []).map(norm);
+    const idx = {};
+    IMPORT_COLS.forEach((c) => {
+      const full = norm(c.h);
+      const short = norm(c.h.replace(/\s*\(.*$/, ''));
+      let i = head.indexOf(full);
+      if (i < 0) i = head.findIndex((h) => h && (h === short || h.startsWith(short)));
+      idx[c.k] = i;
+    });
+    const missingCols = ['type', 'code', 'name', 'owner', 'itCode', 'itName', 'amount'].filter((k) => idx[k] < 0)
+      .map((k) => IMPORT_COLS.find((c) => c.k === k).h);
+    if (missingCols.length) return { error: 'ไม่พบคอลัมน์: ' + missingCols.join(', ') + ' — ใช้ไฟล์ตัวอย่าง (Template) เป็นแบบ' };
+    const get = (r, k) => (idx[k] >= 0 && r[idx[k]] !== undefined ? String(r[idx[k]]).trim() : '');
+    const num = (v) => Number(String(v).replace(/[,\s฿]/g, ''));
+    const groups = [];
+    rows.slice(1).forEach((r, i) => {
+      if (!r.some((x) => String(x).trim())) return;
+      const code = get(r, 'code');
+      let g = groups.find((x) => x.code === code);
+      if (!g) { g = { code, rows: [] }; groups.push(g); }
+      g.rows.push({ line: i + 2, r });
+    });
+    const owners = USERS.filter(canRequestUser);
+    const findOwner = (v) => owners.find((x) => [x.id, x.name, x.email].filter(Boolean).map(norm).includes(norm(v)));
+    const year = new Date().getFullYear();
+    const budgets = groups.map((g) => {
+      const r0 = g.rows[0].r;
+      const errors = [];
+      const typeRaw = get(r0, 'type').toUpperCase();
+      const type = typeRaw === 'CAPEX' ? 'CAPEX' : (typeRaw === 'OPEX' || typeRaw === 'CBS') ? 'CBS' : '';
+      if (!type) errors.push('ประเภทงบต้องเป็น CAPEX หรือ OPEX');
+      const company = get(r0, 'company') || (db.master.companies[0] || {}).code || '';
+      if (!db.master.companies.some((c) => c.code === company)) errors.push('ไม่พบบริษัท "' + company + '" ในข้อมูลหลัก');
+      const fy = num(get(r0, 'year')) || year + 1;
+      const owner = findOwner(get(r0, 'owner'));
+      if (!owner) errors.push('ไม่พบ Business เจ้าของงบ "' + get(r0, 'owner') + '" (ใส่ชื่อ หรือรหัสผู้ใช้)');
+      const dept = get(r0, 'dept');
+      if (dept && !db.master.departments.some((d) => d.name === dept)) errors.push('ไม่พบหน่วยงาน "' + dept + '" ในข้อมูลหลัก');
+      if (!dept) errors.push('ไม่ได้ระบุหน่วยงาน');
+      if (!g.code) errors.push('ไม่ได้ระบุรหัสโครงการ');
+      else if (db.budgets.some((b) => b.code === g.code && b.state !== 'cancelled')) errors.push('รหัสโครงการ "' + g.code + '" มีอยู่แล้วในระบบ');
+      if (!get(r0, 'name')) errors.push('ไม่ได้ระบุชื่อโครงการ');
+      const items = g.rows.map(({ line, r }) => {
+        const amount = round2(num(get(r, 'amount')));
+        const it = { id: '', code: get(r, 'itCode'), name: get(r, 'itName'), amount, investor: get(r, 'inv') || company, line };
+        if (type === 'CAPEX') {
+          it.assetType = get(r, 'asset') || assetTypeList()[0] || '';
+          it.doa = get(r, 'doa') === '2.4' ? '2.4' : '2.5';
+        } else {
+          it.qty = ''; it.unit = '';
+          it.vat = /^(y|yes|1|true|ใช่|มี|✓)$/i.test(get(r, 'vat')) ? round2(amount * VAT_RATE) : 0;
+          it.glCode = get(r, 'gl');
+          const gl = db.master.glCodes.find((x) => x.code === it.glCode);
+          it.glName = gl ? gl.name : '';
+        }
+        if (!it.code || !it.name) errors.push('แถว ' + line + ': ไม่ได้ระบุรหัส / ชื่อ Item');
+        if (!(amount > 0)) errors.push('แถว ' + line + ': วงเงินต้องมากกว่า 0');
+        if (type === 'CBS' && String(it.code).includes('.')) errors.push('แถว ' + line + ': Item หลักของ OPEX ใช้รหัสไม่มีจุด (1, 2, 3)');
+        if (it.investor !== company && !db.master.companies.some((c) => c.code === it.investor)) errors.push('แถว ' + line + ': ไม่พบบริษัทที่ลงทุน "' + it.investor + '"');
+        return it;
+      });
+      const dup = items.map((x) => x.code).filter((c, i, a) => c && a.indexOf(c) !== i);
+      if (dup.length) errors.push('รหัส Item ซ้ำ: ' + uniq(dup).join(', '));
+      const data = {
+        type: type || 'CAPEX', code: g.code, name: get(r0, 'name'), company, fiscalYear: fy, group: get(r0, 'group'), department: dept,
+        ownerId: owner ? owner.id : '', structure: 'items', note: get(r0, 'note'), items,
+        meeting: { date: '', no: get(r0, 'ref'), note: '', by: '' }
+      };
+      return { data, errors: uniq(errors), lines: g.rows.length };
+    });
+    // รหัสโครงการซ้ำในไฟล์เดียวกันแต่คนละประเภท/ชื่อ ถือว่าเป็นงบเดียวกัน (ใช้ข้อมูลแถวแรก)
+    return { budgets };
+  }
+
+  function importTemplate() {
+    const y = new Date().getFullYear() + 1;
+    const ownerA = (USERS.filter(canRequestUser)[0] || {}).name || '';
+    const ownerB = (USERS.filter(canRequestUser)[1] || {}).name || ownerA;
+    const co = (db.master.companies[0] || {}).code || '';
+    const dept = (db.master.departments[0] || {}).name || '';
+    const rows = [
+      ['CAPEX', co, y, '01', 'CP-' + y + '-01', 'ตัวอย่าง: เครื่องจักรสายการผลิตใหม่', dept, ownerA, 'CP-' + y + '-01-01', 'เครื่องจักรหลัก', 1500000, '', assetTypeList()[0] || '', '2.4', '', '', '', ''],
+      ['CAPEX', co, y, '01', 'CP-' + y + '-01', 'ตัวอย่าง: เครื่องจักรสายการผลิตใหม่', dept, ownerA, 'CP-' + y + '-01-02', 'งานติดตั้ง', 300000, '', assetTypeList()[0] || '', '2.5', '', '', '', ''],
+      ['OPEX', co, y, '03', 'OP-' + y + '-01', 'ตัวอย่าง: ค่าใช้จ่ายดำเนินงานประจำปี', dept, ownerB, '1', 'ต้นทุนวัตถุดิบ', 200000, 'Y', '', '', '', '', '', ''],
+      ['OPEX', co, y, '03', 'OP-' + y + '-01', 'ตัวอย่าง: ค่าใช้จ่ายดำเนินงานประจำปี', dept, ownerB, '2', 'ต้นทุนค่าแรง', 120000, 'N', '', '', '', '', '', '']
+    ];
+    const guide = [
+      ['1 แถว = 1 Item · แถวที่ "รหัสโครงการ" เดียวกันรวมเป็นงบเดียวกัน (ข้อมูลระดับงบใช้จากแถวแรกของโครงการ)'],
+      ['ประเภทงบ: CAPEX หรือ OPEX · บริษัท: รหัสบริษัทตามข้อมูลหลัก (' + db.master.companies.map((c) => c.code).join(', ') + ')'],
+      ['Business เจ้าของงบ: ชื่อ หรือรหัสผู้ใช้ (' + USERS.filter(canRequestUser).map((u) => u.name).join(', ') + ')'],
+      ['หน่วยงาน: ตามข้อมูลหลัก (' + db.master.departments.map((d) => d.name).join(', ') + ')'],
+      ['CAPEX: วงเงินรวม VAT · ประเภทสินทรัพย์ / หมวด DOA (2.4 สินทรัพย์ลงทุน / 2.5 ดำเนินงานทั่วไป)'],
+      ['OPEX: ใส่เฉพาะ Item หลัก (รหัส 1, 2, 3 …) วงเงินก่อน VAT · VAT 7% ใส่ Y ถ้ามี · GL Code ใส่ทีหลังได้ · Item ย่อยให้ Business เพิ่มหลังเปิดใช้งบ'],
+      ['หลัง Import งบจะอยู่สถานะ "รอ Business เปิดใช้งบ" — CAPEX ต้องทำ Memo ให้ผู้บริหารเซ็นและผู้คุมงบยืนยัน · OPEX Business กดเปิดใช้งบได้เลย'],
+      ['บันทึกเป็น .xlsx หรือ .csv (UTF-8) ก็ได้']
+    ];
+    return buildXlsx([
+      { name: 'งบประจำปี', cols: IMPORT_COLS.map((c) => ({ h: c.h, w: c.w, num: c.num })), rows },
+      { name: 'คำอธิบาย', cols: [{ h: 'วิธีกรอก', w: 120 }], rows: guide }
+    ]);
+  }
+
+  function viewImport() {
+    if (!can('budget.manage')) return '<div class="alert error">Import งบได้เฉพาะผู้คุมงบ</div>';
+    let html = '<div class="page-head"><div><h1>Import งบประจำปีจาก Excel</h1><div class="page-sub">ลงงบหลายงบพร้อมกัน — งบที่ Import จะรอ Business เจ้าของงบเปิดใช้งบครั้งแรก (CAPEX ทำ Memo ให้ผู้บริหารเซ็น · OPEX กดเปิดใช้)</div></div></div>' +
+      takeFlash() +
+      '<section class="card form-section"><ol class="import-steps"><li>ดาวน์โหลดไฟล์ตัวอย่าง แล้วกรอก 1 แถวต่อ 1 Item (รหัสโครงการเดียวกัน = งบเดียวกัน)</li>' +
+      '<li>เลือกไฟล์ .xlsx หรือ .csv ระบบจะแสดงตัวอย่างและตรวจข้อมูลก่อน</li><li>กด "นำเข้า" — งบที่มีข้อผิดพลาดจะไม่ถูกนำเข้า</li></ol>' +
+      '<div class="actions"><button type="button" class="btn" id="importTemplate">ดาวน์โหลดไฟล์ตัวอย่าง (.xlsx)</button>' +
+      '<label class="btn primary file-btn">เลือกไฟล์ Excel / CSV<input type="file" id="importFile" accept=".xlsx,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv" hidden></label>' +
+      '<a class="btn" href="#/budgets">กลับ</a></div></section>';
+    const pv = importPreview;
+    if (!pv) return html;
+    if (pv.error) return html + '<div class="alert error">' + esc(pv.file) + ': ' + esc(pv.error) + '</div>';
+    const okList = pv.budgets.filter((x) => !x.errors.length);
+    html += '<h2>ตรวจข้อมูลจาก ' + esc(pv.file) + ' <span class="muted count-note">(' + pv.budgets.length + ' งบ · พร้อมนำเข้า ' + okList.length + ')</span></h2>' +
+      '<div class="table-wrap"><table class="import-table"><thead><tr><th>งบ</th><th>บริษัท / ปี</th><th>Business</th><th class="num">Item</th><th class="num">วงเงิน (รวม VAT)</th><th>ผลตรวจ</th></tr></thead><tbody>' +
+      pv.budgets.map((x) => {
+        const d = x.data;
+        return '<tr class="' + (x.errors.length ? 'row-bad' : '') + '"><td>' + badge(d.type, TYPE_SHORT[d.type]) + ' <strong>' + esc(d.code || '-') + '</strong><div class="muted">' + esc(d.name) + '</div></td>' +
+          '<td class="nowrap">' + esc(d.company) + ' · ' + esc(d.fiscalYear) + '<div class="muted">' + esc(d.department) + '</div></td>' +
+          '<td class="nowrap">' + esc(d.ownerId ? userName(d.ownerId) : '-') + '</td><td class="num">' + d.items.length + '</td>' +
+          '<td class="num">' + money(budgetTotal(d)) + '</td>' +
+          '<td>' + (x.errors.length ? '<ul class="err-list">' + x.errors.map((e) => '<li>' + esc(e) + '</li>').join('') + '</ul>' : '<span class="badge approved">พร้อมนำเข้า</span>') + '</td></tr>';
+      }).join('') + '</tbody></table></div>' +
+      '<div class="actions"><button type="button" class="btn primary" id="importGo"' + (okList.length ? '' : ' disabled') + '>นำเข้า ' + okList.length + ' งบ (รอ Business เปิดใช้)</button>' +
+      '<button type="button" class="btn" id="importClear">ล้าง</button>' +
+      (okList.length < pv.budgets.length ? '<span class="guard-hint">งบที่มีข้อผิดพลาด ' + (pv.budgets.length - okList.length) + ' งบจะไม่ถูกนำเข้า — แก้ในไฟล์แล้วเลือกไฟล์ใหม่</span>' : '') + '</div>';
+    return html;
+  }
+
+  function bindImport() {
+    const tpl = document.getElementById('importTemplate');
+    if (!tpl) return;
+    tpl.addEventListener('click', () => {
+      const blob = new Blob([importTemplate()], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'budget-import-template.xlsx';
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+    });
+    document.getElementById('importFile').addEventListener('change', async (e) => {
+      const f = e.target.files[0];
+      if (!f) return;
+      try {
+        const rows = /\.csv$/i.test(f.name) ? parseCsv(await f.text()) : await readXlsxRows(await f.arrayBuffer());
+        const res = importBudgets(rows);
+        importPreview = Object.assign({ file: f.name }, res.error ? { error: res.error } : res);
+        if (!res.error && !res.budgets.length) importPreview.error = 'ไม่พบข้อมูลในไฟล์';
+      } catch (err) {
+        importPreview = { file: f.name, error: err.message || 'อ่านไฟล์ไม่ได้' };
+      }
+      render();
+    });
+    const clear = document.getElementById('importClear');
+    if (clear) clear.addEventListener('click', () => { importPreview = null; render(); });
+    const goBtn = document.getElementById('importGo');
+    if (goBtn) goBtn.addEventListener('click', () => {
+      const ok = importPreview.budgets.filter((x) => !x.errors.length && !db.budgets.some((b) => b.code === x.data.code && b.state !== 'cancelled'));
+      if (!ok.length || !confirm('นำเข้า ' + ok.length + ' งบ ?')) return;
+      const at = new Date().toISOString();
+      ok.forEach((x) => {
+        const items = x.data.items.map((it) => { const c = Object.assign({}, it, { id: nextId('i') }); delete c.line; return c; });
+        const b = Object.assign({ id: nextId('b'), createdAt: at, createdBy: me().id, attachments: [], history: [], revisions: [] }, x.data,
+          { items, state: 'pending_open', setup: true });
+        addHistory(b, 'ผู้คุมงบลงงบประจำปี (Import Excel) — รอ Business เปิดใช้งบ', importPreview.file, 'งบ ' + b.code);
+        db.budgets.push(b);
+      });
+      logAction('Import งบจาก Excel', '', importPreview.file + ' · ' + ok.length + ' งบ');
+      save();
+      importPreview = null;
+      setFlash('success', 'นำเข้า ' + ok.length + ' งบแล้ว — รอ Business เจ้าของงบเปิดใช้งบ');
+      go('#/budgets');
+    });
   }
 
   // ---------------------------------------------------------------- Item ย่อยของ OPEX (เพิ่มทีหลังได้เมื่องบเปิดใช้แล้ว)
@@ -3612,7 +4175,9 @@
   function bindMemoDoc() {
     const form = document.getElementById('memoDocForm');
     if (!form) return;
-    const r = requestById(form.dataset.id);
+    const isBudget = form.dataset.kind === 'budget';
+    const r = isBudget ? null : requestById(form.dataset.id);
+    const ob = isBudget ? budgetById(form.dataset.id) : null;
     let goView = true;
     form.querySelectorAll('[data-mf-go]').forEach((btn) => btn.addEventListener('click', () => { goView = btn.dataset.mfGo === 'view'; }));
     // ช่องข้อความยืดตามเนื้อหา
@@ -3633,7 +4198,7 @@
     const reset = document.getElementById('memoDocReset');
     if (reset) reset.addEventListener('click', () => {
       if (!confirm('ล้างข้อความที่กรอกไว้ แล้วใช้ค่าเริ่มต้นจากคำขอและข้อมูลหลัก?')) return;
-      delete r.memoDoc;
+      if (isBudget) delete ob.openMemo.doc; else delete r.memoDoc;
       save();
       render();
     });
@@ -3647,8 +4212,19 @@
       e.preventDefault();
       const val = (k) => (form.elements['md_' + k] ? form.elements['md_' + k].value.trim() : '');
       const list = (k) => Array.from(form.querySelectorAll('[name="md_' + k + '"]')).map((x) => x.value.trim()).filter(Boolean);
-      r.memoDoc = {};
-      MEMO_DOC_KEYS.forEach((k) => { r.memoDoc[k] = k === 'reviewers' || k === 'approvers' ? list(k) : val(k); });
+      const doc = {};
+      MEMO_DOC_KEYS.forEach((k) => { doc[k] = k === 'reviewers' || k === 'approvers' ? list(k) : val(k); });
+      if (isBudget) {
+        const first = !ob.openMemo;
+        if (first) ob.openMemo = { no: nextNo(DOC_PREFIX.memo), files: [], createdAt: new Date().toISOString() };
+        ob.openMemo.doc = doc;
+        addHistory(ob, (first ? 'ทำ' : 'แก้ไข') + ' Memo ขอเปิดใช้งบ', '', ob.openMemo.no);
+        save();
+        setFlash('success', 'บันทึก Memo ' + ob.openMemo.no + ' แล้ว' + (goView ? ' — พิมพ์ให้ผู้บริหารเซ็น แล้วแนบไฟล์ที่เซ็นแล้วในหน้างบ' : ''));
+        if (goView) go('#/budget/' + ob.id + '/memo?view=1'); else render();
+        return;
+      }
+      r.memoDoc = doc;
       addEvent(r, 'กรอก / แก้ไข Memo ' + ((r.memo || {}).no || ''), '');
       save();
       setFlash('success', 'บันทึก Memo แล้ว' + (goView ? ' — พิมพ์ให้ผู้บริหารเซ็น แล้วแนบไฟล์ที่เซ็นแล้วในหน้าคำขอ' : ''));
@@ -3915,7 +4491,7 @@
     const task = (label, n, href, note) => '<li><a href="' + href + '"><span>' + label + (note ? '<small>' + note + '</small>' : '') + '</span><b class="' + (n ? 'has' : '') + '">' + n + '</b></a></li>';
     const tasks = [];
     if (can('budget.verify')) {
-      tasks.push(task('งบที่รอยืนยันเปิดใช้', db.budgets.filter((b) => b.state === 'review').length, '#/tasks?tab=budgets'),
+      tasks.push(task('งบที่รอยืนยันเปิดใช้ / ตรวจ Memo', db.budgets.filter((b) => b.state === 'review' || b.state === 'open_review').length, '#/tasks?tab=budgets'),
         task('คำขอเพิ่มงบรอตรวจสอบ', (db.changes || []).filter((c) => c.state === 'review').length, '#/tasks?tab=changes'));
     }
     if (can('request.decide')) tasks.push(task('คำขอดำเนินการใช้งบรอตรวจสอบ', inbox(u).length, '#/tasks?tab=requests'));
@@ -3926,13 +4502,14 @@
     }
     if (can('budget.create')) {
       const mineB = db.budgets.filter((b) => b.ownerId === u.id);
-      tasks.push(task('งบร่าง', mineB.filter((b) => b.state === 'draft').length, '#/tasks?tab=drafts'),
-        task('งบรอผู้คุมงบยืนยัน', mineB.filter((b) => b.state === 'review').length, '#/tasks?tab=waiting'));
+      tasks.push(task('งบรอเปิดใช้', mineB.filter((b) => b.state === 'pending_open').length, '#/tasks?tab=toopen', 'CAPEX ทำ Memo ให้ผู้บริหารเซ็น · OPEX กดเปิดใช้'),
+        task('งบร่าง', mineB.filter((b) => b.state === 'draft').length, '#/tasks?tab=drafts'),
+        task('งบรอผู้คุมงบยืนยัน', mineB.filter((b) => b.state === 'review' || b.state === 'open_review').length, '#/tasks?tab=waiting'));
     }
     if (can('request.create')) {
       tasks.push(task('รอแนบ Memo ที่ผู้บริหารเซ็น', mineReq.filter((r) => r.status === 'memo').length, '#/tasks?tab=memo'));
       tasks.push(task('คำขอของฉันที่รอผู้คุมงบตรวจสอบ', mineReq.filter((r) => r.status === 'pending').length, '#/tasks?tab=waiting'),
-        task('ส่งกลับแก้ไข', mineReq.filter((r) => r.status === 'rejected').length + db.budgets.filter((b) => b.ownerId === u.id && b.state === 'returned').length, '#/tasks?tab=fix'),
+        task('ส่งกลับแก้ไข', mineReq.filter((r) => r.status === 'rejected').length + db.budgets.filter((b) => b.ownerId === u.id && (b.state === 'returned' || b.state === 'open_returned')).length, '#/tasks?tab=fix'),
         task('ออกใบดำเนินการใช้งบแล้ว รอปิดยอด', mineReq.filter((r) => r.status === 'approved').length, '#/tasks?tab=open'));
     }
     if (REMOTE && can('user.manage')) tasks.push(task('ผู้ใช้ที่รอกำหนดบทบาท', Number(adminCounts.pending || 0), '#/admin'));
@@ -4596,9 +5173,11 @@
 
   function budgetQueueTable(list) {
     if (!list.length) return '<div class="card empty">ไม่มีรายการ</div>';
-    return '<div class="table-wrap"><table><thead><tr><th>งบ</th><th>Business</th><th>มติ / เอกสารอนุมัติ</th><th class="num">วงเงิน</th><th>ส่งเมื่อ</th></tr></thead><tbody>' +
+    return '<div class="table-wrap"><table><thead><tr><th>งบ</th><th>Business</th><th>มติ / เอกสารอนุมัติ / Memo</th><th class="num">วงเงิน</th><th>ส่งเมื่อ</th></tr></thead><tbody>' +
       list.map((b) => '<tr><td>' + badge(b.type, TYPE_SHORT[b.type]) + ' <a href="#/budget/' + b.id + '">' + esc(b.code) + '</a><div class="muted">' + esc(b.name) + '</div></td>' +
-        '<td class="nowrap">' + esc(userName(b.ownerId)) + '</td><td>' + esc((b.meeting && b.meeting.no) || '-') + '<div class="muted">' + (b.attachments || []).length + ' ไฟล์</div></td>' +
+        '<td class="nowrap">' + esc(userName(b.ownerId)) + '</td><td>' + (b.openMemo
+          ? 'Memo ' + esc(b.openMemo.no) + '<div class="muted">' + (b.openMemo.files || []).length + ' ไฟล์' + (b.openMemo.signers ? ' · ' + esc(b.openMemo.signers) : '') + '</div>'
+          : esc((b.meeting && b.meeting.no) || '-') + '<div class="muted">' + (b.attachments || []).length + ' ไฟล์</div>') + '</td>' +
         '<td class="num">' + money(budgetTotal(b)) + '</td><td class="nowrap">' + fmtDay(b.submittedAt || (b.history.slice(-1)[0] || {}).at) + '</td></tr>').join('') + '</tbody></table></div>';
   }
   function changeQueueTable(list) {
@@ -4633,7 +5212,7 @@
       list.map((b) => {
         const last = b.history.slice(-1)[0] || {};
         return '<tr><td>' + badge(b.type, TYPE_SHORT[b.type]) + ' <a href="#/budget/' + b.id + '">' + esc(b.code) + '</a><div class="muted">' + esc(b.name) + '</div></td>' +
-          '<td>' + badge(BUDGET_STATE_BADGE[b.state], BUDGET_STATE[b.state]) + (b.state === 'returned' && b.returnReason ? '<div class="muted">' + esc(b.returnReason) + '</div>' : '') + '</td>' +
+          '<td>' + badge(BUDGET_STATE_BADGE[b.state], BUDGET_STATE[b.state]) + ((b.state === 'returned' || b.state === 'open_returned') && b.returnReason ? '<div class="muted">' + esc(b.returnReason) + '</div>' : '') + '</td>' +
           '<td class="num">' + money(budgetTotal(b)) + '</td><td class="nowrap">' + fmtDay(last.at) + '<div class="muted">' + esc(last.action || '') + '</div></td></tr>';
       }).join('') + '</tbody></table></div>';
   }
@@ -4649,8 +5228,13 @@
     const sec = (title, list, table) => ({ title, list, table });
 
     if (has('budget.verify')) {
-      add('budgets', 'งบรอเปิดใช้', true, 'ตรวจมติที่ประชุม (CAPEX) / เอกสารอนุมัติผู้บริหาร (OPEX) ว่าตรงกับวงเงินและรายการ แล้วยืนยันเปิดใช้ หรือส่งกลับให้ Business แก้ไข',
-        [sec('', db.budgets.filter((b) => b.state === 'review'), budgetQueueTable)]);
+      add('budgets', 'งบรอยืนยันเปิดใช้', true, 'Memo เปิดใช้งบ CAPEX ที่ผู้บริหารเซ็นแล้ว และคำขอตั้งงบใหม่ของ Business (มติ / เอกสารอนุมัติผู้บริหาร) — ตรวจแล้วยืนยันเปิดใช้ หรือส่งกลับให้ Business แก้ไข',
+        [sec('Memo เปิดใช้งบ (งบประจำปี)', db.budgets.filter((b) => b.state === 'open_review'), budgetQueueTable),
+          sec('คำขอตั้งงบใหม่ของ Business', db.budgets.filter((b) => b.state === 'review'), budgetQueueTable)]);
+      if (has('budget.manage')) {
+        add('setup', 'งบที่ลงไว้ รอ Business เปิดใช้', false, 'งบประจำปีที่ผู้คุมงบลงไว้ (สร้าง / Import Excel) ที่ Business ยังไม่ได้เปิดใช้ — แก้ไข / ยกเลิกได้จนกว่า Business ส่ง Memo หรือเปิดใช้',
+          [sec('', db.budgets.filter((b) => b.setup && waitingOpen(b)), myBudgetTable)]);
+      }
       add('changes', 'คำขอเพิ่มงบ', true, 'ตรวจมติ / เอกสารอนุมัติผู้บริหารแล้วยืนยันเพิ่มงบ หรือส่งกลับ',
         [sec('', (db.changes || []).filter((c) => c.state === 'review'), changeQueueTable)]);
     }
@@ -4672,8 +5256,10 @@
       const mineB = db.budgets.filter((b) => b.ownerId === u.id);
       const mineR = db.requests.filter((r) => r.requesterId === u.id);
       const mineC = (db.changes || []).filter((c) => c.createdBy === u.id);
+      add('toopen', 'งบรอเปิดใช้', true, 'งบประจำปีที่ผู้คุมงบลงไว้ให้คุณ — CAPEX: ทำ Memo ขอเปิดใช้งบ ให้ผู้บริหารเซ็น แนบแล้วส่งให้ผู้คุมงบยืนยัน · OPEX: กด "เปิดใช้งบ" ได้เลย',
+        [sec('', mineB.filter((b) => b.state === 'pending_open'), myBudgetTable)]);
       add('fix', 'ส่งกลับแก้ไข', true, 'ผู้คุมงบส่งกลับพร้อมเหตุผล — แก้ไขแล้วส่งใหม่ หรือยกเลิก', [
-        sec('งบ', mineB.filter((b) => b.state === 'returned'), myBudgetTable),
+        sec('งบ', mineB.filter((b) => b.state === 'returned' || b.state === 'open_returned'), myBudgetTable),
         sec('คำขอดำเนินการใช้งบ', mineR.filter((r) => r.status === 'rejected'), (l) => requestTable(l, true)),
         sec('คำขอเพิ่มงบ', mineC.filter((c) => c.state === 'returned'), changeQueueTable)]);
       add('memo', 'รอแนบ Memo', true, 'พิมพ์ Memo ให้ผู้บริหารเซ็น แล้วแนบไฟล์ที่เซ็นแล้วในหน้าคำขอ เพื่อส่งให้ผู้คุมงบตรวจสอบ',
@@ -4682,7 +5268,7 @@
         sec('งบ', mineB.filter((b) => b.state === 'draft'), myBudgetTable),
         sec('คำขอเพิ่มงบ', mineC.filter((c) => c.state === 'draft'), changeQueueTable)]);
       add('waiting', 'รอผู้คุมงบ', false, 'ส่งแล้ว รอผู้คุมงบตรวจสอบ', [
-        sec('งบ', mineB.filter((b) => b.state === 'review'), myBudgetTable),
+        sec('งบ', mineB.filter((b) => b.state === 'review' || b.state === 'open_review'), myBudgetTable),
         sec('คำขอดำเนินการใช้งบ', mineR.filter((r) => r.status === 'pending'), (l) => requestTable(l, true)),
         sec('คำขอเพิ่มงบ', mineC.filter((c) => c.state === 'review'), changeQueueTable)]);
       add('open', 'รอปิดยอด', false, 'ออกใบดำเนินการใช้งบแล้ว รอออก PO / จ่ายเงิน / เคลียร์ และปิดยอด',
@@ -4800,7 +5386,10 @@
     const rows = [
       ['ระบบ', 'Admin ทำอะไรได้', 'ดูแลข้อมูลหลัก ดู Log ทั้งระบบ และจัดการผู้ใช้/สิทธิ์ · ดูงบได้ทั้งหมดแต่ไม่ทำรายการ'],
       ['ระบบ', 'ผู้ใช้ทั่วไปเห็นประวัติแค่ไหน', 'เห็น "ประวัติการทำรายการ" ที่ตนทำ และที่ผู้อื่นทำกับงบ/เอกสารของตน (ไม่เห็น Log ทั้งระบบ)'],
-      ['ตั้งงบ', 'ใครกำหนดรหัสโครงการ/รหัสรายการย่อย', 'Business กรอกเองตอนร่าง'],
+      ['ตั้งงบ', 'Journey งบประจำปี', 'ผู้คุมงบลงงบของแต่ละปี (กดสร้าง หรือ Import Excel) → งบรอ Business เจ้าของงบเปิดใช้ครั้งแรก · เปิดทั้งงบทีเดียว · CAPEX: Business ทำ Memo ขอเปิดใช้งบ ให้ผู้บริหารเซ็น แนบแล้วส่ง → ผู้คุมงบตรวจ Memo แล้วยืนยัน (หรือส่งกลับให้แก้) · OPEX: Business กด "เปิดใช้งบ" ได้เลย ไม่ต้องมี Memo และไม่ต้องให้ผู้คุมงบยืนยัน · ผู้คุมงบแก้ / ยกเลิกงบที่ลงไว้ได้จนกว่า Business ส่ง Memo หรือเปิดใช้'],
+      ['ตั้งงบ', 'Import งบจาก Excel', 'ไฟล์ .xlsx หรือ .csv ตามไฟล์ตัวอย่าง: 1 แถว = 1 Item · รหัสโครงการเดียวกัน = งบเดียวกัน · Business เจ้าของงบใส่ชื่อหรือรหัสผู้ใช้ · ตรวจข้อมูลก่อนนำเข้า (บริษัท / หน่วยงานตามข้อมูลหลัก, รหัสซ้ำ, วงเงิน > 0) งบที่ผิดไม่ถูกนำเข้า · OPEX ใส่เฉพาะ Item หลัก (Item ย่อยเพิ่มหลังเปิดใช้)'],
+      ['ตั้งงบ', 'Business ยังขอตั้งงบใหม่เองได้ไหม', 'ได้ (ทางเดิม): ร่าง → พิมพ์แบบฟอร์มเข้าที่ประชุม / เสนอผู้บริหาร → แนบมติ / เอกสารอนุมัติ → ผู้คุมงบยืนยันเปิดใช้ — ทางนี้ไม่ต้องทำ Memo เปิดใช้งบอีก เพราะผู้คุมงบตรวจหลักฐานการอนุมัติแล้ว'],
+      ['ตั้งงบ', 'ใครกำหนดรหัสโครงการ/รหัสรายการย่อย', 'ผู้คุมงบกรอกตอนลงงบ / Import · Business กรอกเองเมื่อขอตั้งงบใหม่'],
       ['ตั้งงบ', 'แบบฟอร์มขออนุมัติงบเข้าที่ประชุม', 'ใช้แบบฟอร์มชั่วคราว (รอแบบฟอร์มจริง)'],
       ['ตั้งงบ', 'หลักฐานที่ต้องแนบ', 'ไฟล์มติที่ประชุมอย่างน้อย 1 ไฟล์ + เลขที่มติ'],
       ['ปรับงบ', 'ผู้คุมงบลดงบได้ไหม', 'ได้ ต้องใส่เหตุผล ลดไม่ได้เกินยอดคงเหลือ'],
@@ -4912,10 +5501,7 @@
         if (!filled(e.name)) m.push('ชื่อโครงการ');
         if (!filled(e.department)) m.push('หน่วยงาน');
         if (!filled(e.fiscalYear)) m.push('ปีงบประมาณ');
-        if (f.dataset.mode === 'import') {
-          if (!filled(e.ownerId)) m.push('Business เจ้าของงบ');
-          if (!filled(e.meetingNo)) m.push('เลขที่มติ / เอกสารอนุมัติ');
-        }
+        if (f.dataset.mode === 'setup' && !filled(e.ownerId)) m.push('Business เจ้าของงบ');
         const type = e.type.value;
         const structure = type === 'CBS' ? 'items' : (f.querySelector('[name="structure"]:checked') || {}).value;
         if (structure === 'project') {
@@ -5089,13 +5675,13 @@
   /** หน้าฟอร์ม (สร้าง/แก้ไข) ไม่ใช่ที่ที่ควรย้อนกลับมา — หลังส่งหรือยกเลิกแล้วจะถูกตัดออกจาก stack */
   function isFormHash(hash) {
     const p = navPath(hash).slice(2).split('/');
-    return (p[0] === 'budget' && (p[1] === 'new' || p[2] === 'edit' || p[2] === 'items' || p[2] === 'cashflow' || p[2] === 'gl')) || (p[0] === 'request' && (p[1] === 'new' || p[2] === 'edit')) ||
+    return (p[0] === 'budget' && (p[1] === 'new' || p[1] === 'import' || p[2] === 'edit' || p[2] === 'items' || p[2] === 'cashflow' || p[2] === 'gl')) || (p[0] === 'request' && (p[1] === 'new' || p[2] === 'edit')) ||
       (p[0] === 'change' && (p[1] === 'new' || p[2] === 'edit')) || p[0] === 'adjust';
   }
   /** หน้าที่อ้างถึงข้อมูลที่ถูกลบไปแล้วไม่ใช้เป็นปลายทางย้อนกลับ */
   function navValid(hash) {
     const p = navPath(hash).slice(2).split('/');
-    if (p[0] === 'budget' && p[1] !== 'new') return !!budgetById(p[1]);
+    if (p[0] === 'budget' && p[1] !== 'new' && p[1] !== 'import') return !!budgetById(p[1]);
     if (p[0] === 'request' && p[1] !== 'new') return !!requestById(p[1]);
     if (p[0] === 'doc') return !!requestById(p[1]);
     if (p[0] === 'change' && p[1] !== 'new') return !!changeById(p[1]);
@@ -5156,8 +5742,8 @@
   /** ปลายทางของปุ่มย้อนกลับ ตามชนิดหน้า (null = หน้ารายการ ไม่ต้องมีปุ่ม) */
   function backTarget(parts) {
     const budgetList = lastBudgetList || (canViewAll() ? '#/budgets' : '#/my-budgets');
-    if (parts[0] === 'budget' && parts[1] === 'new') return budgetList;
-    if (parts[0] === 'budget' && (parts[2] === 'edit' || parts[2] === 'form' || parts[2] === 'items' || parts[2] === 'cashflow' || parts[2] === 'gl')) return '#/budget/' + parts[1];
+    if (parts[0] === 'budget' && (parts[1] === 'new' || parts[1] === 'import')) return budgetList;
+    if (parts[0] === 'budget' && (parts[2] === 'edit' || parts[2] === 'form' || parts[2] === 'items' || parts[2] === 'cashflow' || parts[2] === 'gl' || parts[2] === 'memo')) return '#/budget/' + parts[1];
     if (parts[0] === 'budget') return budgetList;
     if (parts[0] === 'request' && parts[1] === 'new') return '#/budget/' + parts[2];
     if (parts[0] === 'request' && (parts[2] === 'edit' || parts[2] === 'memo')) return '#/request/' + parts[1];
@@ -5189,6 +5775,8 @@
     else if (parts[0] === 'admin') html = viewAdmin(params);
     else if (parts[0] === 'budgets' || parts[0] === 'my-budgets') html = viewBudgets(params, parts[0] === 'my-budgets');
     else if (parts[0] === 'budget' && parts[1] === 'new') html = viewBudgetForm(null);
+    else if (parts[0] === 'budget' && parts[1] === 'import') html = viewImport();
+    else if (parts[0] === 'budget' && parts[2] === 'memo') html = viewOpenMemo(parts[1], params);
     else if (parts[0] === 'budget' && parts[2] === 'edit') html = viewBudgetForm(parts[1]);
     else if (parts[0] === 'budget' && parts[2] === 'form') html = viewBudgetRequestForm(parts[1]);
     else if (parts[0] === 'budget' && parts[2] === 'items') html = viewSubItems(parts[1]);
@@ -5221,7 +5809,7 @@
       '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M15 18l-6-6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>' +
       esc(backLabel(back)) + '</a></div>' + html;
     if (parts[0] === 'budgets' || parts[0] === 'my-budgets') lastBudgetList = here;
-    if (LIST_PAGES.includes(parts[0]) || (parts[0] === 'budget' && parts.length === 2 && parts[1] !== 'new')) lastRequestParent = here;
+    if (LIST_PAGES.includes(parts[0]) || (parts[0] === 'budget' && parts.length === 2 && parts[1] !== 'new' && parts[1] !== 'import')) lastRequestParent = here;
 
     renderNav('#' + path);
     app.innerHTML = html;
@@ -5234,6 +5822,7 @@
     bindMemoDoc();
     bindCashflow();
     bindGl();
+    bindImport();
     bindExport();
     bindChangeDetail();
     bindAdjust();
