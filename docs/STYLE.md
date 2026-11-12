@@ -50,13 +50,14 @@
 
 | Component | Class |
 |---|---|
-| หัวหน้า | `.page-head` > `h1` (22px/700 Kanit), ป้าย / ตัวเลือกวางขวาแถวเดียวกัน |
+| หัวหน้า | `.page-head` > `h1` (22px/700 Kanit), ปุ่มหลัก / ตัวเลือกวางขวาแถวเดียวกัน (`.head-actions`) |
 | Dropdown | `select` (+ `.select-wrap` / `.input-wrap`) — Sarabun 13px สูง ~37px มุม 8px ขอบ `--line` ลูกศร SVG |
 | แท็บ | `.tabs` > `a` (13.5px/600, เส้นใต้ `--brand` เมื่อเลือก) |
 | สวิตช์พิลล์ | `.seg` > `a.active` (พื้น `--brand` ตัวขาว) |
 | ปุ่ม | `.btn` (13px/600 มุม 6px), `.btn.primary` (พื้น `--brand`), `.btn.bad`, `.btn.small`; disabled เป็นเทา |
 | การ์ด / แผง | `.card`, `.table-wrap` (มุม 14px ขอบ `--line` เงา `--shadow`) |
-| การ์ดตัวเลข | `.kpis` > `.kpi` (`.kpi-label` / `.kpi-value` / `.kpi-sub`) มุม 12px |
+| การ์ดตัวเลข | `.stat-tiles` > `.stat-tile` (`.stat-label` / `.stat-value` Kanit 28px / `.stat-sub` / `.stat-tile-link` ปุ่มพิลล์ลิงก์) มุม 12px เงา — (หน้ารายงานยังใช้ `.kpis` > `.kpi` แบบเดิม) |
+| แผงตาราง | `.rr-panel` > `.rr-panel-head` (`.rr-panel-title` Kanit 16.5px + `.rr-count` พิลล์จำนวนรายการ + `.rr-panel-filters` ตัวกรองชิดขวา) · `.rr-filter-row` (ค้นหา + dropdown 3 ช่อง) · `.rr-table-scroll` > `.rr-data-table` (หัวตารางพื้น `--surface-2`, หัวคอลัมน์เรียงได้ใช้ `.th-sort` + `.sort-ind` ↕ / ▲ / ▼) · `.rr-panel-foot` (แบ่งหน้า) |
 | ตาราง | `table` 13px, `th` พื้น `--surface-2`, ตัวเลข `td.num` (tabular-nums) |
 | ป้ายสถานะ | `.badge.approved` (ok) `.pending` (wip) `.rejected` / `.cancelled` (fail) `.draft` / `.closed` (none); ป้ายประเภท `.badge.CAPEX` / `.badge.CBS` เป็นแท็กเส้นขอบสีประจำสาย |
 | แบนเนอร์เตือน | `.alert.info` / `.success` / `.error` / `.warn` (warn ใช้ `--decision`) |

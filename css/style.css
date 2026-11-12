@@ -1038,3 +1038,58 @@ button.link { color: var(--brand); }
 @media (max-width: 600px) {
   .brand { font-size: 18px; }
 }
+
+/* ---- การ์ดตัวเลข (stat tile) และแผงตาราง (rr-panel) — component กลางตามคู่มือ */
+.stat-tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 18px; margin-bottom: var(--s-5); }
+.stat-tile { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; min-width: 0; padding: 20px 24px; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); }
+.stat-label { font-size: 14px; color: var(--ink); }
+.stat-value { font-family: var(--font-head); font-size: var(--fs-xl); font-weight: 700; line-height: 1.25; font-variant-numeric: tabular-nums; color: var(--ink); max-width: 100%; overflow-wrap: anywhere; }
+.stat-value small { font-family: var(--font-body); font-size: 13px; font-weight: 500; color: var(--ink-soft); margin-left: 2px; }
+.stat-value.is-bad, .stat-value.is-bad small { color: var(--bad); }
+.stat-sub { font-size: var(--fs-sm); line-height: 1.5; color: var(--ink-soft); }
+.stat-tile-link {
+  margin-top: 6px; padding: 4px 12px; border: 0; border-radius: 999px; background: var(--surface-2); color: var(--ink-soft);
+  font: inherit; font-size: var(--fs-sm); font-weight: 600; text-decoration: none; cursor: pointer;
+}
+.stat-tile-link:hover { background: var(--brand-soft); color: var(--brand); }
+.stat-tile-link:empty { display: none; }
+
+.rr-panel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); overflow: hidden; margin-bottom: var(--s-5); }
+.rr-panel-head { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: var(--s-4); padding: 20px 28px 16px; }
+.rr-panel-title-row { display: flex; align-items: center; gap: var(--s-3); min-width: 0; }
+.rr-panel-title { margin: 0; font-family: var(--font-head); font-size: var(--fs-md); font-weight: 600; }
+.rr-count { padding: 2px 12px; border: 1px solid var(--line); border-radius: 999px; background: var(--paper); color: var(--ink-soft); font-size: var(--fs-sm); white-space: nowrap; }
+.rr-panel-filters { display: flex; flex-wrap: wrap; gap: var(--s-3); }
+.rr-panel-filters .input-wrap { min-width: 11rem; }
+.rr-filter-row { display: grid; grid-template-columns: minmax(0, 1.3fr) repeat(3, minmax(0, 1fr)); gap: var(--s-4); padding: 0 28px 20px; }
+.rr-table-scroll { overflow-x: auto; border-top: 1px solid var(--line); }
+.rr-data-table { width: 100%; border-collapse: collapse; background: var(--surface); }
+.rr-data-table th { padding: 14px 10px; background: var(--surface-2); color: var(--ink); font-size: var(--fs-base); font-weight: 600; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.rr-data-table td { padding: 16px 10px; vertical-align: top; border-bottom: 1px solid var(--line); }
+.rr-data-table th:first-child, .rr-data-table td:first-child { padding-left: 20px; }
+.rr-data-table th:last-child, .rr-data-table td:last-child { padding-right: 20px; }
+.rr-data-table th[aria-sort="ascending"], .rr-data-table th[aria-sort="descending"] { color: var(--brand); }
+.rr-data-table .sort-ind { margin-left: 6px; font-size: 11px; color: var(--line-strong); }
+.rr-data-table .th-sort.on .sort-ind { color: var(--brand); }
+.rr-panel-foot { margin: 0; padding: 14px 28px; border-top: 1px solid var(--line); }
+.rr-panel > .empty { border-top: 1px solid var(--line); }
+@media (max-width: 1100px) {
+  .stat-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .rr-filter-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .rr-filter-row .search { grid-column: 1 / -1; }
+}
+@media (max-width: 560px) {
+  .stat-tiles { grid-template-columns: minmax(0, 1fr); gap: var(--s-3); }
+  .stat-tile { padding: 14px 18px; gap: 4px; }
+  .stat-value { font-size: 24px; }
+  .rr-panel-head, .rr-filter-row { padding-left: var(--s-4); padding-right: var(--s-4); }
+  .rr-filter-row { grid-template-columns: minmax(0, 1fr); }
+  .rr-data-table th:first-child, .rr-data-table td:first-child { padding-left: var(--s-4); }
+  .rr-data-table th:last-child, .rr-data-table td:last-child { padding-right: var(--s-4); }
+  .rr-panel-foot { padding-left: var(--s-4); padding-right: var(--s-4); }
+  .rr-panel-filters .input-wrap { min-width: 0; flex: 1 1 8rem; }
+}
+
+.budget-table td:nth-child(5) { min-width: 7.5rem; }
+
+.budget-table .b-name { max-width: 16rem; }
