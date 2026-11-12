@@ -1036,7 +1036,7 @@
   // ---------------------------------------------------------------- budget list
 
   // ตัวกรอง / การเรียง / หน้า ของรายการงบ จำค่าไว้ตอนสลับแท็บ
-  const budgetFilter = { q: '', dept: '', year: '', state: '', page: 1, sort: '', dir: 1 };
+  const budgetFilter = { q: '', dept: '', year: '', state: '', type: '', company: '', page: 1, sort: '', dir: 1 };
   const BUDGET_PAGE = 50;
 
   const ICON_SEARCH = '<svg class="lead" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path d="M20 20l-3.5-3.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
@@ -1056,44 +1056,37 @@
     const u = me();
     const mine = !!mineRoute || !canViewAll();
     const all = db.budgets.filter((b) => !mine || b.ownerId === u.id);
-    const count = (t) => (t === 'ALL' ? all.length : all.filter((b) => b.type === t).length);
-    const type = TYPE_LABEL[params.get('type')] ? params.get('type') : 'ALL';
-    const list = type === 'ALL' ? all : all.filter((b) => b.type === type);
-    const base = mine ? '#/my-budgets' : '#/budgets';
-    const tab = (t, label) => '<a href="' + base + (t === 'ALL' ? '' : '?type=' + t) + '"' + (type === t ? ' class="active" aria-current="page"' : '') + '>' +
-      label + '<span class="tab-count">(' + count(t) + ')</span></a>';
+    if (TYPE_LABEL[params.get('type')]) budgetFilter.type = params.get('type');
     const depts = uniq(all.map((b) => b.department)).sort();
     const years = uniq(all.map((b) => String(b.fiscalYear))).sort().reverse();
-    const title = 'งบประมาณ';
-    const states = Object.keys(BUDGET_STATE).filter((s) => all.some((b) => (b.state || 'active') === s));
+    const companies = uniq(all.map((b) => b.company)).sort();
+    const states = Object.keys(BUDGET_STATE).filter((s2) => all.some((b) => (b.state || 'active') === s2));
+    const selWrap = (id, label, inner) => '<label class="input-wrap select-wrap"><select id="' + id + '" aria-label="' + label + '">' + inner + '</select></label>';
 
-    let html = '<div class="page-head"><h1>' + title + '</h1>' +
-      '<span class="pill">' + esc(u.title) + '</span></div>' + takeFlash() +
-      '<nav class="tabs" aria-label="ประเภทงบ">' + tab('ALL', 'ทั้งหมด') + tab('CAPEX', 'งบลงทุน (CAPEX)') + tab('CBS', 'งบดำเนินงาน (OPEX)') + '</nav>' +
-      '<div class="filters">' +
-      '<label class="input-wrap search">' + ICON_SEARCH +
-      '<input id="fSearch" type="search" placeholder="ค้นหาชื่องบ รหัส หรือหน่วยงาน" aria-label="ค้นหา" value="' + esc(budgetFilter.q) + '"></label>' +
-      '<label class="input-wrap select-wrap"><select id="fDept" aria-label="หน่วยงาน">' + opt('', 'หน่วยงาน: ทั้งหมด', budgetFilter.dept) +
-      depts.map((d) => opt(d, 'หน่วยงาน: ' + d, budgetFilter.dept)).join('') + '</select></label>' +
-      '<label class="input-wrap"><select id="fYear" aria-label="ปีงบประมาณ">' + opt('', 'ปี: ทั้งหมด', budgetFilter.year) +
-      years.map((y) => opt(y, 'ปี: ' + y, budgetFilter.year)).join('') + '</select>' + ICON_CAL + '</label>' +
-      '<label class="input-wrap select-wrap"><select id="fState" aria-label="สถานะงบ">' + opt('', 'สถานะ: ทั้งหมด', budgetFilter.state) +
-      states.map((s) => opt(s, 'สถานะ: ' + BUDGET_STATE[s], budgetFilter.state)).join('') + '</select></label>' +
-      (can('budget.create') && mine
-        ? '<a class="btn primary tall" href="#/budget/new"><span aria-hidden="true">+</span> ขออนุมัติงบใหม่</a>'
-        : can('budget.manage') && !mine
-          ? '<span class="filter-actions"><a class="btn primary tall" href="#/budget/new"><span aria-hidden="true">+</span> ลงงบประจำปี</a>' +
-            '<a class="btn tall" href="#/budget/import">Import Excel</a></span>'
-          : '<span></span>') +
-      '</div>';
+    // ---- หัวหน้า: ชื่อหน้า + ปุ่มหลักชิดขวา
+    const actions = can('budget.create') && mine
+      ? '<a class="btn primary tall" href="#/budget/new"><span aria-hidden="true">+</span> ขออนุมัติงบใหม่</a>'
+      : can('budget.manage') && !mine
+        ? '<a class="btn primary tall" href="#/budget/new"><span aria-hidden="true">+</span> ลงงบประจำปี</a><a class="btn tall" href="#/budget/import">Import Excel</a>'
+        : '';
+    let html = '<div class="page-head"><h1>งบประมาณ</h1>' + (actions ? '<div class="head-actions">' + actions + '</div>' : '') + '</div>' + takeFlash();
 
-    if (!list.length) {
-      return html + '<div class="card empty">' +
-        (mine ? 'ยังไม่มี' + (TYPE_LABEL[type] || 'งบ') + 'ของคุณ — กด "ขออนุมัติงบใหม่" เพื่อเริ่ม' : 'ยังไม่มี' + (TYPE_LABEL[type] || 'งบประมาณ')) + '</div>';
+    if (!all.length) {
+      return html + '<div class="card empty">' + (mine ? 'ยังไม่มีงบของคุณ — กด "ขออนุมัติงบใหม่" เพื่อเริ่ม' : 'ยังไม่มีงบประมาณ') + '</div>';
     }
 
+    // ---- การ์ดตัวเลข (อัปเดตตามตัวกรองด้านล่าง)
+    const tile = (key, label, link) => '<div class="stat-tile" data-tile="' + key + '"><div class="stat-label">' + label + '</div>' +
+      '<div class="stat-value" data-v></div><div class="stat-sub" data-s></div>' + (link || '') + '</div>';
+    html += '<div class="stat-tiles">' +
+      tile('count', 'จำนวนงบทั้งหมด', '<button type="button" class="stat-tile-link" data-filter-state="notactive">ดูงบที่ยังไม่เปิดใช้งาน</button>') +
+      tile('approved', 'งบที่ได้รับอนุมัติ (เปิดใช้งานแล้ว)', '<a class="stat-tile-link" href="#/dashboard">ดูรายงาน</a>') +
+      tile('used', 'ตัดงบแล้ว + จองไว้', (canViewAll() || can('request.create')) ? '<a class="stat-tile-link" href="#/requests">ดูรายการเบิกใช้งบ</a>' : '') +
+      tile('remaining', 'งบคงเหลือ') + '</div>';
+
+    // ---- แผงตารางทะเบียนงบ
     const cols = BUDGET_COLS.map((c) => (mine && c[0] === 'dept' ? ['dept', 'หน่วยงาน'] : c));
-    const rows = list.map((b) => {
+    const rows = all.map((b) => {
       const us = usage(b);
       const search = [b.name, b.code, b.parentCode, b.department, b.company, userName(b.ownerId)]
         .concat(b.items.map((i) => i.code + ' ' + i.name)).join(' ').toLowerCase();
@@ -1107,12 +1100,13 @@
         own && (state === 'draft' || state === 'returned') ? '<a class="btn small" href="#/budget/' + b.id + '/edit">แก้ไขร่าง</a>' : '',
         state === 'review' && can('budget.verify') ? '<a class="btn small primary" href="#/budget/' + b.id + '">ตรวจสอบ</a>' : '',
         state === 'open_review' && can('budget.verify') ? '<a class="btn small primary" href="#/budget/' + b.id + '">ตรวจ Memo</a>' : '',
-        waitingOpen(b) && own && can('request.create') ? '<a class="btn small primary" href="#/budget/' + b.id + '">ขอเบิกใช้งบ</a>' : '',
+        waitingOpen(b) && own && can('request.create') ? '<a class="btn small primary" href="#/budget/' + b.id + '">ขอดำเนินการใช้งบ</a>' : '',
         active && own && can('request.create') ? '<a class="btn small primary" href="#/request/new/' + b.id + '">เบิกใช้งบ</a>' : '',
         active && can('budget.adjust') ? '<a class="btn small" href="#/adjust?budget=' + b.id + '">โยก / ลดงบ</a>' : ''
       ].join('');
       return '<tr' + (active ? '' : ' class="not-active"') + ' data-search="' + esc(search) + '" data-dept="' + esc(b.department) + '" data-year="' + esc(b.fiscalYear) + '" data-state="' + state +
-        '" data-code="' + esc(b.code) + '" data-name="' + esc(b.name) + '" data-type="' + esc(TYPE_SHORT[b.type]) + '" data-dept-sort="' + esc(b.department) + '" data-owner="' + esc(userName(b.ownerId)) +
+        '" data-company="' + esc(b.company) + '" data-type="' + esc(b.type) +
+        '" data-code="' + esc(b.code) + '" data-name="' + esc(b.name) + '" data-dept-sort="' + esc(b.department) + '" data-owner="' + esc(userName(b.ownerId)) +
         '" data-statelabel="' + esc(BUDGET_STATE[state]) + '" data-total="' + total + '" data-used="' + (active ? us.used : 0) + '" data-reserved="' + (active ? us.reserved : 0) +
         '" data-remaining="' + (active ? us.remaining : 0) + '" data-pct="' + pct + '">' +
         '<td class="nowrap"><a class="mono" href="#/budget/' + b.id + '">' + esc(b.code) + '</a><div>' + badge(b.type, TYPE_SHORT[b.type]) + '</div></td>' +
@@ -1127,13 +1121,25 @@
         '<td class="b-acts">' + acts + '</td></tr>';
     }).join('');
     const sortKey = { dept: 'dept-sort' };
-    html += '<div class="table-wrap budget-table-wrap"><table class="budget-table" id="budgetTable"><thead><tr>' +
-      cols.map(([k, label, cls]) => '<th class="' + (cls || '') + '"><button type="button" class="th-sort" data-sort="' + (sortKey[k] || k) + '">' + label + '<span class="sort-ind" aria-hidden="true"></span></button></th>').join('') +
-      '<th></th></tr></thead><tbody id="budgetBody">' + rows + '</tbody>' +
-      '<tfoot><tr><td colspan="' + (cols.findIndex(([k]) => k === 'total')) + '" id="btSumLabel">รวมงบที่เปิดใช้งาน (ตามตัวกรอง)</td>' +
-      '<td class="num" id="btTotal"></td><td class="num" id="btUsed"></td><td class="num" id="btReserved"></td><td class="num" id="btRemaining"></td><td></td></tr></tfoot></table></div>' +
-      '<div class="pager" id="budgetPager"></div>' +
-      '<div class="card empty" id="noMatch" hidden>ไม่พบงบที่ตรงกับเงื่อนไขที่เลือก</div>';
+
+    html += '<section class="rr-panel" aria-label="ตารางทะเบียนงบประมาณ">' +
+      '<div class="rr-panel-head"><div class="rr-panel-title-row"><h2 class="rr-panel-title">ตารางทะเบียนงบประมาณ</h2><span class="rr-count" id="budgetCount"></span></div>' +
+      '<div class="rr-panel-filters">' +
+      '<label class="input-wrap"><select id="fYear" aria-label="ปีงบประมาณ">' + opt('', 'ปี: ทั้งหมด', budgetFilter.year) + years.map((y) => opt(y, 'ปี: ' + y, budgetFilter.year)).join('') + '</select>' + ICON_CAL + '</label>' +
+      selWrap('fCompany', 'บริษัท', opt('', 'บริษัท: ทั้งหมด', budgetFilter.company) + companies.map((c) => opt(c, 'บริษัท: ' + c, budgetFilter.company)).join('')) +
+      '</div></div>' +
+      '<div class="rr-filter-row">' +
+      '<label class="input-wrap search">' + ICON_SEARCH + '<input id="fSearch" type="search" placeholder="ค้นหาชื่องบ รหัส หรือหน่วยงาน" aria-label="ค้นหา" value="' + esc(budgetFilter.q) + '"></label>' +
+      selWrap('fDept', 'หน่วยงาน', opt('', 'หน่วยงาน: ทั้งหมด', budgetFilter.dept) + depts.map((d) => opt(d, 'หน่วยงาน: ' + d, budgetFilter.dept)).join('')) +
+      selWrap('fType', 'ประเภทงบ', opt('', 'ประเภทงบ: ทั้งหมด', budgetFilter.type) + ['CAPEX', 'CBS'].map((t) => opt(t, 'ประเภทงบ: ' + TYPE_LABEL[t], budgetFilter.type)).join('')) +
+      selWrap('fState', 'สถานะงบ', opt('', 'สถานะ: ทั้งหมด', budgetFilter.state) + opt('notactive', 'สถานะ: ยังไม่เปิดใช้งาน (ทุกสถานะ)', budgetFilter.state) +
+        states.map((s2) => opt(s2, 'สถานะ: ' + BUDGET_STATE[s2], budgetFilter.state)).join('')) +
+      '</div>' +
+      '<div class="rr-table-scroll"><table class="rr-data-table budget-table" id="budgetTable"><thead><tr>' +
+      cols.map(([k, label, cls]) => '<th class="' + (cls || '') + '"><button type="button" class="th-sort" data-sort="' + (sortKey[k] || k) + '">' + label + '<span class="sort-ind" aria-hidden="true">↕</span></button></th>').join('') +
+      '<th></th></tr></thead><tbody id="budgetBody">' + rows + '</tbody></table></div>' +
+      '<div class="pager rr-panel-foot" id="budgetPager"></div>' +
+      '<div class="empty" id="noMatch" hidden>ไม่พบงบที่ตรงกับเงื่อนไขที่เลือก</div></section>';
     return html;
   }
 
@@ -1144,22 +1150,35 @@
     const dept = document.getElementById('fDept');
     const year = document.getElementById('fYear');
     const st = document.getElementById('fState');
+    const typ = document.getElementById('fType');
+    const comp = document.getElementById('fCompany');
     const table = document.getElementById('budgetTable');
-    const rows = body ? Array.from(body.rows) : [];
+    const rows = Array.from(body.rows);
     const NUM = ['year', 'total', 'used', 'reserved', 'remaining', 'pct'];
     const camel = (k) => k.replace(/-([a-z])/g, (m, c) => c.toUpperCase());
+    const tileEl = (key, part) => document.querySelector('[data-tile="' + key + '"] [data-' + part + ']');
+    const setTile = (key, value, sub, bad) => {
+      const v = tileEl(key, 'v');
+      v.innerHTML = value;
+      v.classList.toggle('is-bad', !!bad);
+      tileEl(key, 's').textContent = sub;
+    };
+    const baht = (n) => money(round2(n)) + ' <small>บาท</small>';
     const apply = (resetPage) => {
       budgetFilter.q = q.value;
       budgetFilter.dept = dept.value;
       budgetFilter.year = year.value;
       budgetFilter.state = st.value;
-      if (!body) return;
+      budgetFilter.type = typ.value;
+      budgetFilter.company = comp.value;
       if (resetPage) budgetFilter.page = 1;
       const term = q.value.trim().toLowerCase();
       let match = rows.filter((r) => (!term || r.dataset.search.includes(term)) &&
         (!dept.value || r.dataset.dept === dept.value) &&
         (!year.value || r.dataset.year === year.value) &&
-        (!st.value || r.dataset.state === st.value));
+        (!typ.value || r.dataset.type === typ.value) &&
+        (!comp.value || r.dataset.company === comp.value) &&
+        (!st.value || (st.value === 'notactive' ? r.dataset.state !== 'active' && r.dataset.state !== 'cancelled' : r.dataset.state === st.value)));
       if (budgetFilter.sort) {
         const k = camel(budgetFilter.sort);
         const isNum = NUM.includes(budgetFilter.sort);
@@ -1171,18 +1190,28 @@
       const from = (budgetFilter.page - 1) * BUDGET_PAGE;
       const shown = new Set(match.slice(from, from + BUDGET_PAGE));
       rows.forEach((r) => { r.hidden = !shown.has(r); });
-      // รวมของงบที่เปิดใช้งานทั้งหมดตามตัวกรอง (ทุกหน้า)
+
+      // การ์ดตัวเลข: ตามตัวกรอง (ทุกหน้า) — ยอดเงินนับเฉพาะงบที่เปิดใช้งาน
+      const act = match.filter((r) => r.dataset.state === 'active');
       const sum = { total: 0, used: 0, reserved: 0, remaining: 0 };
-      match.filter((r) => r.dataset.state === 'active').forEach((r) => Object.keys(sum).forEach((k) => { sum[k] += Number(r.dataset[k]); }));
-      Object.keys(sum).forEach((k) => { document.getElementById('bt' + k[0].toUpperCase() + k.slice(1)).textContent = money(round2(sum[k])); });
+      act.forEach((r) => Object.keys(sum).forEach((k) => { sum[k] += Number(r.dataset[k]); }));
+      const waiting = match.filter((r) => r.dataset.state !== 'active' && r.dataset.state !== 'cancelled').length;
+      setTile('count', match.length.toLocaleString('th-TH') + ' <small>งบ</small>', 'เปิดใช้งาน ' + act.length + ' · ยังไม่เปิดใช้งาน ' + waiting);
+      setTile('approved', baht(sum.total), 'รวมเฉพาะงบที่เปิดใช้งานแล้ว (' + act.length + ' งบ)');
+      setTile('used', baht(sum.used + sum.reserved), 'ตัดงบแล้ว ' + money(round2(sum.used)) + ' · จองไว้ ' + money(round2(sum.reserved)));
+      setTile('remaining', baht(sum.remaining), sum.total > 0 ? 'คงเหลือ ' + (Math.round((sum.remaining / sum.total) * 1000) / 10) + '% ของงบที่ได้รับอนุมัติ' : 'ยังไม่มีงบที่เปิดใช้งาน', sum.remaining < 0);
+
+      document.getElementById('budgetCount').textContent = match.length.toLocaleString('th-TH') + ' รายการ';
       table.querySelectorAll('.th-sort').forEach((b) => {
         const on = b.dataset.sort === budgetFilter.sort;
+        b.classList.toggle('on', on);
         b.parentElement.setAttribute('aria-sort', on ? (budgetFilter.dir > 0 ? 'ascending' : 'descending') : 'none');
-        b.querySelector('.sort-ind').textContent = on ? (budgetFilter.dir > 0 ? ' ▲' : ' ▼') : '';
+        b.querySelector('.sort-ind').textContent = on ? (budgetFilter.dir > 0 ? '▲' : '▼') : '↕';
       });
       document.getElementById('noMatch').hidden = match.length > 0;
       table.parentElement.hidden = match.length === 0;
       const pager = document.getElementById('budgetPager');
+      pager.hidden = match.length === 0;
       pager.innerHTML = match.length
         ? '<span class="muted">แสดง ' + (from + 1) + '–' + Math.min(from + BUDGET_PAGE, match.length) + ' จาก ' + match.length + ' งบ</span>' +
           (pages > 1 ? '<span class="pager-btns"><button type="button" class="btn small" data-page="' + (budgetFilter.page - 1) + '"' + (budgetFilter.page <= 1 ? ' disabled' : '') + '>‹ ก่อนหน้า</button>' +
@@ -1191,24 +1220,21 @@
         : '';
     };
     q.addEventListener('input', () => apply(true));
-    dept.addEventListener('change', () => apply(true));
-    year.addEventListener('change', () => apply(true));
-    st.addEventListener('change', () => apply(true));
-    if (table) {
-      table.addEventListener('click', (e) => {
-        const b = e.target.closest('.th-sort');
-        if (!b) return;
-        if (budgetFilter.sort === b.dataset.sort) budgetFilter.dir = -budgetFilter.dir; else { budgetFilter.sort = b.dataset.sort; budgetFilter.dir = NUM.includes(b.dataset.sort) ? -1 : 1; }
-        apply(false);
-      });
-      document.getElementById('budgetPager').addEventListener('click', (e) => {
-        const b = e.target.closest('[data-page]');
-        if (!b || b.disabled) return;
-        budgetFilter.page = Number(b.dataset.page);
-        apply(false);
-        table.scrollIntoView({ block: 'start' });
-      });
-    }
+    [dept, year, st, typ, comp].forEach((el) => el.addEventListener('change', () => apply(true)));
+    document.querySelectorAll('[data-filter-state]').forEach((b) => b.addEventListener('click', () => { st.value = b.dataset.filterState; apply(true); }));
+    table.addEventListener('click', (e) => {
+      const b = e.target.closest('.th-sort');
+      if (!b) return;
+      if (budgetFilter.sort === b.dataset.sort) budgetFilter.dir = -budgetFilter.dir; else { budgetFilter.sort = b.dataset.sort; budgetFilter.dir = NUM.includes(b.dataset.sort) ? -1 : 1; }
+      apply(false);
+    });
+    document.getElementById('budgetPager').addEventListener('click', (e) => {
+      const b = e.target.closest('[data-page]');
+      if (!b || b.disabled) return;
+      budgetFilter.page = Number(b.dataset.page);
+      apply(false);
+      table.scrollIntoView({ block: 'start' });
+    });
     apply(false);
   }
 
