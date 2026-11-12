@@ -1115,7 +1115,7 @@
         '" data-code="' + esc(b.code) + '" data-name="' + esc(b.name) + '" data-type="' + esc(TYPE_SHORT[b.type]) + '" data-dept-sort="' + esc(b.department) + '" data-owner="' + esc(userName(b.ownerId)) +
         '" data-statelabel="' + esc(BUDGET_STATE[state]) + '" data-total="' + total + '" data-used="' + (active ? us.used : 0) + '" data-reserved="' + (active ? us.reserved : 0) +
         '" data-remaining="' + (active ? us.remaining : 0) + '" data-pct="' + pct + '">' +
-        '<td class="nowrap"><a href="#/budget/' + b.id + '"><strong>' + esc(b.code) + '</strong></a><div>' + badge(b.type, TYPE_SHORT[b.type]) + '</div></td>' +
+        '<td class="nowrap"><a class="mono" href="#/budget/' + b.id + '">' + esc(b.code) + '</a><div>' + badge(b.type, TYPE_SHORT[b.type]) + '</div></td>' +
         '<td class="b-name"><a href="#/budget/' + b.id + '">' + esc(b.name) + '</a><div class="muted">' + esc(sub) + '</div></td>' +
         '<td class="nowrap">' + esc(b.company) + ' · ' + esc(b.fiscalYear) + '</td>' +
         '<td>' + esc(b.department) + (mine ? '' : '<div class="muted">' + esc(userName(b.ownerId)) + '</div>') + '</td>' +

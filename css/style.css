@@ -1,38 +1,69 @@
 /*
- * Design tokens
- * - ตัวอักษร: 6 ระดับ (12 / 13 / 14 / 16 / 24 / 28px) — เนื้อหาปกติ 14px, ป้ายและข้อมูลรอง 12–13px
- * - น้ำหนัก: 400 เนื้อหา, 500 ค่าที่ต้องอ่าน/ปุ่ม, 600 หัวข้อ, 700 เฉพาะชื่อหน้าและตัวเลขสำคัญ
+ * Design tokens — ภาษาออกแบบตาม docs/STYLE.md (ธีมสว่างอย่างเดียว)
+ * - ฟอนต์: Sarabun เนื้อความ · Kanit หัวข้อ/ตัวเลขเด่น · IBM Plex Mono รหัส
+ * - ตัวอักษร: ชื่อหน้า 22px · หัวข้อย่อย 18px · หัวแผง 16.5px · เนื้อหา/ตาราง/เมนู 13px · ป้ายเล็ก 12px
  * - ระยะห่าง: 8-point grid (4 / 8 / 12 / 16 / 24 / 32 / 48px)
+ * ห้ามใช้ hex ตรงๆ ใน component ใหม่ถ้ามี token — ต้องการสีใหม่ให้ถามผู้ใช้ก่อน
  */
 :root {
-  --bg: #f7f8fa;
-  --surface: #ffffff;
-  --surface-2: #f5f6f8;
-  --heading: #111827;
-  --text: #1f2937;
-  --text-2: #4b5563;
-  --muted: #6b7280;
-  --border: #e5e7eb;
-  --border-strong: #d1d5db;
-  --brand: #1a9bd7;
-  --primary: #2563eb;
-  --primary-hover: #1d4fd8;
-  --primary-soft: #eef3ff;
+  /* สีหลัก (ชื่อตามคู่มือ + ชื่อเดิมของไฟล์นี้ชี้ไปที่ค่าเดียวกัน) */
+  --paper: #F4F7FB;
+  --surface: #FFFFFF;
+  --surface-2: #EDF2F8;
+  --ink: #16233A;
+  --ink-soft: #5B6A80;
+  --line: #DDE4EE;
+  --line-strong: #BFCAD9;
+  --brand: #1B4F8A;
+  --brand-soft: #E8EFF7;
+  --decision: #8E6B1C;
+  --decision-soft: #F6EFDC;
+  --shadow: 0 1px 2px rgba(22, 35, 58, .06), 0 4px 14px rgba(22, 35, 58, .06);
+  /* สีประจำสาย (ใช้เป็นแท็ก) */
+  --rd: #1B4F8A;
+  --prod: #0E6E7F;
+  --main-dept: #6B4FA0;
+  /* app shell: เมนูซ้ายที่เลือก ไอคอนผู้ใช้ ปุ่มกลับ ชื่อระบบ */
+  --app-accent: #2563EB;
+  --app-accent-soft: #EAF1FE;
+  --app-brand-text: #1A9AD6;
+  /* สีสถานะ (ป้าย pill) */
+  --ok: #15803D;
+  --ok-bg: #E3F6EC;
+  --warn: #B45309;
+  --warn-bg: #FFF1D6;
+  --bad: #C53030;
+  --bad-bg: #FDE8E8;
+  --danger: #9B2C2C;
+
+  /* ชื่อเดิมที่ทั้งไฟล์ใช้อยู่ → map ไปที่ token ด้านบน */
+  --bg: var(--paper);
+  --heading: var(--ink);
+  --text: var(--ink);
+  --text-2: var(--ink-soft);
+  --muted: var(--ink-soft);
+  --border: var(--line);
+  --border-strong: var(--line-strong);
+  --primary: var(--brand);
+  --primary-hover: var(--brand);
+  --primary-soft: var(--brand-soft);
   --primary-text: #ffffff;
-  --capex: #7c4dcc;
-  --cbs: #0f8a74;
-  --used: #c8494a;
+  --capex: var(--main-dept);
+  --cbs: var(--prod);
+  --used: var(--bad);
   --reserved: #e7a23b;
-  --track: #edf0f4;
-  --ok: #1a7f37;
-  --warn: #b25e09;
-  --bad: #c62828;
+  --track: var(--surface-2);
+
+  --font-body: "Sarabun", "Noto Sans Thai", sans-serif;
+  --font-head: "Kanit", "Sarabun", "Noto Sans Thai", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
 
   --fs-xs: 12px;
-  --fs-sm: 13px;
-  --fs-base: 14px;
-  --fs-md: 16px;
-  --fs-lg: 24px;
+  --fs-sm: 12.5px;
+  --fs-base: 13px;
+  --fs-md: 16.5px;
+  --fs-h2: 18px;
+  --fs-lg: 22px;
   --fs-xl: 28px;
 
   --s-1: 4px;
@@ -43,18 +74,19 @@
   --s-6: 32px;
   --s-7: 48px;
 
-  --radius: 12px;
+  --radius: 14px;
   --radius-sm: 8px;
-  --control-h: 40px;
-  --sidebar-w: 224px;
-  --topbar-h: 64px;
+  --radius-btn: 6px;
+  --control-h: 37px;
+  --sidebar-w: 216px;
+  --topbar-h: 72px;
 }
 
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
 body {
   margin: 0;
-  font-family: "Noto Sans Thai", "Sarabun", system-ui, sans-serif;
+  font-family: var(--font-body);
   font-size: var(--fs-base);
   line-height: 1.6;
   background: var(--bg);
@@ -843,3 +875,166 @@ input.locked { background: var(--surface-2, #f3f4f6); color: var(--muted, #6b728
 .budget-table .b-name { min-width: 11rem; }
 .budget-table .b-acts { min-width: 6rem; }
 .budget-table td .badge { white-space: normal; display: inline-block; max-width: 8.5rem; line-height: 1.35; text-align: left; }
+
+/* =====================================================================
+ * Theme layer — ตาม docs/STYLE.md (ชั้นนี้อยู่ท้ายไฟล์ ทับกฎด้านบน)
+ * ===================================================================== */
+html { color-scheme: light; }
+body { font-family: var(--font-body); font-size: var(--fs-base); color: var(--ink); background: var(--paper); }
+a { color: var(--brand); }
+.mono, code { font-family: var(--font-mono); font-size: .95em; }
+td, th, .num { font-variant-numeric: tabular-nums; }
+
+/* หัวข้อ: Kanit */
+h1, h2, h3 { font-family: var(--font-head); color: var(--ink); }
+h1 { font-size: var(--fs-lg); font-weight: 700; }
+h2 { font-size: var(--fs-h2); font-weight: 600; }
+h3 { font-size: 14.5px; font-weight: 600; }
+.section-title { font-size: var(--fs-md); font-weight: 600; }
+.dash-side .side-title { font-size: var(--fs-md); }
+.doc h1, .doc h2, .doc h3, .memo-doc h1, .memo-doc h2, .memo-doc h3 { font-family: var(--font-body); }
+.page-head { justify-content: space-between; flex-wrap: wrap; }
+
+/* header กลาง: สูง ≥72px พื้นขาว เส้นล่าง sticky — ชื่อระบบ Sarabun 700 21px */
+.topbar { min-height: var(--topbar-h); height: auto; background: var(--surface); border-bottom: 1px solid var(--line); }
+.brand { font-family: var(--font-body); font-size: 21px; font-weight: 700; color: var(--app-brand-text); }
+.avatar { background: var(--app-accent-soft); color: var(--app-accent); }
+.user-dropdown { border-radius: var(--radius); box-shadow: var(--shadow); }
+.user-dropdown button[aria-checked="true"] { background: var(--app-accent-soft); }
+
+/* เมนูซ้าย: กว้าง 216px หัวกลุ่ม 11px uppercase รายการ 13px ไอคอน 20px active = พื้นฟ้าอ่อนตัวน้ำเงิน */
+.sidebar { width: var(--sidebar-w); }
+.nav-label { font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-soft); }
+#nav a { font-size: var(--fs-base); color: var(--ink-soft); }
+#nav a svg { width: 20px; height: 20px; }
+#nav a:hover { background: var(--surface-2); color: var(--ink); }
+#nav a.active { background: var(--app-accent-soft); color: var(--app-accent); font-weight: 600; }
+#nav a.active svg { color: var(--app-accent); }
+#nav a.sub { font-size: var(--fs-sm); }
+#nav a.sub.sub-active { color: var(--app-accent); background: none; }
+#nav a.sub.sub-active::before { background: var(--app-accent); }
+#nav .count { background: var(--bad); }
+
+/* เนื้อหา: padding 20px clamp(16px,4vw,48px) 56px */
+main { padding: 20px clamp(16px, 4vw, 48px) 56px; }
+@media print { main { padding: 0; } }
+
+/* ปุ่มกลับ (สี app-accent) */
+.back-link { color: var(--app-accent); }
+.back-link:hover { background: var(--app-accent-soft); color: var(--app-accent); }
+
+/* แท็บย่อย: 13.5px/600 เส้นใต้สี brand เมื่อเลือก */
+.tabs { border-bottom: 1px solid var(--line); }
+.tabs a { font-size: 13.5px; font-weight: 600; color: var(--ink-soft); }
+.tabs a:hover { color: var(--ink); }
+.tabs a.active { color: var(--brand); border-bottom-color: var(--brand); }
+.tabs .tab-count { font-weight: 400; }
+
+/* สวิตช์ (พิลล์สองช่อง ที่เลือก = พื้น brand ตัวขาว) */
+.seg { padding: 3px; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--line); }
+.seg a { padding: 4px 14px; border-radius: 999px; font-size: var(--fs-sm); font-weight: 600; color: var(--ink-soft); }
+.seg a:hover { color: var(--ink); }
+.seg a.active { background: var(--brand); color: #fff; box-shadow: none; }
+
+/* การ์ด / แผง / ตาราง: มุม 14px ขอบ line เงา --shadow */
+.card { border-color: var(--line); border-radius: var(--radius); box-shadow: var(--shadow); }
+.doc, .doc .card { box-shadow: none; }
+.table-wrap { border-color: var(--line); border-radius: var(--radius); box-shadow: var(--shadow); }
+th { background: var(--surface-2); color: var(--ink-soft); font-size: var(--fs-xs); font-weight: 600; }
+td, th { border-bottom-color: var(--line); }
+tbody tr:hover td { background: var(--surface-2); }
+.parent-row td, .parent-row:hover td { background: var(--surface-2); }
+.doc th { background: #eee; }
+.doc tbody tr:hover td { background: transparent; }
+.timeline li:not(:last-child)::before { background: var(--line); }
+
+/* การ์ดตัวเลข (stat tile): พื้นขาว ขอบ line มุม 12px เงา — ตัวเลข Kanit 28px/700 */
+.kpi { border-radius: 12px; }
+.kpi-label { font-size: var(--fs-sm); color: var(--ink-soft); }
+.kpi-value, .total-card .total-amount, .admin-stats .stat strong { font-family: var(--font-head); font-size: var(--fs-xl); font-weight: 700; color: var(--ink); }
+.admin-stats .stat { border-radius: 12px; box-shadow: var(--shadow); border-color: var(--line); }
+.admin-stats .stat.warn strong { color: var(--warn); }
+.total-card .total-amount small { font-family: var(--font-body); }
+.stat strong { font-family: var(--font-head); font-weight: 600; }
+@media (max-width: 600px) { .kpi-value { font-size: 22px; } }
+
+/* ป้ายสถานะ (pill): ok / wip / fail / none */
+.badge { border: 0; background: var(--surface-2); color: var(--ink-soft); padding: 0 10px; line-height: 22px; font-size: var(--fs-xs); font-weight: 600; }
+.badge.lg { padding: 1px 12px; }
+.badge.approved { background: var(--ok-bg); color: var(--ok); }
+.badge.pending, .badge.memo { background: var(--warn-bg); color: var(--warn); }
+.badge.rejected, .badge.cancelled { background: var(--bad-bg); color: var(--bad); }
+.badge.draft, .badge.closed { background: var(--paper); color: var(--ink-soft); box-shadow: inset 0 0 0 1px var(--line); }
+/* ป้ายประเภทงบ = แท็กสีประจำสาย (เส้นขอบ) */
+.badge.CAPEX, .badge.CBS { background: transparent; box-shadow: inset 0 0 0 1px currentColor; }
+.badge.CAPEX { color: var(--main-dept); }
+.badge.CBS { color: var(--prod); }
+.pill { border-color: var(--line); color: var(--ink-soft); background: var(--surface); }
+.tab-badge { background: var(--surface-2); border-color: var(--line); color: var(--ink-soft); }
+
+/* ช่องกรอก / Dropdown: Sarabun 13px สูง ~37px มุม 8px ขอบ line ลูกศร SVG */
+input, select, textarea { font-family: var(--font-body); font-size: var(--fs-base); color: var(--ink); border-radius: var(--radius-sm); }
+input, select { line-height: 1.4; }
+input, textarea { border-color: var(--line-strong); }
+select {
+  border-color: var(--line); padding-right: 34px; background-color: var(--surface);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%235B6A80' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 12px center; background-size: 14px;
+}
+.select-wrap::after { display: none; }
+.input-wrap:not(.select-wrap) select { background-image: none; }
+.edit-table select { padding-right: 28px; background-position: right 8px center; }
+input::placeholder, textarea::placeholder { color: color-mix(in srgb, var(--ink-soft) 65%, var(--surface)); }
+input:focus, select:focus, textarea:focus { outline: 3px solid var(--brand-soft); border-color: var(--brand); }
+input[type="checkbox"], input[type="radio"] { accent-color: var(--brand); }
+input:disabled, select:disabled, textarea:disabled { background-color: var(--surface-2); color: var(--ink-soft); border-color: var(--line); }
+label.field > span, .field > span { color: var(--ink-soft); font-weight: 600; }
+fieldset { border-color: var(--line); }
+.out { border-color: var(--line-strong); }
+.choice-opt { border-color: var(--line-strong); }
+.choice-opt:has(input:checked), .chip:has(input:checked) { border-color: var(--brand); background: var(--brand-soft); }
+.step { background: var(--brand-soft); color: var(--brand); }
+
+/* ปุ่ม: 13px/600 มุม 6px · primary = พื้น brand · disabled เป็นเทา */
+.btn { font-family: var(--font-body); font-size: var(--fs-base); font-weight: 600; border-radius: var(--radius-btn); border-color: var(--line-strong); color: var(--ink); }
+.btn:hover { background: var(--surface-2); }
+.btn.primary { background: var(--brand); border-color: var(--brand); color: #fff; }
+.btn.primary:hover { background: var(--brand); filter: brightness(.9); }
+.btn.ok { background: var(--ok); border-color: var(--ok); }
+.btn.bad { color: var(--danger); border-color: var(--line-strong); }
+.btn.bad:hover { background: var(--bad-bg); }
+.btn:disabled, .btn[disabled], .btn.primary:disabled, .btn.ok:disabled { background: var(--surface-2); border-color: var(--line); color: var(--ink-soft); opacity: 1; cursor: not-allowed; filter: none; }
+.btn.small { font-size: var(--fs-sm); }
+button.link { color: var(--brand); }
+
+/* แบนเนอร์ / กล่องตัดสินใจ */
+.alert { border-color: color-mix(in srgb, currentColor 25%, var(--surface)); }
+.alert.error { color: var(--bad); background: var(--bad-bg); }
+.alert.info { color: var(--brand); background: var(--brand-soft); }
+.alert.success, .alert.ok { color: var(--ok); background: var(--ok-bg); }
+.alert.warn { color: var(--decision); background: var(--decision-soft); }
+.guard-hint { color: var(--decision); }
+.cut-step { background: var(--decision-soft); color: var(--decision); }
+.cut-step.done { background: var(--ok-bg); color: var(--ok); }
+.memo-card { border-color: color-mix(in srgb, var(--decision) 28%, var(--surface)); background: var(--decision-soft); }
+.memo-btn { border-color: color-mix(in srgb, var(--decision) 28%, var(--surface)); color: var(--decision); background: var(--decision-soft); }
+.memo-btn:hover { background: color-mix(in srgb, var(--decision-soft) 70%, var(--surface)); }
+.task-list b.has { background: var(--warn-bg); color: var(--warn); }
+.file-ico { background: var(--bad-bg); color: var(--bad); }
+.timeline .current .tl-dot { background: var(--warn); box-shadow: 0 0 0 3px var(--warn-bg); }
+.stepper li.current span { border-color: var(--warn); color: var(--warn); box-shadow: 0 0 0 3px var(--warn-bg); }
+.stepper li.done span { background: var(--ok); border-color: var(--ok); }
+.stepper li.done::after { background: var(--ok); }
+.empty { color: var(--ink-soft); }
+
+/* Modal / ตัวแสดงไฟล์: พื้นมืด rgba(20,20,15,.45) panel มุม 14px */
+.viewer { background: rgba(20, 20, 15, .45); }
+.viewer-panel { border-radius: var(--radius); box-shadow: var(--shadow); }
+.viewer-name { font-weight: 600; }
+
+/* รายการงบ (ตาราง) */
+.budget-table .mono { font-weight: 600; }
+
+@media (max-width: 600px) {
+  .brand { font-size: 18px; }
+}
